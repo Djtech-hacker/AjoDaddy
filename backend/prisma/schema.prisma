@@ -1,0 +1,1009 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  USER
+  CUSTOMER_SERVICE
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  PENDING_VERIFICATION
+}
+
+enum GroupStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum GroupVisibility {
+  PUBLIC
+  PRIVATE
+  INVITE_ONLY
+}
+
+enum MemberRole {
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  REMOVED
+  BANNED
+  LEFT
+  WAITLISTED
+}
+
+enum ContributionFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum PayoutFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum ContributionStatus {
+  PENDING
+  PAID
+  OVERDUE
+  WAIVED
+  PARTIAL
+  CANCELLED
+}
+
+enum PayoutStatus {
+  SCHEDULED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TransactionType {
+  WALLET_FUNDING
+  CONTRIBUTION
+  PAYOUT
+  WITHDRAWAL
+  REFUND
+  PENALTY
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum PaymentProvider {
+  PAYSTACK
+  FLUTTERWAVE
+  MANUAL
+}
+
+enum NotificationType {
+  CONTRIBUTION_DUE
+  CONTRIBUTION_RECEIVED
+  CONTRIBUTION_PAID
+  PAYOUT_SCHEDULED
+  PAYOUT_COMPLETED
+  PAYOUT_RECEIVED
+  PAYOUT_BLOCKED
+  WALLET_FUNDED
+  WALLET_WITHDRAWAL
+  GROUP_INVITE
+  GROUP_JOIN_APPROVED
+  GROUP_UPDATED
+  GROUP_ARCHIVED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  MEMBER_REJECTED
+  MEMBER_BANNED
+  OWNERSHIP_TRANSFERRED
+  OVERDUE_WARNING
+  PENALTY_APPLIED
+  BADGE_EARNED
+  SYSTEM
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+enum BadgeType {
+  FIRST_CONTRIBUTION
+  STREAK_7
+  STREAK_30
+  STREAK_90
+  PERFECT_CYCLE
+  EARLY_BIRD
+  COMMUNITY_BUILDER
+  RELIABLE_PAYER
+  VETERAN
+  CONTRIBUTED_100K
+  CONTRIBUTED_1M
+  TRUSTED_ADMIN
+  EARLY_SUPPORTER
+  TOP_SAVER
+  VERIFIED
+}
+
+enum ActivityType {
+  JOINED_GROUP
+  CONTRIBUTION
+  BADGE_EARNED
+  CYCLE_COMPLETE
+  PAYOUT_RECEIVED
+}
+
+enum LeaderboardCategory {
+  OVERALL
+  STREAK
+  REPUTATION
+  CONTRIBUTED
+  CREATORS
+}
+
+model User {
+  id                  String     @id @default(uuid())
+  email               String     @unique
+  username            String     @unique
+  firstName           String
+  lastName            String
+  phone               String?    @unique
+  avatarUrl           String?
+  bio                 String?
+  role                UserRole   @default(USER)
+  status              UserStatus @default(PENDING_VERIFICATION)
+  isEmailVerified     Boolean    @default(false)
+  isPhoneVerified     Boolean    @default(false)
+  hasTransactionPin   Boolean    @default(false)
+  transactionPinHash  String?
+  pinHash             String?
+  passwordHash        String?
+  googleId            String?    @unique
+  referralCode        String     @unique @default(cuid())
+  referredById        String?
+  reputationScore     Int        @default(100)
+  totalContributed    BigInt     @default(0)
+  totalReceived       BigInt     @default(0)
+  currentStreak       Int        @default(0)
+  longestStreak       Int        @default(0)
+  deletedAt           DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  wallet              Wallet?
+  sessions            Session[]
+  refreshTokens       RefreshToken[]
+  verificationTokens  VerificationToken[]
+  passwordResets      PasswordReset[]
+  ownedGroups         Group[]              @relation("GroupOwner")
+  memberships         GroupMember[]
+  contributions       Contribution[]
+  receivedPayouts     Payout[]             @relation("PayoutRecipient")
+  notifications       Notification[]
+  sentMessages        ChatMessage[]
+  badges              UserBadge[]
+  transactions        Transaction[]
+  referredUsers       User[]               @relation("ReferralChain")
+  referredBy          User?                @relation("ReferralChain", fields: [referredById], references: [id])
+  auditLogs           AuditLog[]
+  loginAttempts       LoginAttempt[]
+  reputationLogs      ReputationLog[]
+  streak              UserStreak?
+  profileStats        ProfileStats?
+  leaderboardRankings LeaderboardRanking[]
+  activityFeed        ActivityFeedItem[]
+  walletTransactions  WalletTransaction[]
+  ticketReplies       TicketReply[]
+  identityRecord      IdentityRecord?
+  kycAttempts         KycAttempt[]
+  debts               Debt[]
+  gracePeriods        GracePeriod[]
+  groupAgreements     GroupAgreement[]
+
+  @@index([email])
+  @@index([username])
+  @@index([referralCode])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  deviceInfo   String?
+  ipAddress    String?
+  userAgent    String?
+  isActive     Boolean  @default(true)
+  lastActiveAt DateTime @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  isRevoked Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model VerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  type      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("verification_tokens")
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("password_resets")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  userId    String?
+  email     String
+  ipAddress String
+  userAgent String?
+  success   Boolean
+  reason    String?
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([email])
+  @@index([ipAddress])
+  @@map("login_attempts")
+}
+
+model Wallet {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  balance       BigInt   @default(0)
+  lockedBalance BigInt   @default(0)
+  currency      String   @default("NGN")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions       Transaction[]
+  walletTransactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id             String            @id @default(uuid())
+  userId         String
+  walletId       String
+  type           TransactionType
+  status         TransactionStatus @default(PENDING)
+  amount         BigInt
+  fee            BigInt            @default(0)
+  balanceBefore  BigInt
+  balanceAfter   BigInt
+  currency       String            @default("NGN")
+  reference      String            @unique @default(cuid())
+  externalRef    String?
+  provider       PaymentProvider?
+  description    String?
+  metadata       Json?
+  groupId        String?
+  contributionId String?
+  payoutId       String?
+  reversedById   String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id])
+  wallet        Wallet        @relation(fields: [walletId], references: [id])
+  paymentRecord PaymentRecord?
+
+  @@index([userId])
+  @@index([reference])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+model WalletTransaction {
+  id        String   @id @default(uuid())
+  walletId  String
+  userId    String
+  type      String
+  amount    BigInt
+  status    String
+  reference String   @unique
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([walletId])
+  @@map("wallet_transactions")
+}
+
+model PaymentRecord {
+  id             String          @id @default(uuid())
+  transactionId  String          @unique
+  provider       PaymentProvider
+  providerRef    String          @unique
+  amount         BigInt
+  currency       String          @default("NGN")
+  status         String
+  webhookPayload Json?
+  verifiedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([providerRef])
+  @@map("payment_records")
+}
+
+model Group {
+  id                   String                @id @default(uuid())
+  slug                 String                @unique
+  name                 String
+  description          String?
+  bannerUrl            String?
+  ownerId              String
+  status               GroupStatus           @default(DRAFT)
+  visibility           GroupVisibility       @default(PRIVATE)
+  contributionAmount   BigInt
+  frequency            ContributionFrequency @default(MONTHLY)
+  payoutFrequency      PayoutFrequency       @default(MONTHLY)
+  customCycleDays      Int?
+  maxMembers           Int                   @default(12)
+  currentCycle         Int                   @default(0)
+  totalCycles          Int
+  cycleDurationDays    Int
+  deadlineDays         Int                   @default(3)
+  penaltyAmount        BigInt                @default(0)
+  poolBalance          BigInt                @default(0)
+  chatEnabled          Boolean               @default(true)
+  leaderboardEnabled   Boolean               @default(true)
+  autoApproveMembers   Boolean               @default(false)
+  inviteCode           String                @unique @default(cuid())
+  startDate            DateTime
+  nextContributionDate DateTime?
+  completedAt          DateTime?
+  frozenByAdminId      String?
+  frozenReason         String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  owner          User            @relation("GroupOwner", fields: [ownerId], references: [id])
+  members        GroupMember[]
+  cycles         GroupCycle[]
+  contributions  Contribution[]
+  payouts        Payout[]
+  chatMessages   ChatMessage[]
+  pinnedMessages PinnedMessage[]
+  announcements  Announcement[]
+  inviteLinks    InviteLink[]
+  reputationLogs ReputationLog[]
+  groupAgreements GroupAgreement[]
+
+  @@index([slug])
+  @@index([ownerId])
+  @@index([status])
+  @@index([inviteCode])
+  @@map("groups")
+}
+
+model GroupMember {
+  id             String       @id @default(uuid())
+  groupId        String
+  userId         String
+  role           MemberRole   @default(MEMBER)
+  status         MemberStatus @default(ACTIVE)
+  payoutPosition Int
+  memberNumber   Int          @default(0)
+  totalPaid      BigInt       @default(0)
+  missedCount    Int          @default(0)
+  joinedAt       DateTime     @default(now())
+  removedAt      DateTime?
+  removedReason  String?
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model GroupCycle {
+  id             String   @id @default(uuid())
+  groupId        String
+  cycleNumber    Int
+  startDate      DateTime
+  endDate        DateTime
+  isComplete     Boolean  @default(false)
+  totalCollected BigInt   @default(0)
+  createdAt      DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, cycleNumber])
+  @@index([groupId])
+  @@map("group_cycles")
+}
+
+model InviteLink {
+  id          String    @id @default(uuid())
+  groupId     String
+  code        String    @unique @default(cuid())
+  createdById String
+  maxUses     Int?
+  useCount    Int       @default(0)
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+  @@map("invite_links")
+}
+
+model Contribution {
+  id             String             @id @default(uuid())
+  groupId        String
+  userId         String
+  cycleNumber    Int
+  amount         BigInt
+  status         ContributionStatus @default(PENDING)
+  dueDate        DateTime
+  paidAt         DateTime?
+  transactionId  String?
+  penaltyApplied BigInt             @default(0)
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  group Group @relation(fields: [groupId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId, cycleNumber])
+  @@index([groupId])
+  @@index([userId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("contributions")
+}
+
+model Payout {
+  id            String       @id @default(uuid())
+  groupId       String
+  recipientId   String
+  cycleNumber   Int
+  amount        BigInt
+  status        PayoutStatus @default(SCHEDULED)
+  scheduledDate DateTime
+  processedAt   DateTime?
+  completedAt   DateTime?
+  reference     String?
+  transactionId String?
+  bankAccount   String?
+  bankCode      String?
+  providerRef   String?
+  failureReason String?
+  retryCount    Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  group     Group @relation(fields: [groupId], references: [id])
+  recipient User  @relation("PayoutRecipient", fields: [recipientId], references: [id])
+
+  @@unique([groupId, recipientId, cycleNumber])
+  @@index([groupId])
+  @@index([recipientId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@map("payouts")
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid())
+  groupId   String
+  senderId  String
+  type      MessageType @default(TEXT)
+  content   String?
+  fileUrl   String?
+  fileName  String?
+  fileSize  Int?
+  mimeType  String?
+  replyToId String?
+  isDeleted Boolean     @default(false)
+  deletedAt DateTime?
+  isEdited  Boolean     @default(false)
+  readBy    String[]    @default([])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender User  @relation(fields: [senderId], references: [id])
+
+  @@index([groupId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+model PinnedMessage {
+  id         String   @id @default(uuid())
+  groupId    String
+  messageId  String
+  pinnedById String
+  createdAt  DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, messageId])
+  @@map("pinned_messages")
+}
+
+model Announcement {
+  id        String   @id @default(uuid())
+  groupId   String
+  authorId  String
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("announcements")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model UserBadge {
+  id       String    @id @default(uuid())
+  userId   String
+  type     BadgeType
+  earnedAt DateTime  @default(now())
+  metadata Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
+  @@map("user_badges")
+}
+
+model ReputationLog {
+  id        String   @id @default(uuid())
+  userId    String
+  points    Int
+  reason    String
+  groupId   String?
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([groupId])
+  @@map("reputation_logs")
+}
+
+model UserStreak {
+  userId               String    @id
+  currentStreak        Int       @default(0)
+  longestStreak        Int       @default(0)
+  lastContributionDate DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_streaks")
+}
+
+model ProfileStats {
+  userId                  String   @id
+  groupsJoined            Int      @default(0)
+  groupsCreated           Int      @default(0)
+  completedCycles         Int      @default(0)
+  onTimePaymentPct        Decimal  @default(0) @db.Decimal(5, 2)
+  contributionSuccessRate Decimal  @default(0) @db.Decimal(5, 2)
+  totalPayoutsReceived    BigInt   @default(0)
+  totalContributed        BigInt   @default(0)
+  updatedAt               DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profile_stats")
+}
+
+model LeaderboardRanking {
+  id             String              @id @default(uuid())
+  userId         String
+  category       LeaderboardCategory
+  globalRank     Int?
+  groupRank      Int?
+  score          Decimal?
+  weeklyMovement Int                 @default(0)
+  updatedAt      DateTime            @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([category, globalRank])
+  @@map("leaderboard_rankings")
+}
+
+model ActivityFeedItem {
+  id          String       @id @default(uuid())
+  userId      String
+  type        ActivityType
+  description String
+  metadata    Json?        @default("{}")
+  createdAt   DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("activity_feed")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  entityType String   @default("UNKNOWN")
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model FraudFlag {
+  id          String    @id @default(uuid())
+  userId      String?
+  type        String
+  description String
+  severity    String    @default("LOW")
+  resolved    Boolean   @default(false)
+  resolvedAt  DateTime?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([resolved])
+  @@map("fraud_flags")
+}
+
+model IdempotencyKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  response  Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("idempotency_keys")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  ESCALATED
+  RESOLVED
+  CLOSED
+  DISMISSED
+}
+
+model PlatformSetting {
+  id                          String   @id
+  platformFeePercent          Decimal  @default(1) @db.Decimal(5, 2)
+  minContributionKobo         BigInt   @default(10000)
+  maxContributionKobo         BigInt   @default(1000000000)
+  withdrawalsFrozen           Boolean  @default(false)
+  contributionsFrozen         Boolean  @default(false)
+  maintenanceMode             Boolean  @default(false)
+  maintenanceScheduledAt      DateTime?
+   maintenanceAnnouncement    String?
+  paystackEnabled             Boolean  @default(true)
+  flutterwaveEnabled          Boolean  @default(false)
+  reportFlagThreshold         Int      @default(5)
+  reportHighPriorityThreshold Int      @default(10)
+  reportAutoEscalateThreshold Int      @default(15)
+  updatedById                 String?
+  updatedAt                   DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model SupportTicket {
+  id            String         @id @default(uuid())
+  userId        String
+  subject       String
+  status        TicketStatus   @default(OPEN)
+  priority      TicketPriority @default(MEDIUM)
+  assignedToId  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  resolvedAt    DateTime?
+  escalatedAt   DateTime?
+  escalatedById String?
+
+  @@index([userId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+model TicketReply {
+  id           String   @id @default(uuid())
+  ticketId     String
+  authorId     String
+  isAdminReply Boolean  @default(false)
+  message      String
+  createdAt    DateTime @default(now())
+
+  author User @relation(fields: [authorId], references: [id])
+
+  @@index([ticketId])
+  @@index([authorId])
+  @@map("ticket_replies")
+}
+
+model InternalNote {
+  id        String   @id @default(uuid())
+  ticketId  String?
+  disputeId String?
+  authorId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([disputeId])
+  @@map("internal_notes")
+}
+
+model Dispute {
+  id             String        @id @default(uuid())
+  reporterId     String
+  reportedUserId String?
+  groupId        String?
+  type           String
+  description    String
+  evidenceUrls   String[]      @default([])
+  status         DisputeStatus @default(OPEN)
+  assignedToId   String?
+  resolution     String?
+  resolvedById   String?
+  escalatedById  String?
+  escalatedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+
+  @@index([reporterId])
+  @@index([reportedUserId])
+  @@index([groupId])
+  @@index([status])
+  @@map("disputes")
+}
+
+// ── KYC & Identity ─────────────────────────────────────────
+
+model IdentityRecord {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  ninHash         String?   @unique
+  bvnHash         String?   @unique
+  ninMasked       String?
+  bvnMasked       String?
+  ninEncrypted    String?
+  bvnEncrypted    String?
+  ninVerified     Boolean   @default(false)
+  bvnVerified     Boolean   @default(false)
+  ninVerifiedAt   DateTime?
+  bvnVerifiedAt   DateTime?
+  identityMatched Boolean   @default(false)
+  firstName       String?
+  lastName        String?
+  dateOfBirth     String?
+  phone           String?
+  facePhotoUrl    String?
+  faceScannedAt   DateTime?
+  status          String    @default("PENDING")
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([ninHash])
+  @@index([bvnHash])
+  @@map("identity_records")
+}
+
+model KycAttempt {
+  id           String   @id @default(uuid())
+  userId       String
+  type         String
+  provider     String   @default("dojah")
+  status       String
+  requestData  Json?
+  responseData Json?
+  errorMessage String?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@map("kyc_attempts")
+}
+
+model Debt {
+  id          String    @id @default(uuid())
+  userId      String
+  groupId     String?
+  type        String
+  amount      BigInt
+  lateFee     BigInt    @default(0)
+  totalOwed   BigInt
+  status      String    @default("OUTSTANDING")
+  settledAt   DateTime?
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("debts")
+}
+
+model GracePeriod {
+  id                String    @id @default(uuid())
+  groupId           String
+  userId            String
+  contributionId    String
+  expiresAt         DateTime
+  status            String    @default("ACTIVE")
+  reminderSent24h   Boolean   @default(false)
+  reminderSentFinal Boolean   @default(false)
+  resolvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([status])
+  @@map("grace_periods")
+}
+
+model GroupAgreement {
+  id          String   @id @default(uuid())
+  userId      String
+  groupId     String
+  acceptedAt  DateTime @default(now())
+  ipAddress   String?
+  deviceInfo  String?
+  createdAt   DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+  @@map("group_agreements")
+}

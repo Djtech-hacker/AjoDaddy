@@ -1,0 +1,12 @@
+# Railway configuration for PayPaddy backend
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && npx prisma generate && npm run build"
+
+[deploy]
+startCommand = "npx prisma migrate deploy && node dist/main"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[environments.production]
+variables = { NODE_ENV = "production" }

@@ -3,7 +3,7 @@ import { ValidationPipe, Logger, BadRequestException } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
-import * as cookieParser from 'cookie-parser';
+import cookieParser = require('cookie-parser');
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';

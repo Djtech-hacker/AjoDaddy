@@ -2,13 +2,13 @@
 // API SERVICES
 // ============================================================
 import api from '@/lib/api'
-import type { User, Group, Contribution, Payout, Wallet, Transaction, Notification, ChatMessage, DashboardSummary, TrendPoint, Insight } from '@/types'
+import type { User, Group, Contribution, Payout, Wallet, Transaction, Notification, ChatMessage, DashboardSummary, TrendPoint, Insight, ApiResponse } from '@/types'
 
 export const authApi = {
   register: (data: { email: string; username: string; firstName: string; lastName: string; password: string; referralCode?: string }) => api.post('/auth/register', data),
   login: (data: { email: string; password: string }) => api.post<{ accessToken: string; user: User }>('/auth/login', data),
   logout: () => api.post('/auth/logout'),
-  refresh: () => api.post<{ accessToken: string; user: User }>('/auth/refresh'),
+  refresh: () => api.post<ApiResponse<{ accessToken: string; user: User }>>('/auth/refresh'),
   verifyEmail: (token: string) => api.post('/auth/verify-email', { token }),
   forgotPassword: (email: string) => api.post('/auth/forgot-password', { email }),
   resetPassword: (token: string, newPassword: string) => api.post('/auth/reset-password', { token, newPassword }),
@@ -20,7 +20,7 @@ export const authApi = {
 }
 
 export const usersApi = {
-  getProfile: () => api.get<User>('/users/me'),
+  getProfile: () => api.get<ApiResponse<User>>('/users/me'),
   updateProfile: (data: Partial<User>) => api.patch<User>('/users/me', data),
   getPublicProfile: (username: string) => api.get<User>(`/users/${username}`),
   getBadges: () => api.get('/users/me/badges'),
@@ -28,9 +28,9 @@ export const usersApi = {
 }
 
 export const groupsApi = {
-  create: (data: { name: string; contributionAmount: number; frequency: string; maxMembers: number; startDate: string; visibility: string; description?: string; deadlineDays?: number; penaltyAmount?: number }) => api.post<Group>('/groups', data),
+  create: (data: { name: string; contributionAmount: number; frequency: string; maxMembers: number; startDate: string; visibility: string; description?: string; deadlineDays?: number; penaltyAmount?: number }) => api.post<ApiResponse<Group>>('/groups', data),
   list: (params?: { page?: number; limit?: number; search?: string; visibility?: string }) => api.get('/groups', { params }),
-  getBySlug: (slug: string) => api.get<Group>(`/groups/${slug}`),
+  getBySlug: (slug: string) => api.get<ApiResponse<Group>>(`/groups/${slug}`),
   findByInviteCode: (code: string) => api.get(`/groups/invite/${code}`),
   updateGroup: (groupId: string, data: Record<string, any>) => api.patch(`/groups/${groupId}/settings`, data),
   startGroup: (groupId: string) => api.post(`/groups/${groupId}/start`),
@@ -64,13 +64,13 @@ export const contributionsApi = {
 }
 
 export const walletApi = {
-  getWallet: () => api.get<Wallet>('/wallet'),
+  getWallet: () => api.get<ApiResponse<Wallet>>('/wallet'),
   getStats: () => api.get('/wallet/stats'),
-  getTransactions: (params?: { page?: number; limit?: number; type?: string }) => api.get<{ transactions: Transaction[] }>('/wallet/transactions', { params }),
+  getTransactions: (params?: { page?: number; limit?: number; type?: string }) => api.get<ApiResponse<{ transactions: Transaction[] }>>('/wallet/transactions', { params }),
 }
 
 export const paymentsApi = {
-  initiate: (data: { amount: number; provider: string; purpose: string; groupId?: string }) => api.post<{ authorizationUrl: string; reference: string }>('/payments/initiate', data),
+  initiate: (data: { amount: number; provider: string; purpose: string; groupId?: string }) => api.post<ApiResponse<{ authorizationUrl: string; reference: string }>>('/payments/initiate', data),
   verify: (reference: string, provider: string) => api.post('/payments/verify', { reference, provider }),
   withdraw: (data: { amount: number; accountNumber: string; bankCode: string; accountName: string; transactionPin?: string }) => api.post('/payments/withdraw', data),
   getBanks: () => api.get<{ name: string; code: string }[]>('/payments/banks'),
@@ -79,9 +79,9 @@ export const paymentsApi = {
 }
 
 export const analyticsApi = {
-  getSummary: () => api.get<DashboardSummary>('/analytics/summary'),
-  getTrend: (params?: { groupId?: string; weeks?: number }) => api.get<TrendPoint[]>('/analytics/contributions/trend', { params }),
-  getInsights: () => api.get<Insight[]>('/analytics/insights'),
+  getSummary: () => api.get<ApiResponse<DashboardSummary>>('/analytics/summary'),
+  getTrend: (params?: { groupId?: string; weeks?: number }) => api.get<ApiResponse<TrendPoint[]>>('/analytics/contributions/trend', { params }),
+  getInsights: () => api.get<ApiResponse<Insight[]>>('/analytics/insights'),
 }
 
 export const notificationsApi = {
@@ -91,7 +91,7 @@ export const notificationsApi = {
 }
 
 export const chatApi = {
-  getMessages: (groupId: string, params?: { cursor?: string; limit?: number }) => api.get<{ messages: ChatMessage[]; nextCursor: string | null }>(`/chat/${groupId}/messages`, { params }),
+  getMessages: (groupId: string, params?: { cursor?: string; limit?: number }) => api.get<ApiResponse<{ messages: ChatMessage[]; nextCursor: string | null }>>(`/chat/${groupId}/messages`, { params }),
   getPinned: (groupId: string) => api.get(`/chat/${groupId}/pinned`),
   pinMessage: (groupId: string, messageId: string) => api.post(`/chat/${groupId}/messages/${messageId}/pin`),
   deleteMessage: (groupId: string, messageId: string) => api.delete(`/chat/${groupId}/messages/${messageId}`),

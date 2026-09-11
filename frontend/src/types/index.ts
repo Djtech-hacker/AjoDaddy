@@ -43,7 +43,7 @@ export interface UserBadge {
 
 export type GroupStatus      = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED' | 'DRAFT'
 export type GroupVisibility  = 'PUBLIC' | 'PRIVATE' | 'INVITE_ONLY'
-export type ContributionFrequency = 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY'
+export type ContributionFrequency = 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'CUSTOM'
 
 export interface Group {
   id:                  string
@@ -58,10 +58,11 @@ export interface Group {
   contributionAmount:  number
   frequency:           ContributionFrequency
   payoutFrequency:     ContributionFrequency
+  customCycleDays?:    number
   maxMembers:          number
   currentCycle:        number
   totalCycles:         number
-  deadlineDays:        number
+  deadlineDays?:       number
   penaltyAmount:       number
   chatEnabled:         boolean
   leaderboardEnabled:  boolean

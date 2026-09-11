@@ -20,6 +20,23 @@
 // to be marked complete before the pool was ever paid out, silently
 // blocking the real payout from ever running for that cycle.
 // ============================================================
+//
+// FIX #2: PLATFORM_FEE_PERCENT was a hardcoded module-level constant,
+// so Super Admin's "Platform fee (%)" setting (persisted to the
+// PlatformSetting table) was saved but never read by anything —
+// every withdrawal was silently charged the original 1% forever,
+// regardless of what was saved in Settings. Fee calculation now
+// pulls the live value from PlatformSetting on every request, with
+// the original 1% kept only as a fallback if that row is ever
+// missing (e.g. before it's first seeded).
+// ============================================================
+//
+// FIX #3: verifyBankAccount() swallowed the real Paystack error and
+// always threw the same generic "Could not verify account" message
+// regardless of the actual cause (bad secret key, wrong bank code,
+// test-mode restriction, Paystack outage, etc). Now logs the real
+// response and surfaces Paystack's own message where available.
+// ============================================================
 
 import {
   Module, Controller, Post, Get, Body, Req,
@@ -42,7 +59,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { WalletModule } from '../wallet/wallet.module';
 
 // ── Constants ─────────────────────────────────────────────────
-const PLATFORM_FEE_PERCENT  = 1          // 1% platform fee on withdrawals
+// Fallback only — used if the PlatformSetting row somehow doesn't
+// exist yet. The real, live value is fetched from the DB on every
+// fee calculation via PaymentsService.getPlatformFeePercent().
+const DEFAULT_PLATFORM_FEE_PERCENT = 1
 const MIN_WITHDRAWAL_NAIRA  = 500
 const MAX_WITHDRAWAL_NAIRA  = 5_000_000
 
@@ -52,12 +72,12 @@ function calcPaystackTransferFee(amountNaira: number): number {
   return amountNaira <= 5_000 ? 10 : 25
 }
 
-function calcPlatformFee(amountNaira: number): number {
-  return Math.ceil(amountNaira * (PLATFORM_FEE_PERCENT / 100))
+function calcPlatformFee(amountNaira: number, platformFeePercent: number): number {
+  return Math.ceil(amountNaira * (platformFeePercent / 100))
 }
 
-function calcWithdrawalFees(amountNaira: number) {
-  const platformFee     = calcPlatformFee(amountNaira)
+function calcWithdrawalFees(amountNaira: number, platformFeePercent: number) {
+  const platformFee     = calcPlatformFee(amountNaira, platformFeePercent)
   const paystackFee     = calcPaystackTransferFee(amountNaira)
   const totalFees       = platformFee + paystackFee
   const amountAfterFees = amountNaira - totalFees
@@ -95,6 +115,14 @@ export class WithdrawDto {
   @IsString() bankCode: string
   @IsString() accountName: string
 
+  // Frontend sends this (the bank's display name, e.g. "OPay Digital
+  // Services") alongside bankCode so receipts/transaction rows can show
+  // a human-readable bank name. Was missing from the DTO, so with
+  // forbidNonWhitelisted: true in main.ts, every withdrawal request was
+  // rejected outright — this is what fixes that.
+  @IsOptional() @IsString()
+  bankName?: string
+
   @IsOptional() @IsString()
   transactionPin?: string
 }
@@ -112,12 +140,28 @@ export class PaymentsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  // ── Live platform fee lookup ──────────────────────────────
+  // PlatformSetting is a singleton row (one row total). findFirst()
+  // is used rather than a hardcoded id so this doesn't need to know
+  // or assume what id the settings row was seeded with.
+  private async getPlatformFeePercent(): Promise<number> {
+    const setting = await this.prisma.platformSetting.findFirst({
+      select: { platformFeePercent: true },
+    })
+    if (!setting) {
+      this.logger.warn('No PlatformSetting row found — falling back to default platform fee')
+      return DEFAULT_PLATFORM_FEE_PERCENT
+    }
+    return Number(setting.platformFeePercent)
+  }
+
   // ── Fee preview (call before showing withdrawal form) ─────
-  getWithdrawalFeePreview(amountNaira: number) {
+  async getWithdrawalFeePreview(amountNaira: number) {
     if (amountNaira < MIN_WITHDRAWAL_NAIRA)
       throw new BadRequestException(`Minimum withdrawal is ₦${MIN_WITHDRAWAL_NAIRA}`)
 
-    const fees = calcWithdrawalFees(amountNaira)
+    const platformFeePercent = await this.getPlatformFeePercent()
+    const fees = calcWithdrawalFees(amountNaira, platformFeePercent)
     return {
       requestedAmount: amountNaira,
       platformFee:     fees.platformFee,
@@ -125,10 +169,10 @@ export class PaymentsService {
       totalFees:       fees.totalFees,
       youWillReceive:  fees.amountAfterFees,
       breakdown: [
-        { label: 'Withdrawal amount',                   amount:  amountNaira        },
-        { label: `Platform fee (${PLATFORM_FEE_PERCENT}%)`, amount: -fees.platformFee },
-        { label: 'Transfer fee',                        amount: -fees.paystackFee   },
-        { label: 'You will receive',                    amount:  fees.amountAfterFees },
+        { label: 'Withdrawal amount',                     amount:  amountNaira        },
+        { label: `Platform fee (${platformFeePercent}%)`, amount: -fees.platformFee    },
+        { label: 'Transfer fee',                          amount: -fees.paystackFee    },
+        { label: 'You will receive',                      amount:  fees.amountAfterFees },
       ],
     }
   }
@@ -271,8 +315,8 @@ export class PaymentsService {
   }
 
   // ── WITHDRAWAL: wallet → bank account ────────────────────
-  // Platform fee (1%) + Paystack transfer fee deducted from amount.
-  // User requests ₦X, receives ₦X minus fees.
+  // Platform fee (live from PlatformSetting) + Paystack transfer fee
+  // deducted from amount. User requests ₦X, receives ₦X minus fees.
   async initiateWithdrawal(userId: string, dto: WithdrawDto) {
     const amountNaira = dto.amount
     const amountKobo  = BigInt(Math.round(amountNaira * 100))
@@ -282,7 +326,8 @@ export class PaymentsService {
     if (amountNaira > MAX_WITHDRAWAL_NAIRA)
       throw new BadRequestException(`Maximum withdrawal is ₦${MAX_WITHDRAWAL_NAIRA.toLocaleString()} per transaction`)
 
-    const fees            = calcWithdrawalFees(amountNaira)
+    const platformFeePercent = await this.getPlatformFeePercent()
+    const fees            = calcWithdrawalFees(amountNaira, platformFeePercent)
     const totalFeesKobo   = BigInt(Math.round(fees.totalFees * 100))
     const amountAfterKobo = BigInt(Math.round(fees.amountAfterFees * 100))
 
@@ -300,14 +345,23 @@ export class PaymentsService {
     const secretKey = this.configService.get('paystack.secretKey')
 
     // Verify bank account first (before touching wallet)
+    // FIX: swallowed the real Paystack error before — logs it now so a
+    // failure here shows exactly why in the terminal instead of just
+    // "Could not verify bank account."
     try {
       const res = await axios.get(
         `https://api.paystack.co/bank/resolve?account_number=${dto.accountNumber}&bank_code=${dto.bankCode}`,
         { headers: { Authorization: `Bearer ${secretKey}` } },
       )
-      if (!res.data.status) throw new Error()
-    } catch {
-      throw new BadRequestException('Could not verify bank account. Please check your details.')
+      if (!res.data.status) throw new Error('Paystack returned status: false')
+    } catch (err) {
+      this.logger.error(
+        'Bank resolve failed during withdrawal',
+        err.response?.data || err.message,
+      )
+      throw new BadRequestException(
+        err.response?.data?.message || 'Could not verify bank account. Please check your details.',
+      )
     }
 
     const reference = `WD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
@@ -328,8 +382,10 @@ export class PaymentsService {
           reference, description: `Withdrawal to ${dto.accountName} (${dto.accountNumber})`,
           metadata: {
             accountNumber:   dto.accountNumber, bankCode: dto.bankCode,
-            accountName:     dto.accountName,   platformFee: fees.platformFee,
-            paystackFee:     fees.paystackFee,  amountAfterFees: fees.amountAfterFees,
+            accountName:     dto.accountName,   bankName: dto.bankName,
+            platformFee: fees.platformFee,
+            platformFeePercent, paystackFee: fees.paystackFee,
+            amountAfterFees: fees.amountAfterFees,
           },
         },
       })
@@ -355,7 +411,7 @@ export class PaymentsService {
 
       await this.prisma.transaction.updateMany({ where: { reference }, data: { status: 'PROCESSING' } })
 
-      // Route the 1% platform fee into the platform revenue (SYSTEM) wallet instead
+      // Route the platform fee into the platform revenue (SYSTEM) wallet instead
       // of it just being an untracked surplus. Does NOT include the Paystack transfer
       // fee, since that's paid out externally and isn't retained revenue.
       if (fees.platformFee > 0) {
@@ -368,8 +424,8 @@ export class PaymentsService {
               data: {
                 userId: 'SYSTEM', walletId: systemWallet.id, type: 'WALLET_FUNDING', status: 'COMPLETED',
                 amount: platformFeeKobo, balanceBefore: systemWallet.balance, balanceAfter: systemWallet.balance + platformFeeKobo,
-                reference: `PLATFORMFEE-${reference}`, description: `Platform fee (1%) from withdrawal by user ${userId}`,
-                metadata: { source: 'withdrawal_platform_fee', fromUserId: userId, originalReference: reference },
+                reference: `PLATFORMFEE-${reference}`, description: `Platform fee (${platformFeePercent}%) from withdrawal by user ${userId}`,
+                metadata: { source: 'withdrawal_platform_fee', fromUserId: userId, originalReference: reference, platformFeePercent },
               },
             })
           }).catch((e) => this.logger.error('Failed to credit platform fee to SYSTEM wallet', e))
@@ -382,7 +438,7 @@ export class PaymentsService {
         data: { amount: fees.amountAfterFees, reference },
       })
 
-      this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ${dto.accountNumber} (${reference})`)
+      this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ${dto.accountNumber} (${reference}) [platform fee ${platformFeePercent}%]`)
 
       return {
         success: true, reference,
@@ -432,6 +488,13 @@ export class PaymentsService {
     } catch { throw new BadRequestException('Could not fetch bank list') }
   }
 
+  // FIX: this used to catch-and-discard the real Paystack error, always
+  // throwing the same generic "Could not verify account" message no
+  // matter what actually went wrong (wrong/missing secret key, invalid
+  // bank code, Paystack test-mode daily resolve limit, network error,
+  // Paystack outage, etc). Now it logs the real response body and
+  // surfaces Paystack's own message when one is available, so the
+  // terminal tells you the actual cause instead of a dead end.
   async verifyBankAccount(accountNumber: string, bankCode: string) {
     const secretKey = this.configService.get('paystack.secretKey')
     try {
@@ -439,9 +502,17 @@ export class PaymentsService {
         `https://api.paystack.co/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`,
         { headers: { Authorization: `Bearer ${secretKey}` } },
       )
-      if (!data.status) throw new Error()
+      if (!data.status) throw new Error('Paystack returned status: false')
       return { accountName: data.data.account_name, accountNumber: data.data.account_number }
-    } catch { throw new BadRequestException('Could not verify account. Check account number and bank.') }
+    } catch (err) {
+      this.logger.error(
+        `Paystack account resolve failed (accountNumber=${accountNumber}, bankCode=${bankCode})`,
+        err.response?.data || err.message,
+      )
+      throw new BadRequestException(
+        err.response?.data?.message || 'Could not verify account. Check account number and bank.',
+      )
+    }
   }
 
   // ── Cron: flag stuck withdrawals after 24h ────────────────

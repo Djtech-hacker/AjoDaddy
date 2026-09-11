@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, BadRequestException } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
@@ -29,13 +29,7 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
-      // Deny all framing — prevents clickjacking attacks where the admin
-      // panel is embedded invisibly inside a malicious page to trick an
-      // admin into clicking a real button (e.g. "ban user") unknowingly.
       frameguard: { action: 'deny' },
-      // Only takes effect over HTTPS in production — harmless on localhost,
-      // but forces browsers to always use HTTPS once deployed, preventing
-      // an attacker from downgrading a connection to plain HTTP.
       hsts: { maxAge: 31536000, includeSubDomains: true, preload: false },
     }),
   );
@@ -43,10 +37,6 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // ── CORS ───────────────────────────────────────────────────
-  // ALLOWED_ORIGINS supports a comma-separated list, so adding a second
-  // origin later (e.g. admin.paypaddy.com) is just an env change — no
-  // code change needed. Falls back to FRONTEND_URL for backward compat,
-  // then to localhost as a last resort for local dev.
   const allowedOrigins = (
     process.env.ALLOWED_ORIGINS ||
     process.env.FRONTEND_URL ||
@@ -73,6 +63,10 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
       transform: true,
       transformOptions: { enableImplicitConversion: true },
+      exceptionFactory: (errors) => {
+        console.error('❌ Validation failed:', JSON.stringify(errors, null, 2));
+        return new BadRequestException(errors);
+      },
     }),
   );
 
@@ -84,10 +78,6 @@ async function bootstrap() {
   );
 
   // ── Swagger API docs ───────────────────────────────────────
-  // NOTE: when you deploy, make sure NODE_ENV is set to "production" —
-  // otherwise this exposes a full interactive map of every endpoint,
-  // including every admin route, with a "try it out" button against
-  // your live API, to anyone who finds the URL.
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('PayPaddy API')
@@ -103,7 +93,8 @@ async function bootstrap() {
 
   const port = process.env.PORT || 4000;
   await app.listen(port);
-  logger.log(`🚀 PayPaddy API running on port ${port}`);
+  logger.log(`🚀 AjoDaddy API running on port ${port}`);
+  logger.log(` Created by Olabanji David Aka Dj Tech `);
   logger.log(`📍 Environment: ${process.env.NODE_ENV}`);
 }
 

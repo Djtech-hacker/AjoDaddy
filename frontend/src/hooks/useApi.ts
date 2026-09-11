@@ -300,7 +300,7 @@ export function useVerifyPayment() {
 
 // ── Notification hooks ────────────────────────────────────────
 
-export function useNotifications(params?: { page?: number; unreadOnly?: boolean }) {
+export function useNotifications(params?: { page?: number; limit?: number; unreadOnly?: boolean }) {
   return useQuery({
     queryKey: qk.notifications(params),
     queryFn:  () => notificationsApi.list(params).then(r => r.data.data),

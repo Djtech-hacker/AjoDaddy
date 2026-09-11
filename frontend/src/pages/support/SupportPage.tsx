@@ -158,12 +158,12 @@ export default function SupportPage() {
       <div className="bg-[#F8F9FB] min-h-screen">
 
         {/* ── Tab bar + actions ── */}
-        <div className="bg-white border-b border-gray-100 px-6">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex">
+        <div className="bg-white border-b border-gray-100 px-4 sm:px-6">
+          <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 py-2 sm:py-0">
+            <div className="flex overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
               {(['tickets', 'reports'] as Tab[]).map(t => (
                 <button key={t} onClick={() => setTab(t)}
-                  className={`flex items-center gap-2 px-1 py-4 mr-8 text-[13px] font-semibold border-b-2 transition-all ${tab === t ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>
+                  className={`flex items-center gap-1.5 sm:gap-2 px-1 py-3 sm:py-4 mr-6 sm:mr-8 text-[13px] font-semibold border-b-2 transition-all flex-shrink-0 whitespace-nowrap ${tab === t ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>
                   {t === 'tickets' ? (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
                   ) : (
@@ -175,28 +175,28 @@ export default function SupportPage() {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2 py-3">
+            <div className="flex items-center gap-2 py-2 sm:py-3">
               <button onClick={() => setNrOpen(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-gray-200 bg-white text-[12px] font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/></svg>
-                Report issue
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 h-9 px-3 sm:px-4 rounded-lg border border-gray-200 bg-white text-[12px] font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm">
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/></svg>
+                <span className="whitespace-nowrap">Report issue</span>
               </button>
               <button onClick={() => setNtOpen(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-all shadow-sm">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-                Contact support
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 h-9 px-3 sm:px-4 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-all shadow-sm">
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                <span className="whitespace-nowrap">Contact support</span>
               </button>
             </div>
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
 
           {/* ── Hero card ── */}
           <div className="relative bg-gradient-to-r from-[#f0fdf4] to-[#dcfce7] border border-emerald-100 rounded-2xl overflow-hidden">
-            <div className="p-8 max-w-lg">
+            <div className="p-5 sm:p-8 max-w-lg">
               <p className="text-[14px] font-semibold text-emerald-600 mb-2">Hi {user?.firstName || 'there'} 👋</p>
-              <h2 className="text-[26px] font-bold text-gray-900 leading-tight tracking-tight mb-2">How can we help you today?</h2>
+              <h2 className="text-[22px] sm:text-[26px] font-bold text-gray-900 leading-tight tracking-tight mb-2">How can we help you today?</h2>
               <p className="text-[13px] text-gray-500 mb-6 leading-relaxed">Our support team is ready to assist you with any questions or issues you may have.</p>
               <div className="relative max-w-sm">
                 <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -230,12 +230,12 @@ export default function SupportPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {CATEGORIES.map(cat => (
                 <button key={cat.title} onClick={() => { setSubject(cat.title); setNtOpen(true) }}
-                  className="group bg-white rounded-2xl border border-gray-100 p-5 text-left hover:border-emerald-200 hover:shadow-md transition-all duration-200 flex flex-col gap-3">
+                  className="group bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 text-left hover:border-emerald-200 hover:shadow-md transition-all duration-200 flex flex-col gap-3">
                   <div className="flex items-start justify-between">
-                    <div className={`w-11 h-11 rounded-xl ${cat.iconBg} flex items-center justify-center text-xl`}>
+                    <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl ${cat.iconBg} flex items-center justify-center text-lg sm:text-xl`}>
                       {cat.icon}
                     </div>
-                    <svg className="w-4 h-4 text-gray-300 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4 text-gray-300 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all mt-1 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
                     </svg>
                   </div>
@@ -256,12 +256,12 @@ export default function SupportPage() {
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
 
                 {/* List header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
+                <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-4 border-b border-gray-50">
                   <h3 className="text-[14px] font-bold text-gray-900">
                     {tab === 'tickets' ? (search ? 'Search results' : 'Recent Tickets') : 'My Reports'}
                   </h3>
                   {filtered.length > 0 && tab === 'tickets' && (
-                    <button onClick={() => setSearch('')} className="text-[12px] text-emerald-600 font-semibold hover:text-emerald-700 transition-colors">
+                    <button onClick={() => setSearch('')} className="text-[12px] text-emerald-600 font-semibold hover:text-emerald-700 transition-colors flex-shrink-0">
                       View all tickets →
                     </button>
                   )}
@@ -272,7 +272,7 @@ export default function SupportPage() {
                   ticketsLoading ? (
                     <div className="p-4 space-y-2">{[...Array(3)].map((_,i) => <Skeleton key={i} className="h-16 rounded-xl"/>)}</div>
                   ) : filtered.length === 0 ? (
-                    <div className="py-16 text-center">
+                    <div className="py-16 text-center px-4">
                       <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl mx-auto mb-4">💬</div>
                       <p className="text-[14px] font-semibold text-gray-800 mb-1">No tickets yet</p>
                       <p className="text-[12px] text-gray-400 mb-5">Open a ticket and we'll respond quickly.</p>
@@ -283,7 +283,7 @@ export default function SupportPage() {
                     </div>
                   ) : filtered.map((t: any, i: number) => (
                     <button key={t.id} onClick={() => openTicket(t)}
-                      className={`w-full flex items-center gap-4 px-6 py-4 text-left hover:bg-gray-50/80 transition-colors group ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                      className={`w-full flex items-center gap-3 sm:gap-4 px-4 sm:px-6 py-4 text-left hover:bg-gray-50/80 transition-colors group ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}>
                       <div className="w-10 h-10 rounded-xl bg-emerald-50 group-hover:bg-emerald-100 flex items-center justify-center flex-shrink-0 transition-colors">
                         <svg className="w-4.5 h-4.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
@@ -291,13 +291,13 @@ export default function SupportPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-semibold text-gray-900 truncate">{t.subject}</p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">
+                        <p className="text-[11px] text-gray-400 mt-0.5 truncate">
                           Ticket ID: #PPD-{t.id?.slice(0,4).toUpperCase()} · Updated {dayjs(t.updatedAt || t.createdAt).fromNow()}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                         <SBadge status={t.status}/>
-                        <svg className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
                         </svg>
                       </div>
@@ -310,7 +310,7 @@ export default function SupportPage() {
                   reportsLoading ? (
                     <div className="p-4 space-y-2">{[...Array(3)].map((_,i) => <Skeleton key={i} className="h-16 rounded-xl"/>)}</div>
                   ) : filtered.length === 0 ? (
-                    <div className="py-16 text-center">
+                    <div className="py-16 text-center px-4">
                       <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl mx-auto mb-4">🚩</div>
                       <p className="text-[14px] font-semibold text-gray-800 mb-1">No reports filed</p>
                       <p className="text-[12px] text-gray-400 mb-5">Reports on groups or members appear here.</p>
@@ -321,7 +321,7 @@ export default function SupportPage() {
                     </div>
                   ) : filtered.map((r: any, i: number) => (
                     <button key={r.id} onClick={() => openReport(r)}
-                      className={`w-full flex items-center gap-4 px-6 py-4 text-left hover:bg-gray-50/80 transition-colors group ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                      className={`w-full flex items-center gap-3 sm:gap-4 px-4 sm:px-6 py-4 text-left hover:bg-gray-50/80 transition-colors group ${i < filtered.length - 1 ? 'border-b border-gray-50' : ''}`}>
                       <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center flex-shrink-0">
                         <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
@@ -331,9 +331,9 @@ export default function SupportPage() {
                         <p className="text-[13px] font-semibold text-gray-900 truncate">{r.type}</p>
                         <p className="text-[11px] text-gray-400 mt-0.5 truncate">{r.description} · {dayjs(r.createdAt).fromNow()}</p>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                         <SBadge status={r.status}/>
-                        <svg className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
                         </svg>
                       </div>
@@ -345,7 +345,7 @@ export default function SupportPage() {
 
             {/* ── Sidebar ── */}
             <div className="space-y-4">
-              <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+              <div className="bg-white rounded-2xl border border-gray-100 p-5 sm:p-6 shadow-sm">
                 <p className="text-[15px] font-bold text-gray-900 mb-1">Need immediate help?</p>
                 <p className="text-[12px] text-gray-400 mb-5 leading-relaxed">Our support team typically responds within a few hours.</p>
                 <div className="space-y-3.5 mb-6">
@@ -374,9 +374,9 @@ export default function SupportPage() {
                 <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3">Status Guide</p>
                 <div className="space-y-2">
                   {(Object.entries(STATUS_CONFIG) as any[]).slice(0,5).map(([, cfg]: any) => (
-                    <div key={cfg.label} className="flex items-center justify-between">
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${cfg.cls}`}>{cfg.label}</span>
-                      <span className="text-[11px] text-gray-400">
+                    <div key={cfg.label} className="flex items-center justify-between gap-2">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${cfg.cls}`}>{cfg.label}</span>
+                      <span className="text-[11px] text-gray-400 text-right">
                         {cfg.label === 'Open' ? 'Awaiting response' :
                          cfg.label === 'In Progress' ? 'Being handled' :
                          cfg.label === 'Under Review' ? 'Team reviewing' :
@@ -394,7 +394,7 @@ export default function SupportPage() {
       {/* ════ NEW TICKET MODAL ════ */}
       <Modal open={ntOpen} onClose={() => setNtOpen(false)} title="Open a support ticket" size="sm"
         footer={
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end w-full">
             <button onClick={() => setNtOpen(false)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
             <button onClick={createTicket} disabled={ntLoading || !subject.trim() || !message.trim()}
               className="h-9 px-5 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors">
@@ -430,7 +430,7 @@ export default function SupportPage() {
       {/* ════ NEW REPORT MODAL ════ */}
       <Modal open={nrOpen} onClose={() => setNrOpen(false)} title="File a report" size="sm"
         footer={
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end w-full">
             <button onClick={() => setNrOpen(false)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
             <button onClick={createReport} disabled={nrLoading || !rCat || !rDesc.trim()}
               className="h-9 px-5 rounded-lg bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 disabled:opacity-40 transition-colors">
@@ -474,12 +474,12 @@ export default function SupportPage() {
               <button onClick={async () => {
                 try { await supportApi.closeTicket(ticketDetail.ticket.id); showToast('Ticket closed','success'); setTD(null); loadTickets() }
                 catch (e: any) { showToast(e?.response?.data?.message || 'Failed','error') }
-              }} className="text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors">
+              }} className="text-[12px] font-medium text-gray-400 hover:text-gray-700 transition-colors whitespace-nowrap">
                 Mark as closed
               </button>
             )}
             <button onClick={sendReply} disabled={replyLoading || !replyText.trim()}
-              className="ml-auto h-9 px-5 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors">
+              className="ml-auto h-9 px-5 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors flex-shrink-0">
               {replyLoading ? 'Sending…' : 'Send reply'}
             </button>
           </div>
@@ -488,7 +488,7 @@ export default function SupportPage() {
           <div className="space-y-3">{[...Array(3)].map((_,i) => <Skeleton key={i} className="h-12 rounded-xl"/>)}</div>
         ) : (
           <div>
-            <div className="flex items-center gap-2 pb-4 border-b border-gray-100">
+            <div className="flex items-center gap-2 pb-4 border-b border-gray-100 flex-wrap">
               <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${PRIORITY_CONFIG[ticketDetail?.ticket?.priority]?.cls || 'bg-gray-100 text-gray-500'}`}>
                 {PRIORITY_CONFIG[ticketDetail?.ticket?.priority]?.label || ticketDetail?.ticket?.priority}
               </span>
@@ -505,7 +505,7 @@ export default function SupportPage() {
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${r.isAdminReply ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600'}`}>
                     {r.isAdminReply ? 'CS' : 'ME'}
                   </div>
-                  <div className={`max-w-[75%] flex flex-col ${r.isAdminReply ? 'items-end' : 'items-start'}`}>
+                  <div className={`max-w-[80%] sm:max-w-[75%] flex flex-col ${r.isAdminReply ? 'items-end' : 'items-start'}`}>
                     <p className="text-[10px] text-gray-400 mb-1.5">{r.isAdminReply ? 'Support team' : 'You'} · {dayjs(r.createdAt).format('MMM D, h:mm A')}</p>
                     <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${r.isAdminReply ? 'bg-gray-900 text-white rounded-tr-sm' : 'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
                       {r.message}
@@ -566,7 +566,7 @@ export default function SupportPage() {
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5 ${r.isCS ? 'bg-gray-800' : 'bg-emerald-600'}`}>
                       {r.isCS ? 'CS' : 'ME'}
                     </div>
-                    <div className={`max-w-[78%] flex flex-col ${r.isCS ? 'items-start' : 'items-end'}`}>
+                    <div className={`max-w-[80%] sm:max-w-[78%] flex flex-col ${r.isCS ? 'items-start' : 'items-end'}`}>
                       <p className="text-[10px] text-gray-400 mb-1.5">{r.isCS ? 'Support team' : 'You'} · {dayjs(r.createdAt).format('MMM D, h:mm A')}</p>
                       <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${r.isCS ? 'bg-gray-100 text-gray-800 rounded-tl-sm' : 'bg-emerald-600 text-white rounded-tr-sm'}`}>
                         {r.content}

@@ -62,7 +62,7 @@ export function MaintenanceScreen() {
           We're making things better
         </h1>
         <p className="text-[14px] text-warm/70 leading-relaxed mb-1">
-          {message || "PayPaddy is temporarily down for maintenance. We'll be back shortly."}
+          {message || "Ajo Daddy is temporarily down for maintenance. We'll be back shortly."}
         </p>
         <p className="text-[13px] text-warm/50 mt-4">
           Your groups, contributions, and wallet balance are all safe — nothing is lost.

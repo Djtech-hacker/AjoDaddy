@@ -29,7 +29,7 @@ import SupportPage     from '@/pages/support/SupportPage'
 import CustomerServiceDashboardPage from '@/pages/support/CustomerServiceDashboardPage'
 import LandingPage     from '@/pages/LandingPage'
 import NotFoundPage    from '@/pages/NotFoundPage'
-import KycVerificationPage from '@/pages/kyc/KycVerificationPage'
+import KycVerificationPage from '@/pages/Kyc/KycVerificationPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()

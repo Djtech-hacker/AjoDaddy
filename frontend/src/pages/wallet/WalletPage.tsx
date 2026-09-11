@@ -64,6 +64,11 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
   const isCredit = TX_CREDIT.has(tx.type)
   const meta = (tx as any).metadata || {}
   const maskAcc = (a: string) => a ? a.slice(0,3) + '****' + a.slice(-3) : '—'
+  // FIX: this used to read `meta.fee`, which never existed — the combined
+  // fee (platform fee + Paystack transfer fee) is stored on the
+  // transaction's own top-level `fee` column, not inside metadata. That's
+  // why the receipt always showed ₦0 regardless of the real fee charged.
+  const feeVal = tx.fee ? Number(tx.fee) : 0
   const rows = [
     { label: 'Transaction ID', val: tx.id },
     { label: 'Reference',      val: tx.reference || '—' },
@@ -72,10 +77,13 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
     { label: 'Status',         val: tx.status },
     { label: 'Date & time',    val: dayjs(tx.createdAt).format('MMM D, YYYY h:mm A') },
     ...(tx.type === 'WITHDRAWAL' ? [
+      // FIX: `meta.bankName` never existed before — only `bankCode` was ever
+      // sent/stored, so this always fell back to '—'. The bank's display
+      // name is now sent from the withdraw form and stored in metadata.
       { label: 'Bank',           val: meta.bankName || '—' },
       { label: 'Account number', val: meta.accountNumber ? maskAcc(meta.accountNumber) : '—' },
       { label: 'Recipient',      val: meta.accountName || '—' },
-      { label: 'Fee',            val: meta.fee ? `₦${Number(meta.fee).toLocaleString()}` : '₦0' },
+      { label: 'Fee',            val: feeVal ? `₦${feeVal.toLocaleString()}` : '₦0' },
     ] : []),
   ]
   return (
@@ -312,6 +320,15 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 // ── Withdraw modal ─────────────────────────────────────────────
+// Manual bank selection, like the original flow: pick a bank, type the
+// account number, one verify call fires once both are present. Kept
+// deliberately simple (no auto-detect) since Paystack test mode caps
+// real bank resolves at 3/day — auto-detect burned through that in a
+// single keystroke by checking several banks in parallel. Two fixes
+// from that experiment are kept here since they're unrelated to
+// auto-detect: sending bankName so receipts/rows show a real bank
+// name, and debouncing the fee calculation so a fast-typed amount
+// can't get overwritten by a stale, slower response.
 function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: () => void }) {
   const { showToast } = useUIStore()
   const [banks, setBanks]               = useState<{ name: string; code: string }[]>([])
@@ -324,11 +341,72 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
   const accountNumber = watch('accountNumber')
   const bankCode      = watch('bankCode')
   const amount        = watch('amount')
-  useEffect(() => { if (!open) return; paymentsApi.getBanks().then(res => { const data = (res as any).data; const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []; setBanks(list.map((b: any) => ({ name: b.name, code: String(b.code) }))) }).catch(() => showToast('Could not load banks', 'error')) }, [open])
-  useEffect(() => { if (accountNumber?.length !== 10 || !bankCode) return; setVerifying(true); setVerifiedName(''); paymentsApi.verifyAccount(accountNumber, bankCode).then(res => { const name = (res as any).data?.accountName ?? (res as any).data?.data?.accountName ?? ''; if (name) { setVerifiedName(name); setValue('accountName', name) } }).catch(() => {}).finally(() => setVerifying(false)) }, [accountNumber, bankCode])
-  useEffect(() => { if (!amount || amount < 500) { setFees(null); return } paymentsApi.getWithdrawalFees(amount).then(res => { const d = (res as any).data; setFees(d?.breakdown ? d : d?.data ?? null) }).catch(() => setFees(null)) }, [amount])
+
+  useEffect(() => {
+    if (!open) return
+    paymentsApi.getBanks()
+      .then(res => {
+        const data = (res as any).data
+        const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
+        setBanks(list.map((b: any) => ({ name: b.name, code: String(b.code) })))
+      })
+      .catch(() => showToast('Could not load banks', 'error'))
+  }, [open])
+
+  useEffect(() => {
+    if (accountNumber?.length !== 10 || !bankCode) { setVerifiedName(''); return }
+    setVerifying(true); setVerifiedName('')
+    paymentsApi.verifyAccount(accountNumber, bankCode)
+      .then(res => {
+        const name = (res as any).data?.accountName ?? (res as any).data?.data?.accountName ?? ''
+        if (name) { setVerifiedName(name); setValue('accountName', name) }
+      })
+      .catch(() => {})
+      .finally(() => setVerifying(false))
+  }, [accountNumber, bankCode])
+
+  // FIX: previously fired one request per keystroke with no ordering
+  // guard — typing 20000 → 200000 quickly meant the 20000 response
+  // could resolve AFTER the 200000 one and silently overwrite it,
+  // showing stale fee numbers. Now debounced, and a token discards
+  // any response that isn't for the latest amount.
+  const feesTokenRef = useRef(0)
+  useEffect(() => {
+    if (!amount || amount < 500) { setFees(null); return }
+    const token = ++feesTokenRef.current
+    const handle = setTimeout(() => {
+      paymentsApi.getWithdrawalFees(amount)
+        .then(res => {
+          if (feesTokenRef.current !== token) return
+          const d = (res as any).data
+          setFees(d?.breakdown ? d : d?.data ?? null)
+        })
+        .catch(() => { if (feesTokenRef.current === token) setFees(null) })
+    }, 350)
+    return () => clearTimeout(handle)
+  }, [amount])
+
   const handleClose = () => { reset(); setVerifiedName(''); setFees(null); setStep('form'); onClose() }
-  const onSubmit = async (data: WithdrawData) => { if (step === 'form') { setStep('confirm'); return } setSubmitting(true); try { await paymentsApi.withdraw(data); showToast('Withdrawal initiated — funds on the way', 'success'); handleClose(); onSuccess() } catch (e: any) { showToast(e?.response?.data?.message || 'Withdrawal failed', 'error'); setStep('form') } finally { setSubmitting(false) } }
+  const onSubmit = async (data: WithdrawData) => {
+    if (step === 'form') { setStep('confirm'); return }
+    setSubmitting(true)
+    try {
+      // FIX: the request never included the bank's display name — only
+      // bankCode — so nothing was ever available for receipts/rows to show
+      // as "Bank". The name is already sitting in local `banks` state from
+      // the dropdown; just attach it before sending.
+      const bankName = banks.find(b => b.code === data.bankCode)?.name
+      await paymentsApi.withdraw({ ...data, bankName })
+      showToast('Withdrawal initiated — funds on the way', 'success')
+      handleClose()
+      onSuccess()
+    } catch (e: any) {
+      showToast(e?.response?.data?.message || 'Withdrawal failed', 'error')
+      setStep('form')
+    } finally {
+      setSubmitting(false)
+    }
+  }
   return (
     <Modal open={open} onClose={handleClose} title={step === 'confirm' ? 'Confirm withdrawal' : 'Withdraw funds'} size="sm"
       footer={<><Button variant="secondary" onClick={step === 'confirm' ? () => setStep('form') : handleClose}>{step === 'confirm' ? 'Back' : 'Cancel'}</Button><Button onClick={handleSubmit(onSubmit)} loading={submitting} disabled={verifying}>{step === 'confirm' ? 'Confirm withdrawal' : 'Continue'}</Button></>}>
@@ -362,6 +440,7 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
     </Modal>
   )
 }
+
 
 // ── Outstanding debts ──────────────────────────────────────────
 // Shows any debt created after a missed contribution + expired grace

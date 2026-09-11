@@ -240,8 +240,8 @@ export default function GroupDetailPage() {
   const collected  = group?.contributions?.filter((c: Contribution) => c.status === 'PAID').reduce((s: number, c: Contribution) => s + c.amount, 0) || 0
   const remaining  = totalPool - collected
   const completion = totalPool > 0 ? Math.round((collected / totalPool) * 100) : 0
-  const cyclePct   = group?.totalCycles > 0 ? Math.round((group.currentCycle / group.totalCycles) * 100) : 0
-
+  
+const cyclePct   = group && group.totalCycles > 0 ? Math.round((group.currentCycle / group.totalCycles) * 100) : 0
   // Default the cycle selector to the group's current cycle once it loads.
   useEffect(() => {
     if (group?.currentCycle && selectedCycle === null) setSelectedCycle(group.currentCycle)
@@ -298,7 +298,7 @@ export default function GroupDetailPage() {
   const handleRemoveConfirm   = async () => { if (!group || !removeTarget) return; setRemoveLoading(true); try { await groupsApi.removeMember(group.id, removeTarget.userId); showToast(`${removeTarget.user.firstName} removed`, 'success'); setRemoveTarget(null); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setRemoveLoading(false) } }
   const handleApproveConfirm  = async () => { if (!group || !approveTarget) return; setApproveLoading(true); try { await groupsApi.approveMember(group.id, approveTarget.userId); showToast(`${approveTarget.user.firstName} approved`, 'success'); setApproveTarget(null); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setApproveLoading(false) } }
   const handleRejectConfirm   = async () => { if (!group || !rejectTarget) return; setRejectLoading(true); try { await groupsApi.rejectMember(group.id, rejectTarget.userId); showToast('Request rejected', 'success'); setRejectTarget(null); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setRejectLoading(false) } }
-  const handleBanConfirm      = async () => { if (!group || !banTarget) return; setBanLoading(true); try { await groupsApi.banMember(group.id, banTarget.userId, { reason: banReason || undefined }); showToast(`${banTarget.user.firstName} banned`, 'success'); setBanTarget(null); setBanReason(''); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setBanLoading(false) } }
+  const handleBanConfirm      = async () => { if (!group || !banTarget) return; setBanLoading(true); try { await groupsApi.banMember(group.id, banTarget.userId, banReason || undefined); showToast(`${banTarget.user.firstName} banned`, 'success'); setBanTarget(null); setBanReason(''); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setBanLoading(false) } }
   const handleTransferConfirm = async () => { if (!group || !transferTarget) return; setTransferLoading(true); try { await groupsApi.transferOwnership(group.id, transferTarget.userId); showToast('Ownership transferred', 'success'); setTransferTarget(null); refetch() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setTransferLoading(false) } }
   const openReorder    = () => { if (!group) return; setDragOrder([...(group.members || [])].sort((a: GroupMember, b: GroupMember) => a.payoutPosition - b.payoutPosition)); setReorderOpen(true) }
   const handleDragStart = (i: number) => setDragIdx(i)

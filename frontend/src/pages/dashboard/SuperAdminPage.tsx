@@ -17,6 +17,12 @@ const pv  = (p: string) => ({ LOW:'neutral', MEDIUM:'warning', HIGH:'danger', UR
 
 const KYC_ACTIONS = ['KYC_MANUALLY_APPROVED','KYC_MANUALLY_REJECTED','KYC_COMPLETED','KYC_NIN_VERIFIED','KYC_BVN_VERIFIED','KYC_MANUAL_REVIEW','KYC_DUPLICATE_NIN_ATTEMPT','KYC_DUPLICATE_BVN_ATTEMPT','KYC_IDENTITY_REVEALED','KYC_FACE_SUBMITTED']
 
+// Shared classnames for the horizontally-scrolling pill tab bars so they
+// behave on narrow screens (no nested-scroll fighting, no visible scrollbar).
+const TAB_BAR = 'flex gap-1 bg-white border border-black/[0.06] rounded-xl p-1 overflow-x-auto flex-nowrap [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
+const TAB_BTN = (active: boolean) =>
+  `px-3 sm:px-4 py-2 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-all flex-shrink-0 ${active ? 'bg-ink text-warm' : 'text-dim hover:text-ink'}`
+
 export default function SuperAdminPage() {
   const { user: currentUser } = useAuthStore()
   const { showToast } = useUIStore()
@@ -330,12 +336,11 @@ export default function SuperAdminPage() {
 
   return (
     <DashboardLayout title="Super Admin" subtitle="Platform oversight · Roles · Settings · Full audit trail">
-      <div className="p-4 sm:p-6 max-w-7xl space-y-5">
+      <div className="p-4 sm:p-6 max-w-7xl space-y-5 overflow-x-hidden">
 
-        <div className="flex gap-1 bg-white border border-black/[0.06] rounded-xl p-1 overflow-x-auto w-fit">
+        <div className={`${TAB_BAR} w-full sm:w-fit`}>
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`px-4 py-2 rounded-lg text-[12px] font-semibold whitespace-nowrap transition-all ${tab === t.id ? 'bg-ink text-warm' : 'text-dim hover:text-ink'}`}>
+            <button key={t.id} onClick={() => setTab(t.id)} className={TAB_BTN(tab === t.id)}>
               {t.label}
             </button>
           ))}
@@ -345,10 +350,10 @@ export default function SuperAdminPage() {
         {tab === 'overview' && (
           <>
             {dashLoading ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{[...Array(6)].map((_,i) => <Skeleton key={i} className="h-24 rounded-2xl"/>)}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">{[...Array(6)].map((_,i) => <Skeleton key={i} className="h-24 rounded-2xl"/>)}</div>
             ) : (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                   {[
                     { label: 'Total users',     val: overview.users?.total || 0,           sub: `${overview.users?.newToday||0} today` },
                     { label: 'Active groups',   val: overview.groups?.active || 0,          sub: `of ${overview.groups?.total||0} total` },
@@ -357,9 +362,9 @@ export default function SuperAdminPage() {
                     { label: 'Suspended users', val: overview.users?.suspended || 0,        sub: 'Accounts' },
                     { label: 'Pending payouts', val: overview.finance?.pendingPayouts || 0, sub: 'Awaiting' },
                   ].map(m => (
-                    <motion.div key={m.label} className={`rounded-2xl border p-5 ${(m as any).accent ? 'bg-red-50 border-red-100' : 'bg-white border-black/[0.06]'}`} initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
+                    <motion.div key={m.label} className={`rounded-2xl border p-4 sm:p-5 ${(m as any).accent ? 'bg-red-50 border-red-100' : 'bg-white border-black/[0.06]'}`} initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
                       <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-2">{m.label}</p>
-                      <p className={`text-[24px] font-extrabold tracking-tight ${(m as any).accent ? 'text-red-600' : 'text-ink'}`}>{m.val}</p>
+                      <p className={`text-[20px] sm:text-[24px] font-extrabold tracking-tight ${(m as any).accent ? 'text-red-600' : 'text-ink'}`}>{m.val}</p>
                       <p className="text-[11px] text-mist mt-1">{m.sub}</p>
                     </motion.div>
                   ))}
@@ -374,10 +379,10 @@ export default function SuperAdminPage() {
                       { role: 'CUSTOMER_SERVICE', label: 'CS Agents',    color: 'bg-amber-500'   },
                       { role: 'USER',             label: 'Regular users',color: 'bg-sand'        },
                     ].map(r => (
-                      <div key={r.role} className="flex items-center justify-between py-2.5 border-b border-black/[0.04] last:border-0">
-                        <div className="flex items-center gap-2.5">
-                          <span className={`w-2.5 h-2.5 rounded-full ${r.color}`}/>
-                          <p className="text-[13px] font-medium text-ink">{r.label}</p>
+                      <div key={r.role} className="flex items-center justify-between gap-2 py-2.5 border-b border-black/[0.04] last:border-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${r.color}`}/>
+                          <p className="text-[13px] font-medium text-ink truncate">{r.label}</p>
                         </div>
                         <Button size="sm" variant="secondary" onClick={() => { setRoleFilter(r.role); setTab('users') }}>View →</Button>
                       </div>
@@ -395,13 +400,13 @@ export default function SuperAdminPage() {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl border border-black/[0.06] p-5">
-                  <div className="flex items-center justify-between mb-4">
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-4 sm:p-5">
+                  <div className="flex items-center justify-between mb-4 gap-2">
                     <p className="text-[14px] font-bold text-ink">Complaints & Reports</p>
                     <Button size="sm" variant="secondary" onClick={() => setTab('cs-oversight')}>View all →</Button>
                   </div>
                   {reportStats && (
-                    <div className="grid grid-cols-4 gap-4 mb-5">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-5">
                       {[
                         { label: 'Total',     val: reportStats.total,     color: 'text-ink'          },
                         { label: 'Open',      val: reportStats.open,      color: 'text-amber-600'    },
@@ -410,7 +415,7 @@ export default function SuperAdminPage() {
                       ].map(s => (
                         <div key={s.label} className="bg-warm rounded-xl p-4">
                           <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-1">{s.label}</p>
-                          <p className={`text-[22px] font-extrabold ${s.color}`}>{s.val}</p>
+                          <p className={`text-[20px] sm:text-[22px] font-extrabold ${s.color}`}>{s.val}</p>
                         </div>
                       ))}
                     </div>
@@ -427,8 +432,8 @@ export default function SuperAdminPage() {
                           {r.groupId && <Badge variant="neutral">Group</Badge>}
                           {r.reportedUserId && <Badge variant="neutral">Member</Badge>}
                         </div>
-                        <p className="text-[12px] text-dim mt-0.5 truncate max-w-xl">{r.description}</p>
-                        <p className="text-[10px] text-mist mt-1 font-mono">By @{r.reporter?.username || '—'} · {dayjs(r.createdAt).format('MMM D, YYYY h:mm A')}{r.reportedUser ? ` · Against @${r.reportedUser.username}` : ''}</p>
+                        <p className="text-[12px] text-dim mt-0.5 truncate">{r.description}</p>
+                        <p className="text-[10px] text-mist mt-1 font-mono truncate">By @{r.reporter?.username || '—'} · {dayjs(r.createdAt).format('MMM D, YYYY h:mm A')}{r.reportedUser ? ` · Against @${r.reportedUser.username}` : ''}</p>
                       </div>
                     </div>
                   ))}
@@ -445,14 +450,13 @@ export default function SuperAdminPage() {
               <p className="text-[13px] font-semibold text-amber-800">Super Admin read-only oversight</p>
               <p className="text-[12px] text-amber-700 mt-0.5">You can see every ticket, every report, every CS reply, and every internal note. This is monitoring only — use Admin panel for enforcement actions.</p>
             </div>
-            <div className="flex gap-1 bg-white border border-black/[0.06] rounded-xl p-1 w-fit">
+            <div className={`${TAB_BAR} w-full sm:w-fit`}>
               {([
                 { id: 'tickets', label: 'Support Tickets' },
                 { id: 'reports', label: 'Reports & Complaints' },
                 { id: 'agents',  label: 'CS Agents' },
               ] as { id: 'tickets' | 'reports' | 'agents'; label: string }[]).map(t => (
-                <button key={t.id} onClick={() => setCsSubTab(t.id)}
-                  className={`px-4 py-2 rounded-lg text-[12px] font-semibold transition-all ${csSubTab === t.id ? 'bg-ink text-warm' : 'text-dim hover:text-ink'}`}>
+                <button key={t.id} onClick={() => setCsSubTab(t.id)} className={TAB_BTN(csSubTab === t.id)}>
                   {t.label}
                 </button>
               ))}
@@ -460,38 +464,59 @@ export default function SuperAdminPage() {
 
             {csSubTab === 'tickets' && (
               <div className="space-y-4">
-                <select value={csTicketFilter} onChange={e => { setCsTicketFilter(e.target.value); setCsTicketPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none cursor-pointer">
+                <select value={csTicketFilter} onChange={e => { setCsTicketFilter(e.target.value); setCsTicketPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none cursor-pointer w-full sm:w-auto">
                   <option value="">All tickets</option><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option>
                 </select>
                 <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
                   {csTicketsLoading ? <div className="p-5 space-y-3">{[...Array(4)].map((_,i) => <Skeleton key={i} className="h-14 rounded-xl"/>)}</div>
                   : csTickets.length === 0 ? <EmptyState icon="💬" title="No tickets found"/>
                   : (
-                    <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-warm border-b border-black/[0.05]">
-                        <tr>{['User','Subject','Priority','Status','Assigned To','Escalated','Created',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                      </thead>
-                      <tbody>
+                    <>
+                      {/* Mobile card list */}
+                      <div className="md:hidden divide-y divide-black/[0.04]">
                         {csTickets.map((t: any) => (
-                          <tr key={t.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
-                            <td className="px-4 py-3 text-[11px] text-dim"><p className="font-semibold text-ink">@{t.user?.username || '—'}</p><p className="font-mono text-[10px]">{t.user?.email}</p></td>
-                            <td className="px-4 py-3 text-[12px] text-ink max-w-[180px] truncate">{t.subject}</td>
-                            <td className="px-4 py-3"><Badge variant={pv(t.priority)}>{t.priority?.toLowerCase()}</Badge></td>
-                            <td className="px-4 py-3"><Badge variant={tsv(t.status)}>{t.status?.replace('_',' ').toLowerCase()}</Badge></td>
-                            <td className="px-4 py-3 text-[11px] text-dim">{t.assignedToId ? `@${t.assignedTo?.username || t.assignedToId.slice(0,8)}` : <span className="text-mist">Unassigned</span>}</td>
-                            <td className="px-4 py-3 text-[11px]">{t.escalatedAt ? <span className="text-orange-500 font-semibold">⬆ {dayjs(t.escalatedAt).format('MMM D')}</span> : <span className="text-mist">—</span>}</td>
-                            <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
-                            <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openCsTicket(t)}>View</Button></td>
-                          </tr>
+                          <button key={t.id} onClick={() => openCsTicket(t)} className="w-full text-left p-4 active:bg-warm/60">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <p className="text-[13px] font-semibold text-ink truncate">{t.subject}</p>
+                              <Badge variant={pv(t.priority)}>{t.priority?.toLowerCase()}</Badge>
+                            </div>
+                            <p className="text-[11px] text-dim">@{t.user?.username || '—'} <span className="text-mist font-mono">· {t.user?.email}</span></p>
+                            <div className="flex items-center gap-2 flex-wrap mt-2">
+                              <Badge variant={tsv(t.status)}>{t.status?.replace('_',' ').toLowerCase()}</Badge>
+                              {t.assignedToId ? <span className="text-[10px] text-dim">@{t.assignedTo?.username || t.assignedToId.slice(0,8)}</span> : <span className="text-[10px] text-mist">Unassigned</span>}
+                              {t.escalatedAt && <span className="text-[10px] text-orange-500 font-semibold">⬆ escalated</span>}
+                            </div>
+                            <p className="text-[10px] text-mist mt-1.5 font-mono">{dayjs(t.createdAt).format('MMM D, h:mm A')}</p>
+                          </button>
                         ))}
-                      </tbody>
-                    </table>
-                    </div>
+                      </div>
+                      {/* Desktop table */}
+                      <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-warm border-b border-black/[0.05]">
+                          <tr>{['User','Subject','Priority','Status','Assigned To','Escalated','Created',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                        </thead>
+                        <tbody>
+                          {csTickets.map((t: any) => (
+                            <tr key={t.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
+                              <td className="px-4 py-3 text-[11px] text-dim"><p className="font-semibold text-ink">@{t.user?.username || '—'}</p><p className="font-mono text-[10px]">{t.user?.email}</p></td>
+                              <td className="px-4 py-3 text-[12px] text-ink max-w-[180px] truncate">{t.subject}</td>
+                              <td className="px-4 py-3"><Badge variant={pv(t.priority)}>{t.priority?.toLowerCase()}</Badge></td>
+                              <td className="px-4 py-3"><Badge variant={tsv(t.status)}>{t.status?.replace('_',' ').toLowerCase()}</Badge></td>
+                              <td className="px-4 py-3 text-[11px] text-dim">{t.assignedToId ? `@${t.assignedTo?.username || t.assignedToId.slice(0,8)}` : <span className="text-mist">Unassigned</span>}</td>
+                              <td className="px-4 py-3 text-[11px]">{t.escalatedAt ? <span className="text-orange-500 font-semibold">⬆ {dayjs(t.escalatedAt).format('MMM D')}</span> : <span className="text-mist">—</span>}</td>
+                              <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
+                              <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openCsTicket(t)}>View</Button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      </div>
+                    </>
                   )}
                   {csTicketPag && csTicketPag.totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
-                      <p className="text-[12px] text-mist">Page {csTicketPag.page} of {csTicketPag.totalPages} · {csTicketPag.total} tickets</p>
+                      <p className="text-[11px] sm:text-[12px] text-mist">Page {csTicketPag.page} of {csTicketPag.totalPages} · {csTicketPag.total} tickets</p>
                       <div className="flex gap-2"><Button size="sm" variant="secondary" disabled={csTicketPage===1} onClick={() => setCsTicketPage(p => p-1)}>Prev</Button><Button size="sm" variant="secondary" disabled={csTicketPage>=csTicketPag.totalPages} onClick={() => setCsTicketPage(p => p+1)}>Next</Button></div>
                     </div>
                   )}
@@ -501,38 +526,54 @@ export default function SuperAdminPage() {
 
             {csSubTab === 'reports' && (
               <div className="space-y-4">
-                <select value={csReportFilter} onChange={e => { setCsReportFilter(e.target.value); setCsReportPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none cursor-pointer">
+                <select value={csReportFilter} onChange={e => { setCsReportFilter(e.target.value); setCsReportPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none cursor-pointer w-full sm:w-auto">
                   <option value="">All reports</option><option value="OPEN">Open</option><option value="UNDER_REVIEW">Under review</option><option value="ESCALATED">Escalated</option><option value="RESOLVED">Resolved</option><option value="DISMISSED">Dismissed</option>
                 </select>
                 <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
                   {csReportsLoading ? <div className="p-5 space-y-3">{[...Array(4)].map((_,i) => <Skeleton key={i} className="h-14 rounded-xl"/>)}</div>
                   : csReports.length === 0 ? <EmptyState icon="🚩" title="No reports found"/>
                   : (
-                    <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-warm border-b border-black/[0.05]">
-                        <tr>{['Reporter','Against','Type','Status','Assigned To','Resolved By','Filed',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                      </thead>
-                      <tbody>
+                    <>
+                      {/* Mobile card list */}
+                      <div className="md:hidden divide-y divide-black/[0.04]">
                         {csReports.map((r: any) => (
-                          <tr key={r.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
-                            <td className="px-4 py-3 text-[11px] text-dim">@{r.reporter?.username || '—'}</td>
-                            <td className="px-4 py-3 text-[11px] text-dim">{r.reportedUser ? `@${r.reportedUser.username}` : r.groupId ? 'Group' : '—'}</td>
-                            <td className="px-4 py-3 text-[12px] text-ink">{r.type}</td>
-                            <td className="px-4 py-3"><Badge variant={dsv(r.status)}>{r.status?.replace('_',' ').toLowerCase()}</Badge></td>
-                            <td className="px-4 py-3 text-[11px] text-dim">{r.assignedToId ? `@${r.assignedTo?.username || r.assignedToId.slice(0,8)}` : <span className="text-mist">—</span>}</td>
-                            <td className="px-4 py-3 text-[11px] text-dim">{r.resolvedById ? `@${r.resolvedBy?.username || r.resolvedById.slice(0,8)}` : <span className="text-mist">—</span>}</td>
-                            <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(r.createdAt).format('MMM D, h:mm A')}</td>
-                            <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openCsReport(r)}>View</Button></td>
-                          </tr>
+                          <button key={r.id} onClick={() => openCsReport(r)} className="w-full text-left p-4 active:bg-warm/60">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <p className="text-[13px] font-semibold text-ink">{r.type}</p>
+                              <Badge variant={dsv(r.status)}>{r.status?.replace('_',' ').toLowerCase()}</Badge>
+                            </div>
+                            <p className="text-[11px] text-dim">@{r.reporter?.username || '—'} → {r.reportedUser ? `@${r.reportedUser.username}` : r.groupId ? 'Group' : '—'}</p>
+                            <p className="text-[10px] text-mist mt-1.5 font-mono">{dayjs(r.createdAt).format('MMM D, h:mm A')}</p>
+                          </button>
                         ))}
-                      </tbody>
-                    </table>
-                    </div>
+                      </div>
+                      {/* Desktop table */}
+                      <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-warm border-b border-black/[0.05]">
+                          <tr>{['Reporter','Against','Type','Status','Assigned To','Resolved By','Filed',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                        </thead>
+                        <tbody>
+                          {csReports.map((r: any) => (
+                            <tr key={r.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
+                              <td className="px-4 py-3 text-[11px] text-dim">@{r.reporter?.username || '—'}</td>
+                              <td className="px-4 py-3 text-[11px] text-dim">{r.reportedUser ? `@${r.reportedUser.username}` : r.groupId ? 'Group' : '—'}</td>
+                              <td className="px-4 py-3 text-[12px] text-ink">{r.type}</td>
+                              <td className="px-4 py-3"><Badge variant={dsv(r.status)}>{r.status?.replace('_',' ').toLowerCase()}</Badge></td>
+                              <td className="px-4 py-3 text-[11px] text-dim">{r.assignedToId ? `@${r.assignedTo?.username || r.assignedToId.slice(0,8)}` : <span className="text-mist">—</span>}</td>
+                              <td className="px-4 py-3 text-[11px] text-dim">{r.resolvedById ? `@${r.resolvedBy?.username || r.resolvedById.slice(0,8)}` : <span className="text-mist">—</span>}</td>
+                              <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(r.createdAt).format('MMM D, h:mm A')}</td>
+                              <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openCsReport(r)}>View</Button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      </div>
+                    </>
                   )}
                   {csReportPag && csReportPag.totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
-                      <p className="text-[12px] text-mist">Page {csReportPag.page} of {csReportPag.totalPages} · {csReportPag.total} reports</p>
+                      <p className="text-[11px] sm:text-[12px] text-mist">Page {csReportPag.page} of {csReportPag.totalPages} · {csReportPag.total} reports</p>
                       <div className="flex gap-2"><Button size="sm" variant="secondary" disabled={csReportPage===1} onClick={() => setCsReportPage(p => p-1)}>Prev</Button><Button size="sm" variant="secondary" disabled={csReportPage>=csReportPag.totalPages} onClick={() => setCsReportPage(p => p+1)}>Next</Button></div>
                     </div>
                   )}
@@ -550,15 +591,15 @@ export default function SuperAdminPage() {
                     <Button onClick={() => { setRoleFilter('CUSTOMER_SERVICE'); setTab('users') }}>Manage roles →</Button>
                   </div>
                 ) : (
-                  <div className="grid md:grid-cols-2 gap-4">
+                  <div className="grid sm:grid-cols-2 gap-4">
                     {csAgents.map((a: any) => (
                       <div key={a.id} className="bg-white rounded-2xl border border-black/[0.06] p-5">
                         <div className="flex items-center gap-3 mb-4">
                           <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-[13px] font-bold flex-shrink-0">{a.firstName?.[0]}{a.lastName?.[0]}</div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-semibold text-ink">{a.firstName} {a.lastName}</p>
-                            <p className="text-[11px] text-mist font-mono">@{a.username}</p>
-                            <p className="text-[11px] text-mist">{a.email}</p>
+                            <p className="text-[13px] font-semibold text-ink truncate">{a.firstName} {a.lastName}</p>
+                            <p className="text-[11px] text-mist font-mono truncate">@{a.username}</p>
+                            <p className="text-[11px] text-mist truncate">{a.email}</p>
                           </div>
                           <Badge variant={sv(a.status)}>{a.status?.toLowerCase()}</Badge>
                         </div>
@@ -566,7 +607,7 @@ export default function SuperAdminPage() {
                           <div className="bg-warm rounded-xl p-3"><p className="text-[10px] text-mist uppercase tracking-wider mb-1">Reputation</p><p className="text-[16px] font-bold text-ink">{a.reputationScore || 100}</p></div>
                           <div className="bg-warm rounded-xl p-3"><p className="text-[10px] text-mist uppercase tracking-wider mb-1">Joined</p><p className="text-[12px] font-semibold text-ink">{dayjs(a.createdAt).format('MMM D, YYYY')}</p></div>
                         </div>
-                        <div className="mt-3 flex gap-2">
+                        <div className="mt-3 flex gap-2 flex-wrap">
                           <Button size="sm" variant="secondary" className="flex-1" onClick={() => { setCsTicketFilter(''); setCsSubTab('tickets') }}>View their tickets</Button>
                           <Button size="sm" variant="secondary" onClick={() => { setRoleFilter('CUSTOMER_SERVICE'); setTab('users') }}>Manage role</Button>
                         </div>
@@ -587,49 +628,81 @@ export default function SuperAdminPage() {
               <p className="text-[12px] text-dim mt-0.5">You are the only role that can promote or demote users to Admin, Customer Service, or Super Admin.</p>
             </div>
             <div className="flex gap-3 flex-wrap">
-              <input value={search} onChange={e => { setSearch(e.target.value); setUsersPage(1) }} placeholder="Search users…" className="h-10 border border-black/[0.09] rounded-xl px-4 text-[13px] text-ink bg-white outline-none focus:border-brand w-64"/>
-              <select value={roleFilter} onChange={e => { setRoleFilter(e.target.value); setUsersPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none focus:border-brand cursor-pointer">
+              <input value={search} onChange={e => { setSearch(e.target.value); setUsersPage(1) }} placeholder="Search users…" className="h-10 border border-black/[0.09] rounded-xl px-4 text-[13px] text-ink bg-white outline-none focus:border-brand w-full sm:w-64"/>
+              <select value={roleFilter} onChange={e => { setRoleFilter(e.target.value); setUsersPage(1) }} className="h-10 border border-black/[0.09] rounded-xl px-3 text-[12px] text-ink bg-white outline-none focus:border-brand cursor-pointer w-full sm:w-auto">
                 <option value="">All roles</option><option value="SUPER_ADMIN">Super Admin</option><option value="ADMIN">Admin</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="USER">User</option>
               </select>
             </div>
             <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
               {usersLoading ? <div className="p-5 space-y-3">{[...Array(5)].map((_,i) => <Skeleton key={i} className="h-14 rounded-xl"/>)}</div>
               : users.length === 0 ? <EmptyState icon="👤" title="No users found"/> : (
-                <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-warm border-b border-black/[0.05]">
-                    <tr>{['User','Email','Role','Status','Joined','Actions'].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
+                <>
+                  {/* Mobile card list */}
+                  <div className="md:hidden divide-y divide-black/[0.04]">
                     {users.map((u: any) => (
-                      <tr key={u.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50">
-                        <td className="px-4 py-3.5"><p className="text-[12px] font-semibold text-ink">{u.firstName} {u.lastName}</p><p className="text-[10px] text-mist font-mono">@{u.username}</p></td>
-                        <td className="px-4 py-3.5 text-[11px] text-dim font-mono">{u.email}</td>
-                        <td className="px-4 py-3.5"><Badge variant={rv(u.role)}>{u.role?.replace('_',' ').toLowerCase()}</Badge></td>
-                        <td className="px-4 py-3.5"><Badge variant={sv(u.status)}>{u.status?.toLowerCase()}</Badge></td>
-                        <td className="px-4 py-3.5 text-[10px] text-mist font-mono">{dayjs(u.createdAt).format('MMM D, YYYY')}</td>
-                        <td className="px-4 py-3.5">
-                          <div className="flex gap-1.5 flex-wrap items-center">
-                            {u.id !== currentUser?.id && (
-                              <select value={u.role} disabled={roleLoading===u.id} onChange={e => handleRoleChange(u, e.target.value)}
-                                className="h-7 border border-black/[0.08] rounded-lg px-2 text-[11px] text-ink bg-white outline-none focus:border-brand cursor-pointer disabled:opacity-50">
-                                <option value="USER">User</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="ADMIN">Admin</option><option value="SUPER_ADMIN">Super Admin</option>
-                              </select>
-                            )}
-                            {u.id !== currentUser?.id && u.status !== 'BANNED' && <Button size="sm" variant="danger" onClick={() => setBanModal(u)}>Perm Ban</Button>}
-                            {u.id !== currentUser?.id && u.status === 'BANNED' && <Button size="sm" variant="secondary" onClick={() => superAdminApi.unbanUser(u.id).then(() => { showToast('Unbanned','success'); loadUsers() }).catch((e: any) => showToast(e?.response?.data?.message || 'Failed','error'))}>Unban</Button>}
-                            {u.id !== currentUser?.id && <Button size="sm" variant="danger" onClick={() => setDeleteModal(u)}>Delete</Button>}
+                      <div key={u.id} className="p-4">
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-ink truncate">{u.firstName} {u.lastName}</p>
+                            <p className="text-[10px] text-mist font-mono truncate">@{u.username} · {u.email}</p>
                           </div>
-                        </td>
-                      </tr>
+                          <Badge variant={sv(u.status)}>{u.status?.toLowerCase()}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap mt-2">
+                          <Badge variant={rv(u.role)}>{u.role?.replace('_',' ').toLowerCase()}</Badge>
+                          <span className="text-[10px] text-mist font-mono">Joined {dayjs(u.createdAt).format('MMM D, YYYY')}</span>
+                        </div>
+                        {u.id !== currentUser?.id && (
+                          <div className="flex gap-1.5 flex-wrap items-center mt-3">
+                            <select value={u.role} disabled={roleLoading===u.id} onChange={e => handleRoleChange(u, e.target.value)}
+                              className="h-8 border border-black/[0.08] rounded-lg px-2 text-[11px] text-ink bg-white outline-none focus:border-brand cursor-pointer disabled:opacity-50 flex-1 min-w-[120px]">
+                              <option value="USER">User</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="ADMIN">Admin</option><option value="SUPER_ADMIN">Super Admin</option>
+                            </select>
+                            {u.status !== 'BANNED' && <Button size="sm" variant="danger" onClick={() => setBanModal(u)}>Perm Ban</Button>}
+                            {u.status === 'BANNED' && <Button size="sm" variant="secondary" onClick={() => superAdminApi.unbanUser(u.id).then(() => { showToast('Unbanned','success'); loadUsers() }).catch((e: any) => showToast(e?.response?.data?.message || 'Failed','error'))}>Unban</Button>}
+                            <Button size="sm" variant="danger" onClick={() => setDeleteModal(u)}>Delete</Button>
+                          </div>
+                        )}
+                      </div>
                     ))}
-                  </tbody>
-                </table>
-                </div>
+                  </div>
+                  {/* Desktop table */}
+                  <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-warm border-b border-black/[0.05]">
+                      <tr>{['User','Email','Role','Status','Joined','Actions'].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u: any) => (
+                        <tr key={u.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50">
+                          <td className="px-4 py-3.5"><p className="text-[12px] font-semibold text-ink">{u.firstName} {u.lastName}</p><p className="text-[10px] text-mist font-mono">@{u.username}</p></td>
+                          <td className="px-4 py-3.5 text-[11px] text-dim font-mono">{u.email}</td>
+                          <td className="px-4 py-3.5"><Badge variant={rv(u.role)}>{u.role?.replace('_',' ').toLowerCase()}</Badge></td>
+                          <td className="px-4 py-3.5"><Badge variant={sv(u.status)}>{u.status?.toLowerCase()}</Badge></td>
+                          <td className="px-4 py-3.5 text-[10px] text-mist font-mono">{dayjs(u.createdAt).format('MMM D, YYYY')}</td>
+                          <td className="px-4 py-3.5">
+                            <div className="flex gap-1.5 flex-wrap items-center">
+                              {u.id !== currentUser?.id && (
+                                <select value={u.role} disabled={roleLoading===u.id} onChange={e => handleRoleChange(u, e.target.value)}
+                                  className="h-7 border border-black/[0.08] rounded-lg px-2 text-[11px] text-ink bg-white outline-none focus:border-brand cursor-pointer disabled:opacity-50">
+                                  <option value="USER">User</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="ADMIN">Admin</option><option value="SUPER_ADMIN">Super Admin</option>
+                                </select>
+                              )}
+                              {u.id !== currentUser?.id && u.status !== 'BANNED' && <Button size="sm" variant="danger" onClick={() => setBanModal(u)}>Perm Ban</Button>}
+                              {u.id !== currentUser?.id && u.status === 'BANNED' && <Button size="sm" variant="secondary" onClick={() => superAdminApi.unbanUser(u.id).then(() => { showToast('Unbanned','success'); loadUsers() }).catch((e: any) => showToast(e?.response?.data?.message || 'Failed','error'))}>Unban</Button>}
+                              {u.id !== currentUser?.id && <Button size="sm" variant="danger" onClick={() => setDeleteModal(u)}>Delete</Button>}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  </div>
+                </>
               )}
               {usersPag && usersPag.totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
-                  <p className="text-[12px] text-mist">Page {usersPag.page} of {usersPag.totalPages} · {usersPag.total} users</p>
+                  <p className="text-[11px] sm:text-[12px] text-mist">Page {usersPag.page} of {usersPag.totalPages} · {usersPag.total} users</p>
                   <div className="flex gap-2"><Button size="sm" variant="secondary" disabled={usersPage===1} onClick={() => setUsersPage(p => p-1)}>Prev</Button><Button size="sm" variant="secondary" disabled={usersPage>=usersPag.totalPages} onClick={() => setUsersPage(p => p+1)}>Next</Button></div>
                 </div>
               )}
@@ -654,28 +727,27 @@ export default function SuperAdminPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <motion.div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
                     <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wider mb-2">Total available balance</p>
-                    <p className="text-[28px] font-extrabold text-emerald-700 tracking-tight">₦{revenue.walletBalance.toLocaleString()}</p>
+                    <p className="text-[24px] sm:text-[28px] font-extrabold text-emerald-700 tracking-tight">₦{revenue.walletBalance.toLocaleString()}</p>
                     <p className="text-[11px] text-emerald-600 mt-1">Company revenue wallet</p>
                   </motion.div>
                   <motion.div className="rounded-2xl border border-black/[0.06] bg-white p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
                     <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-2">From late penalty fees</p>
-                    <p className="text-[24px] font-extrabold text-ink tracking-tight">₦{revenue.totalFromPenalties.toLocaleString()}</p>
+                    <p className="text-[20px] sm:text-[24px] font-extrabold text-ink tracking-tight">₦{revenue.totalFromPenalties.toLocaleString()}</p>
                     <p className="text-[11px] text-mist mt-1">{revenue.penaltyCount} penalt{revenue.penaltyCount === 1 ? 'y' : 'ies'} collected</p>
                   </motion.div>
                   <motion.div className="rounded-2xl border border-black/[0.06] bg-white p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
                     <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-2">From platform fees (1%)</p>
-                    <p className="text-[24px] font-extrabold text-ink tracking-tight">₦{revenue.totalFromPlatformFees.toLocaleString()}</p>
+                    <p className="text-[20px] sm:text-[24px] font-extrabold text-ink tracking-tight">₦{revenue.totalFromPlatformFees.toLocaleString()}</p>
                     <p className="text-[11px] text-mist mt-1">{revenue.platformFeeCount} withdrawal{revenue.platformFeeCount === 1 ? '' : 's'} charged</p>
                   </motion.div>
                 </div>
 
-                <div className="flex gap-1 bg-white border border-black/[0.06] rounded-xl p-1 w-fit">
+                <div className={`${TAB_BAR} w-full sm:w-fit`}>
                   {([
                     { id: 'penalties',     label: 'Recent penalty fees' },
                     { id: 'platform-fees', label: 'Recent platform fees' },
                   ] as { id: 'penalties' | 'platform-fees'; label: string }[]).map(t => (
-                    <button key={t.id} onClick={() => setRevenueSubTab(t.id)}
-                      className={`px-4 py-2 rounded-lg text-[12px] font-semibold transition-all ${revenueSubTab === t.id ? 'bg-ink text-warm' : 'text-dim hover:text-ink'}`}>
+                    <button key={t.id} onClick={() => setRevenueSubTab(t.id)} className={TAB_BTN(revenueSubTab === t.id)}>
                       {t.label}
                     </button>
                   ))}
@@ -684,45 +756,73 @@ export default function SuperAdminPage() {
                 <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
                   {revenueSubTab === 'penalties' ? (
                     revenue.recentPenalties.length === 0 ? <EmptyState icon="🕒" title="No penalty fees collected yet"/> : (
-                      <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-warm border-b border-black/[0.05]">
-                          <tr>{['When','Amount','From user','Group / Contribution',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                        </thead>
-                        <tbody>
+                      <>
+                        <div className="md:hidden divide-y divide-black/[0.04]">
                           {revenue.recentPenalties.map((t: any) => (
-                            <tr key={t.id} className="border-b border-black/[0.04] last:border-0">
-                              <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
-                              <td className="px-4 py-3 text-[13px] font-bold text-ink">₦{t.amount.toLocaleString()}</td>
-                              <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.fromUserId || '—'}</td>
-                              <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.groupId ? `${t.metadata.groupId.slice(0,8)}…` : '—'}</td>
-                              <td className="px-4 py-3"><Badge variant={t.status === 'COMPLETED' ? 'success' : 'warning'}>{t.status?.toLowerCase()}</Badge></td>
-                            </tr>
+                            <div key={t.id} className="p-4">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[14px] font-bold text-ink">₦{t.amount.toLocaleString()}</p>
+                                <Badge variant={t.status === 'COMPLETED' ? 'success' : 'warning'}>{t.status?.toLowerCase()}</Badge>
+                              </div>
+                              <p className="text-[10px] text-mist font-mono mt-1">{dayjs(t.createdAt).format('MMM D, h:mm A')}</p>
+                              <p className="text-[11px] text-dim font-mono mt-1">From {t.metadata?.fromUserId || '—'}{t.metadata?.groupId ? ` · Group ${t.metadata.groupId.slice(0,8)}…` : ''}</p>
+                            </div>
                           ))}
-                        </tbody>
-                      </table>
-                      </div>
+                        </div>
+                        <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-warm border-b border-black/[0.05]">
+                            <tr>{['When','Amount','From user','Group / Contribution',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {revenue.recentPenalties.map((t: any) => (
+                              <tr key={t.id} className="border-b border-black/[0.04] last:border-0">
+                                <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
+                                <td className="px-4 py-3 text-[13px] font-bold text-ink">₦{t.amount.toLocaleString()}</td>
+                                <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.fromUserId || '—'}</td>
+                                <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.groupId ? `${t.metadata.groupId.slice(0,8)}…` : '—'}</td>
+                                <td className="px-4 py-3"><Badge variant={t.status === 'COMPLETED' ? 'success' : 'warning'}>{t.status?.toLowerCase()}</Badge></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        </div>
+                      </>
                     )
                   ) : (
                     revenue.recentPlatformFees.length === 0 ? <EmptyState icon="🕒" title="No platform fees collected yet"/> : (
-                      <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-warm border-b border-black/[0.05]">
-                          <tr>{['When','Amount','From user','Reference',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                        </thead>
-                        <tbody>
+                      <>
+                        <div className="md:hidden divide-y divide-black/[0.04]">
                           {revenue.recentPlatformFees.map((t: any) => (
-                            <tr key={t.id} className="border-b border-black/[0.04] last:border-0">
-                              <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
-                              <td className="px-4 py-3 text-[13px] font-bold text-ink">₦{t.amount.toLocaleString()}</td>
-                              <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.fromUserId || '—'}</td>
-                              <td className="px-4 py-3 text-[11px] text-dim font-mono truncate max-w-[160px]">{t.reference}</td>
-                              <td className="px-4 py-3"><Badge variant="success">{t.status?.toLowerCase()}</Badge></td>
-                            </tr>
+                            <div key={t.id} className="p-4">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[14px] font-bold text-ink">₦{t.amount.toLocaleString()}</p>
+                                <Badge variant="success">{t.status?.toLowerCase()}</Badge>
+                              </div>
+                              <p className="text-[10px] text-mist font-mono mt-1">{dayjs(t.createdAt).format('MMM D, h:mm A')}</p>
+                              <p className="text-[11px] text-dim font-mono mt-1 truncate">From {t.metadata?.fromUserId || '—'} · Ref {t.reference}</p>
+                            </div>
                           ))}
-                        </tbody>
-                      </table>
-                      </div>
+                        </div>
+                        <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-warm border-b border-black/[0.05]">
+                            <tr>{['When','Amount','From user','Reference',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {revenue.recentPlatformFees.map((t: any) => (
+                              <tr key={t.id} className="border-b border-black/[0.04] last:border-0">
+                                <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
+                                <td className="px-4 py-3 text-[13px] font-bold text-ink">₦{t.amount.toLocaleString()}</td>
+                                <td className="px-4 py-3 text-[11px] text-dim font-mono">{t.metadata?.fromUserId || '—'}</td>
+                                <td className="px-4 py-3 text-[11px] text-dim font-mono truncate max-w-[160px]">{t.reference}</td>
+                                <td className="px-4 py-3"><Badge variant="success">{t.status?.toLowerCase()}</Badge></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        </div>
+                      </>
                     )
                   )}
                 </div>
@@ -741,7 +841,7 @@ export default function SuperAdminPage() {
             {settingsLoading ? <div className="space-y-3">{[...Array(4)].map((_,i) => <Skeleton key={i} className="h-16 rounded-2xl"/>)}</div>
             : settings && (
               <>
-                <div className="bg-white rounded-2xl border border-black/[0.06] p-6 space-y-5">
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-5 sm:p-6 space-y-5">
                   <p className="text-[14px] font-bold text-ink">Automated Report Escalation Thresholds</p>
                   <p className="text-[13px] text-dim">When a user or group reaches these report counts, the system automatically flags or escalates them.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -758,14 +858,14 @@ export default function SuperAdminPage() {
                     ))}
                   </div>
                 </div>
-                <div className="bg-white rounded-2xl border border-black/[0.06] p-6 space-y-4">
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-5 sm:p-6 space-y-4">
                   <p className="text-[14px] font-bold text-ink">Financial Controls</p>
                   <div>
                     <label className="block text-[12px] font-medium text-dim mb-1.5">Platform fee (%)</label>
                     <input type="number" step="0.1" value={settings.platformFeePercent} onChange={e => setSettings({...settings, platformFeePercent: +e.target.value})} className="h-10 w-32 border border-black/[0.08] rounded-xl px-3 text-[13px] text-ink bg-white outline-none focus:border-brand"/>
                   </div>
                 </div>
-                <div className="bg-white rounded-2xl border border-black/[0.06] p-6 space-y-4">
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-5 sm:p-6 space-y-4">
                   <p className="text-[14px] font-bold text-ink">Platform Toggles</p>
                   {[
                     { key: 'withdrawalsFrozen',   label: 'Freeze all withdrawals',   desc: 'Blocks all withdrawal attempts platform-wide' },
@@ -783,7 +883,7 @@ export default function SuperAdminPage() {
                 </div>
 
                 {/* ── Schedule Maintenance ── */}
-                <div className="bg-white rounded-2xl border border-black/[0.06] p-6 space-y-4">
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-5 sm:p-6 space-y-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <p className="text-[14px] font-bold text-ink">Schedule Maintenance</p>
                     {settings.maintenanceScheduledAt && (
@@ -835,10 +935,10 @@ export default function SuperAdminPage() {
         {/* ── Full Audit Log ── */}
         {tab === 'audit' && (
           <div className="space-y-4">
-            <div className="flex gap-3 flex-wrap items-center">
+            <div className="space-y-3">
               <p className="text-[12px] text-mist">Full unfiltered platform audit trail — every action by every role.</p>
               <input value={actionFilter} onChange={e => { setActionFilter(e.target.value); setLogsPage(1) }} placeholder="Filter by action (e.g. KYC, BAN, ROLE)…"
-                className="h-10 border border-black/[0.09] rounded-xl px-4 text-[13px] text-ink bg-white outline-none focus:border-brand w-72"/>
+                className="h-10 border border-black/[0.09] rounded-xl px-4 text-[13px] text-ink bg-white outline-none focus:border-brand w-full sm:w-72"/>
               <div className="flex gap-1.5 flex-wrap">
                 {['KYC', 'REVEALED', 'BAN', 'SUSPEND', 'ROLE', 'GROUP', 'REFUND'].map(q => (
                   <button key={q} onClick={() => { setActionFilter(q); setLogsPage(1) }}
@@ -853,44 +953,66 @@ export default function SuperAdminPage() {
               {logsLoading ? <div className="p-5 space-y-3">{[...Array(6)].map((_,i) => <Skeleton key={i} className="h-12 rounded-xl"/>)}</div>
               : logs.length === 0 ? <EmptyState icon="📋" title="No log entries found"/>
               : (
-                <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-warm border-b border-black/[0.05]">
-                    <tr>{['When','Actor','Role','Action','Details',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
+                <>
+                  {/* Mobile card list */}
+                  <div className="md:hidden divide-y divide-black/[0.04]">
                     {logs.map((log: any) => {
                       const isKyc = KYC_ACTIONS.includes(log.action)
-                      const colorCls = getActionColor(log.action)
                       return (
-                        <tr key={log.id} className={`border-b border-black/[0.04] last:border-0 hover:bg-warm/50 cursor-pointer ${isKyc ? 'bg-blue-50/20' : ''}`} onClick={() => setLogDetail(log)}>
-                          <td className="px-4 py-3.5 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(log.createdAt).format('MMM D, h:mm A')}</td>
-                          <td className="px-4 py-3.5">
-                            <p className="text-[12px] font-semibold text-ink">{log.user?.username ? `@${log.user.username}` : 'System'}</p>
-                            {log.user?.firstName && <p className="text-[10px] text-mist">{log.user.firstName} {log.user.lastName}</p>}
-                          </td>
-                          <td className="px-4 py-3.5"><Badge variant={rv(log.user?.role || 'USER')}>{(log.user?.role || 'system').replace('_',' ').toLowerCase()}</Badge></td>
-                          <td className="px-4 py-3.5">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${colorCls}`}>
+                        <button key={log.id} onClick={() => setLogDetail(log)} className={`w-full text-left p-4 active:bg-warm/60 ${isKyc ? 'bg-blue-50/20' : ''}`}>
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${getActionColor(log.action)}`}>
                               {log.action?.replace(/_/g,' ')}
                             </span>
-                          </td>
-                          <td className="px-4 py-3.5 max-w-[280px]">
-                            {renderAuditDetails(log)}
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <Button size="sm" variant="secondary" onClick={e => { e.stopPropagation(); setLogDetail(log) }}>Details</Button>
-                          </td>
-                        </tr>
+                            <Badge variant={rv(log.user?.role || 'USER')}>{(log.user?.role || 'system').replace('_',' ').toLowerCase()}</Badge>
+                          </div>
+                          <p className="text-[12px] font-semibold text-ink">{log.user?.username ? `@${log.user.username}` : 'System'}</p>
+                          <div className="text-[11px] mt-1">{renderAuditDetails(log)}</div>
+                          <p className="text-[10px] text-mist mt-1.5 font-mono">{dayjs(log.createdAt).format('MMM D, h:mm A')}</p>
+                        </button>
                       )
                     })}
-                  </tbody>
-                </table>
-                </div>
+                  </div>
+                  {/* Desktop table */}
+                  <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-warm border-b border-black/[0.05]">
+                      <tr>{['When','Actor','Role','Action','Details',''].map(h => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {logs.map((log: any) => {
+                        const isKyc = KYC_ACTIONS.includes(log.action)
+                        const colorCls = getActionColor(log.action)
+                        return (
+                          <tr key={log.id} className={`border-b border-black/[0.04] last:border-0 hover:bg-warm/50 cursor-pointer ${isKyc ? 'bg-blue-50/20' : ''}`} onClick={() => setLogDetail(log)}>
+                            <td className="px-4 py-3.5 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(log.createdAt).format('MMM D, h:mm A')}</td>
+                            <td className="px-4 py-3.5">
+                              <p className="text-[12px] font-semibold text-ink">{log.user?.username ? `@${log.user.username}` : 'System'}</p>
+                              {log.user?.firstName && <p className="text-[10px] text-mist">{log.user.firstName} {log.user.lastName}</p>}
+                            </td>
+                            <td className="px-4 py-3.5"><Badge variant={rv(log.user?.role || 'USER')}>{(log.user?.role || 'system').replace('_',' ').toLowerCase()}</Badge></td>
+                            <td className="px-4 py-3.5">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${colorCls}`}>
+                                {log.action?.replace(/_/g,' ')}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 max-w-[280px]">
+                              {renderAuditDetails(log)}
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <Button size="sm" variant="secondary" onClick={e => { e.stopPropagation(); setLogDetail(log) }}>Details</Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  </div>
+                </>
               )}
               {logsPag && logsPag.totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
-                  <p className="text-[12px] text-mist">Page {logsPag.page} of {logsPag.totalPages}</p>
+                  <p className="text-[11px] sm:text-[12px] text-mist">Page {logsPag.page} of {logsPag.totalPages}</p>
                   <div className="flex gap-2"><Button size="sm" variant="secondary" disabled={logsPage===1} onClick={() => setLogsPage(p => p-1)}>Prev</Button><Button size="sm" variant="secondary" disabled={logsPage>=logsPag.totalPages} onClick={() => setLogsPage(p => p+1)}>Next</Button></div>
                 </div>
               )}

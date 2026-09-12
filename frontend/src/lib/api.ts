@@ -68,10 +68,19 @@ api.interceptors.response.use(
       _retry?: boolean
     }
 
-    // ── Skip the interceptor for the refresh call itself ─────
-    // Without this guard the refresh 401 re-triggers the interceptor
-    // → calls refresh again → infinite loop → logout.
-    if (original.url?.includes('/auth/refresh')) {
+    // ── Skip the interceptor for the refresh call itself, and for
+    // login/register — a 401 on /auth/login means "wrong password" or
+    // "email not verified", NOT "your session expired". Letting those
+    // fall into the refresh-retry path below caused a failed login to
+    // trigger a doomed refresh attempt → logout() → hard redirect to
+    // /login?reason=session_expired, wiping out the real error message
+    // (e.g. "Please verify your email before logging in") before the
+    // login form ever got to show it.
+    if (
+      original.url?.includes('/auth/refresh') ||
+      original.url?.includes('/auth/login') ||
+      original.url?.includes('/auth/register')
+    ) {
       return Promise.reject(error)
     }
 

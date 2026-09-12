@@ -228,10 +228,18 @@ export class AuthService {
       return newUser;
     });
 
-    await this.sendVerificationEmail(user.id, user.email, user.firstName);
+    await this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
+      // The user + wallet above are already committed — a failure here
+      // (mail hiccup, audit log, etc.) must NOT make a successful
+      // registration look like a failure to the frontend. Log it and
+      // move on; the user can be sent a fresh verification link later.
+      console.error(`[register] sendVerificationEmail failed for ${user.email}:`, err);
+    });
 
     await this.prisma.auditLog.create({
       data: { actorId: user.id, action: 'USER_REGISTERED', entityType: 'User', entityId: user.id, ipAddress },
+    }).catch((err) => {
+      console.error(`[register] auditLog failed for ${user.id}:`, err);
     });
 
     return { message: 'Registration successful. Please check your email to verify your account.' };

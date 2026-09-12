@@ -11,11 +11,10 @@
 //     isn't already used, then updates the transaction PIN hash — same
 //     bcrypt path setTransactionPin() already uses.
 //
-// NOTE: MailService needs a new sendPinChangeOtp(email, firstName, code)
-// method — it doesn't exist yet. See the comment above the call site
-// below for what it needs to do; it's the same shape as
-// sendEmailVerification/sendPasswordReset, just a numeric code instead
-// of a link.
+// FIX (this pass): login() validated password/status but never checked
+// isEmailVerified, so a PENDING_VERIFICATION account (i.e. someone who
+// never clicked the emailed link) could still log in. register() and
+// verifyEmail() were already correct — this closes the one actual gap.
 // ============================================================
 
 import {
@@ -259,6 +258,16 @@ export class AuthService {
     if (!passwordValid) {
       await logAttempt(false, 'WRONG_PASSWORD');
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // FIX: this was missing — a registered-but-unverified account could
+    // log in fine since only SUSPENDED/BANNED/deletedAt were checked
+    // below. register() already sends the verification email and
+    // verifyEmail() already flips this to true, so this just enforces
+    // it at the login gate.
+    if (!user.isEmailVerified) {
+      await logAttempt(false, 'EMAIL_NOT_VERIFIED');
+      throw new UnauthorizedException('Please verify your email before logging in. Check your inbox for the verification link.');
     }
 
     if (user.deletedAt)              { await logAttempt(false, 'ACCOUNT_DELETED');   throw new UnauthorizedException('This account no longer exists.'); }

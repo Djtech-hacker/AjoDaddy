@@ -37,7 +37,7 @@ export default function ForgotPassword() {
         initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       >
-        <Link to="/" className="inline-flex items-center mb-10">
+        <Link to="/" className="w-full flex items-center justify-center mb-10">
           <img src={LOGO_URL} alt="PayPaddy" className="h-48" />
         </Link>
 

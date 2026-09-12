@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import helmet from 'helmet';
 import cookieParser = require('cookie-parser');
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { ValidationExceptionFilter } from './common/filters/validation-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
@@ -71,7 +72,15 @@ async function bootstrap() {
   );
 
   // ── Global filters & interceptors ──────────────────────────
-  app.useGlobalFilters(new HttpExceptionFilter());
+  // NOTE: order matters. ValidationExceptionFilter is registered FIRST
+  // so it gets first refusal on BadRequestException (validation
+  // errors) and rewrites the generic "Validation failed" into the
+  // actual constraint message (e.g. "Password must contain uppercase,
+  // lowercase, and a number") before HttpExceptionFilter — which
+  // doesn't know how to read class-validator's raw ValidationError[]
+  // shape — ever sees it. All other exception types (401, 403, 409,
+  // etc.) still fall through to HttpExceptionFilter as before.
+  app.useGlobalFilters(new ValidationExceptionFilter(), new HttpExceptionFilter());
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     new TransformInterceptor(),
@@ -94,7 +103,7 @@ async function bootstrap() {
   const port = process.env.PORT || 4000;
   await app.listen(port);
   logger.log(`🚀 AjoDaddy API running on port ${port}`);
-  logger.log(` Created by Olabanji David Aka Dj Tech `);
+  logger.log(` Created by Olabanji David Aka Dj Tech olabanjidavid16@gmail.com `);
   logger.log(`📍 Environment: ${process.env.NODE_ENV}`);
 }
 

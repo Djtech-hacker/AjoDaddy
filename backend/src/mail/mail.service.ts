@@ -21,7 +21,11 @@ export class MailService {
     this.appName = this.configService.get<string>('APP_NAME', 'PayPaddy');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
 
-    const transportOptions: SMTPTransport.Options = {
+    // `family` (force IPv4) is a valid Nodemailer/Node net option that's
+    // missing from @types/nodemailer's Options type — extend it locally.
+    type MailOptions = SMTPTransport.Options & { family?: number };
+
+    const transportOptions: MailOptions = {
       host: this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com'),
       port: this.configService.get<number>('SMTP_PORT', 587),
       secure: false,

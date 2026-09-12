@@ -864,6 +864,9 @@ model InternalNote {
   disputeId String?
   authorId  String
   content   String
+  fileUrl   String?
+  fileName  String?
+  fileSize  Int?
   createdAt DateTime @default(now())
 
   @@index([ticketId])

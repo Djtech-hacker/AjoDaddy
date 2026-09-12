@@ -22,7 +22,12 @@ export class CreateTicketDto {
 }
 export class ReplyTicketDto { @IsString() message: string; }
 export class UpdateTicketStatusDto { @IsEnum(['OPEN','IN_PROGRESS','RESOLVED','CLOSED']) status: string; }
-export class AddInternalNoteDto { @IsString() content: string; }
+export class AddInternalNoteDto {
+  @IsString() content: string;
+  @IsOptional() @IsString() fileUrl?: string;
+  @IsOptional() @IsString() fileName?: string;
+  @IsOptional() fileSize?: number;
+}
 export class EscalateTicketDto { @IsOptional() @IsString() note?: string; }
 
 @Injectable()
@@ -90,11 +95,11 @@ export class SupportService {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) throw new NotFoundException('Ticket not found');
     const [replies, notes, user] = await Promise.all([
-      this.prisma.ticketReply.findMany({ 
-  where: { ticketId }, 
-  orderBy: { createdAt: 'asc' },
-  include: { author: { select: { id: true, firstName: true, lastName: true, username: true, role: true } } }
-}),
+      this.prisma.ticketReply.findMany({
+        where: { ticketId },
+        orderBy: { createdAt: 'asc' },
+        include: { author: { select: { id: true, firstName: true, lastName: true, username: true, role: true } } },
+      }),
       this.prisma.internalNote.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } }),
       this.prisma.user.findUnique({ where: { id: ticket.userId }, select: { id: true, username: true, email: true, firstName: true, lastName: true } }),
     ]);
@@ -111,16 +116,20 @@ export class SupportService {
     return { message: 'Reply sent' };
   }
 
-  async addInternalNote(staffId: string, ticketId: string, dto: AddInternalNoteDto) {
+   async addInternalNote(staffId: string, ticketId: string, dto: AddInternalNoteDto) {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) throw new NotFoundException('Ticket not found');
-    const note = await this.prisma.internalNote.create({ data: { ticketId, authorId: staffId, content: dto.content } });
+    const note = await this.prisma.internalNote.create({ data: { ticketId, authorId: staffId, content: dto.content, fileUrl: dto.fileUrl, fileName: dto.fileName, fileSize: dto.fileSize } });
     await this.prisma.auditLog.create({ data: { actorId: staffId, action: 'INTERNAL_NOTE_ADDED', entityType: 'SupportTicket', entityId: ticketId, metadata: { noteId: note.id } } });
     return note;
   }
 
   async getInternalNotes(ticketId: string) {
-    return this.prisma.internalNote.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } });
+    const notes = await this.prisma.internalNote.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } });
+    const authorIds = [...new Set(notes.map(n => n.authorId))];
+    const authors = authorIds.length ? await this.prisma.user.findMany({ where: { id: { in: authorIds } }, select: { id: true, firstName: true, lastName: true, username: true, role: true } }) : [];
+    const aMap = new Map(authors.map(a => [a.id, a]));
+    return notes.map(n => ({ ...n, author: aMap.get(n.authorId) || null }));
   }
 
   async escalateTicket(staffId: string, ticketId: string, dto: EscalateTicketDto) {
@@ -234,12 +243,22 @@ export class AdminEscalationController {
   @Get() getQueue(@Query('page') page = 1, @Query('limit') limit = 50) { return this.supportService.getEscalationQueue(+page, +limit); }
 }
 
-// backward compat — admin can still view/act on tickets
+// Admin can view/act on tickets — including replying to escalated ones
 @ApiTags('Admin Support') @Controller('admin/support') @UseGuards(JwtAuthGuard, AdminGuard) @ApiBearerAuth()
 export class AdminSupportController {
   constructor(private readonly supportService: SupportService) {}
   @Get('tickets') getAll(@Query('status') s?: string, @Query('page') p = 1, @Query('limit') l = 20) { return this.supportService.csGetTickets({ status: s, page: +p, limit: +l }); }
   @Get('tickets/:id') getDetail(@Param('id') id: string) { return this.supportService.csGetTicketDetail(id); }
+  @Get('tickets/:id/notes') getNotes(@Param('id') id: string) { return this.supportService.getInternalNotes(id); }
+  @Post('tickets/:id/notes') addNote(@Req() req: any, @Param('id') id: string, @Body() dto: AddInternalNoteDto) { return this.supportService.addInternalNote(req.user.id, id, dto); }
+
+  // ── NEW: lets Admin/Super Admin reply on an escalated ticket ──
+  // Reuses csReply(), which marks isAdminReply: true, sets status
+  // IN_PROGRESS, notifies the user, and writes the TICKET_REPLY_SENT
+  // audit log entry — same behavior as the CS reply endpoint, just
+  // reachable by Admin/Super Admin roles too.
+  @Post('tickets/:id/reply') reply(@Req() req: any, @Param('id') id: string, @Body() dto: ReplyTicketDto) { return this.supportService.csReply(req.user.id, id, dto); }
+
   @Patch('tickets/:id/status') updateStatus(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateTicketStatusDto) { return this.supportService.updateStatus(req.user.id, id, dto.status); }
 }
 

@@ -29,8 +29,12 @@ function StatusBadge({ status }: { status: string }) {
     CANCELLED:            { label: 'Cancelled',            cls: 'bg-red-50 text-red-600 ring-1 ring-red-200' },
     CRITICAL:             { label: 'Critical',             cls: 'bg-red-50 text-red-600 ring-1 ring-red-200' },
     HIGH:                 { label: 'High',                 cls: 'bg-orange-50 text-orange-600 ring-1 ring-orange-200' },
-    MEDIUM:               { label: 'Medium',               cls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
+    MEDIUM:               { label: 'Medium',                cls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
     LOW:                  { label: 'Low',                  cls: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200' },
+    OPEN:                 { label: 'Open',                  cls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' },
+    IN_PROGRESS:          { label: 'In Progress',            cls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
+    RESOLVED:             { label: 'Resolved',              cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
+    CLOSED:               { label: 'Closed',                cls: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200' },
   }
   const c = cfg[status] || { label: status, cls: 'bg-gray-100 text-gray-500' }
   return (
@@ -82,6 +86,16 @@ export default function AdminPage() {
   const [resolveStatus, setRS]        = useState('RESOLVED')
   const [resolution, setResolution]   = useState('')
   const [resolveLoading, setResL]     = useState(false)
+
+  // Escalation — ticket message thread (reply-to-CS/user flow)
+  const [ticketThread, setTicketThread]     = useState<any>(null)
+  const [ticketThreadLoading, setTTL]       = useState(false)
+  const [ticketReplyMsg, setTicketReplyMsg] = useState('')
+  const [ticketReplySending, setTRS]        = useState(false)
+  const [ticketStatusUpdating, setTSU]      = useState(false)
+  const [ticketNotes, setTicketNotes]       = useState<any[]>([])
+  const [noteFile, setNoteFile]             = useState<File | null>(null)
+  const [noteUploading, setNoteUploading]   = useState(false)
 
   // Users
   const [search, setSearch]               = useState('')
@@ -194,6 +208,23 @@ export default function AdminPage() {
   useEffect(() => { if (tab === 'audit')         loadAudit()         }, [tab, auditPage])
   useEffect(() => { if (tab === 'kyc')           loadKyc()           }, [tab, kycStatusFilter])
 
+  // Load the full message thread whenever a ticket-type escalation is opened
+    useEffect(() => {
+    if (queueDetail?._kind === 'ticket') {
+      setTTL(true)
+      Promise.all([
+        adminApi.getTicketDetail(queueDetail.id),
+        adminApi.getTicketNotes(queueDetail.id),
+      ]).then(([detailRes, notesRes]) => {
+        setTicketThread((detailRes.data as any)?.data || detailRes.data)
+        setTicketNotes((notesRes.data as any)?.data || notesRes.data || [])
+      }).catch(() => showToast('Could not load ticket', 'error'))
+        .finally(() => setTTL(false))
+    } else {
+      setTicketThread(null); setTicketNotes([])
+    }
+  }, [queueDetail])
+
   const closeKycActionModal = () => {
     setPendingKycAction(null); setActionLoading(false)
   }
@@ -276,6 +307,51 @@ export default function AdminPage() {
   const kycPendingCount = kycRecords.filter(r => r.status === 'MANUAL_REVIEW').length
 
   const handleResolveCase = async () => { if (!queueDetail || !resolution.trim()) return; setResL(true); try { if (queueDetail._kind === 'dispute') await adminApi.resolveDispute(queueDetail.id, resolveStatus, resolution); showToast('Case resolved', 'success'); setQueueDetail(null); setResolution(''); setRS('RESOLVED'); loadQueue() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setResL(false) } }
+
+    // Send a private message to CS on an escalated ticket (with optional file), never seen by the customer
+  const handleTicketReply = async () => {
+    if (!queueDetail || (!ticketReplyMsg.trim() && !noteFile)) return
+    setTRS(true)
+    try {
+      let fileUrl: string | undefined, fileName: string | undefined, fileSize: number | undefined
+      if (noteFile) {
+        setNoteUploading(true)
+        const cloudName    = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME    || 'dq8vykxut'
+        const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'paypaddy_kyc_faces'
+        const fd = new FormData()
+        fd.append('file', noteFile)
+        fd.append('upload_preset', uploadPreset)
+        fd.append('folder', 'cs-admin-attachments')
+        const up  = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, { method: 'POST', body: fd })
+        const upd = await up.json()
+        if (!upd.secure_url) throw new Error('File upload failed')
+        fileUrl = upd.secure_url; fileName = noteFile.name; fileSize = noteFile.size
+        setNoteUploading(false)
+      }
+      await adminApi.addTicketNote(queueDetail.id, ticketReplyMsg, fileUrl, fileName, fileSize)
+      setTicketReplyMsg(''); setNoteFile(null)
+      const r = await adminApi.getTicketNotes(queueDetail.id)
+      setTicketNotes((r.data as any)?.data || r.data || [])
+      showToast('Sent to CS', 'success')
+    } catch (e: any) {
+      showToast(e?.response?.data?.message || e?.message || 'Failed', 'error')
+    } finally { setTRS(false); setNoteUploading(false) }
+  }
+
+  // Mark an escalated ticket resolved/closed from the review modal
+  const handleTicketStatusChange = async (status: string) => {
+    if (!queueDetail) return
+    setTSU(true)
+    try {
+      await adminApi.updateTicketStatus(queueDetail.id, status)
+      showToast(`Ticket marked ${status.toLowerCase()}`, 'success')
+      setQueueDetail(null)
+      loadQueue()
+    } catch (e: any) {
+      showToast(e?.response?.data?.message || 'Failed', 'error')
+    } finally { setTSU(false) }
+  }
+
   const handleSuspend     = async () => { if (!suspendModal || !suspendReason.trim()) return; await suspendUser.mutateAsync({ id: suspendModal.id, reason: suspendReason }); setSuspendModal(null); setSuspendReason(''); refetchUsers() }
   const handleBan         = async () => { if (!banModal || !banReason.trim()) return; setBanLoading(true); try { await adminApi.banUser(banModal.id, banReason); showToast(`${banModal.firstName} banned`, 'success'); setBanModal(null); setBanReason(''); refetchUsers() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setBanLoading(false) } }
   const handleUnban       = async (u: any) => { setUnbanLoadingId(u.id); try { await adminApi.unbanUser(u.id); showToast(`${u.firstName} unbanned`, 'success'); refetchUsers() } catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') } finally { setUnbanLoadingId(null) } }
@@ -732,21 +808,80 @@ export default function AdminPage() {
         )}
       </Modal>
 
-      {/* Escalation review */}
-      <Modal open={!!queueDetail} onClose={()=>{setQueueDetail(null);setResolution('');setRS('RESOLVED')}} title="Review escalated case" size="md">
+      {/* Escalation review — dispute resolution form OR ticket message thread */}
+      <Modal
+        open={!!queueDetail}
+        onClose={()=>{setQueueDetail(null);setResolution('');setRS('RESOLVED');setTicketReplyMsg('');setTicketThread(null)}}
+        title="Review escalated case"
+        size="md"
+      >
         <div className="space-y-4">
           <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
             <p className="text-[13px] text-gray-900">{queueDetail?._kind==='ticket'?`"${queueDetail?.subject}"`:queueDetail?.type}</p>
           </div>
-          <p className="text-[13px] text-gray-600 leading-relaxed">{queueDetail?.description||queueDetail?.subject}</p>
-          {queueDetail?._kind==='dispute'&&!['RESOLVED','DISMISSED','CLOSED'].includes(queueDetail?.status)&&(
-            <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-              <select value={resolveStatus} onChange={e=>setRS(e.target.value)} className="h-9 w-full border border-gray-200 rounded-lg px-3 text-[13px] text-gray-900 bg-white outline-none cursor-pointer">
-                <option value="RESOLVED">Resolved</option><option value="DISMISSED">Dismissed</option><option value="CLOSED">Closed</option>
-              </select>
-              <textarea value={resolution} onChange={e=>setResolution(e.target.value)} rows={3} placeholder="What was the outcome?" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-[13px] text-gray-900 outline-none focus:border-gray-400 resize-none transition-all"/>
-              <button disabled={!resolution.trim()||resolveLoading} onClick={handleResolveCase} className="h-9 px-4 rounded-lg bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 disabled:opacity-40 transition-colors">{resolveLoading?'Closing…':'Close case'}</button>
-            </div>
+
+          {queueDetail?._kind==='ticket' ? (
+            ticketThreadLoading ? (
+              <div className="space-y-2">{[...Array(3)].map((_,i)=><Skeleton key={i} className="h-12 rounded-xl"/>)}</div>
+            ) : (
+                            <>
+                <div className="max-h-72 overflow-y-auto space-y-2.5 pr-1">
+                  {ticketNotes.map((n:any) => (
+                    <div key={n.id} className="flex justify-start">
+                      <div className="max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] bg-gray-100 text-gray-900">
+                        {n.content && <p className="leading-relaxed whitespace-pre-wrap">{n.content}</p>}
+                        {n.fileUrl && (
+                          <a href={n.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 mt-2 bg-white rounded-lg px-3 py-2 border border-gray-200 hover:bg-gray-50 transition-colors">
+                            <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                            <span className="text-[12px] font-medium text-gray-700 truncate">{n.fileName || 'Attachment'}</span>
+                          </a>
+                        )}
+                        <p className="text-[10px] mt-1 text-gray-400">
+                          {n.author?.username ? `@${n.author.username}` : 'Staff'}{' · '}{dayjs(n.createdAt).format('MMM D, h:mm A')}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {ticketNotes.length===0 && <p className="text-[12px] text-gray-400 text-center py-6">No messages with CS yet</p>}
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3 space-y-2.5">
+                  <textarea
+                    value={ticketReplyMsg}
+                    onChange={e=>setTicketReplyMsg(e.target.value)}
+                    rows={3}
+                    placeholder="Message to Customer Service (not visible to the customer)…"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-[13px] text-gray-900 outline-none focus:border-gray-400 resize-none bg-white transition-all"
+                  />
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <label className="h-8 px-3 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold text-gray-600 hover:bg-gray-50 cursor-pointer transition-colors flex items-center gap-1.5">
+                      📎 {noteFile ? noteFile.name.slice(0,20) : 'Attach file'}
+                      <input type="file" className="hidden" onChange={e => setNoteFile(e.target.files?.[0] || null)}/>
+                    </label>
+                    <div className="flex gap-1.5">
+                      <button disabled={ticketStatusUpdating} onClick={()=>handleTicketStatusChange('RESOLVED')} className="h-8 px-3 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold hover:bg-emerald-100 disabled:opacity-50 transition-colors">Mark Resolved</button>
+                      <button disabled={ticketStatusUpdating} onClick={()=>handleTicketStatusChange('CLOSED')} className="h-8 px-3 rounded-lg bg-red-50 text-red-600 border border-red-200 text-[11px] font-semibold hover:bg-red-100 disabled:opacity-50 transition-colors">Close</button>
+                    </div>
+                    <button disabled={(!ticketReplyMsg.trim() && !noteFile)||ticketReplySending||noteUploading} onClick={handleTicketReply} className="h-9 px-4 rounded-lg bg-gray-900 text-white text-[12px] font-semibold hover:bg-gray-800 disabled:opacity-40 transition-colors">
+                      {noteUploading?'Uploading…':ticketReplySending?'Sending…':'Send to CS'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )
+          ) : (
+            <>
+              <p className="text-[13px] text-gray-600 leading-relaxed">{queueDetail?.description||queueDetail?.subject}</p>
+              {queueDetail?._kind==='dispute'&&!['RESOLVED','DISMISSED','CLOSED'].includes(queueDetail?.status)&&(
+                <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                  <select value={resolveStatus} onChange={e=>setRS(e.target.value)} className="h-9 w-full border border-gray-200 rounded-lg px-3 text-[13px] text-gray-900 bg-white outline-none cursor-pointer">
+                    <option value="RESOLVED">Resolved</option><option value="DISMISSED">Dismissed</option><option value="CLOSED">Closed</option>
+                  </select>
+                  <textarea value={resolution} onChange={e=>setResolution(e.target.value)} rows={3} placeholder="What was the outcome?" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-[13px] text-gray-900 outline-none focus:border-gray-400 resize-none transition-all"/>
+                  <button disabled={!resolution.trim()||resolveLoading} onClick={handleResolveCase} className="h-9 px-4 rounded-lg bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 disabled:opacity-40 transition-colors">{resolveLoading?'Closing…':'Close case'}</button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </Modal>

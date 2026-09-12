@@ -157,6 +157,14 @@ export const adminApi = {
   rejectKyc:          (userId: string, reason: string, facePhotoUrl?: string)             => api.patch(`/admin/kyc/${userId}/reject`, { reason, facePhotoUrl }),
   // Super Admin only — reveal full NIN/BVN (password + face photo audit)
   revealUserIdentity: (userId: string, password: string, facePhotoUrl?: string)           => api.post(`/kyc/admin/reveal/${userId}`, { password, facePhotoUrl }),
+    // ── Escalated ticket thread (Admin reply flow) ──────────────
+  // Backed by AdminSupportController in support.module.ts.
+  getTicketDetail:    (id: string)                                                       => api.get(`/admin/support/tickets/${id}`),
+  replyToTicket:      (id: string, message: string)                                      => api.post(`/admin/support/tickets/${id}/reply`, { message }),
+  updateTicketStatus: (id: string, status: string)                                       => api.patch(`/admin/support/tickets/${id}/status`, { status }),
+  // ── Private Admin ↔ CS thread on an escalated ticket (never seen by the customer) ──
+  getTicketNotes:     (id: string)                                                       => api.get(`/admin/support/tickets/${id}/notes`),
+  addTicketNote:      (id: string, content: string, fileUrl?: string, fileName?: string, fileSize?: number) => api.post(`/admin/support/tickets/${id}/notes`, { content, fileUrl, fileName, fileSize }),
 }
 
 // ── Super Admin ───────────────────────────────────────────────

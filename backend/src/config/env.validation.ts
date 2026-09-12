@@ -14,11 +14,11 @@ export function validate(config: Record<string, unknown>) {
     PAYSTACK_SECRET_KEY:     Joi.string().required(),
     PAYSTACK_PUBLIC_KEY:     Joi.string().required(),
     PAYSTACK_WEBHOOK_SECRET: Joi.string().required(),
-    FLUTTERWAVE_SECRET_KEY:  Joi.string().required(),
+    FLUTTERWAVE_SECRET_KEY:  Joi.string().optional(),
     CLOUDINARY_CLOUD_NAME:   Joi.string().required(),
     CLOUDINARY_API_KEY:      Joi.string().required(),
     CLOUDINARY_API_SECRET:   Joi.string().required(),
-    RESEND_API_KEY:          Joi.string().required(),
+    RESEND_API_KEY:          Joi.string().optional(),
     EMAIL_FROM:              Joi.string().email().required(),
     BCRYPT_ROUNDS:           Joi.number().default(12),
   }).unknown(true);

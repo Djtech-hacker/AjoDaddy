@@ -5,6 +5,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 @Injectable()
 export class MailService {
@@ -20,7 +21,11 @@ export class MailService {
     this.appName = this.configService.get<string>('APP_NAME', 'PayPaddy');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
 
-    this.transporter = nodemailer.createTransport({
+    // `family` (force IPv4) is a valid Nodemailer/Node net option that's
+    // missing from @types/nodemailer's Options type — extend it locally.
+    type MailOptions = SMTPTransport.Options & { family?: number };
+
+    const transportOptions: MailOptions = {
       host: this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com'),
       port: this.configService.get<number>('SMTP_PORT', 587),
       secure: false,
@@ -32,7 +37,9 @@ export class MailService {
         user: this.configService.get<string>('SMTP_USER', ''),
         pass: this.configService.get<string>('SMTP_PASS', ''),
       },
-    });
+    };
+
+    this.transporter = nodemailer.createTransport(transportOptions);
   }
 
   private async send(to: string, subject: string, html: string): Promise<boolean> {

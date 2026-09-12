@@ -40,7 +40,17 @@ export default function RegisterPage() {
   }
 
   const onSubmit = async () => {
-    if (!step1Data) return
+    // FIX: guard against double-submission. Fast double-clicks (or any
+    // re-render that fires onClick twice) could send two identical
+    // /auth/register requests before `register.isPending` had a chance
+    // to disable the button. The FIRST request would succeed (user
+    // created, verification email sent), then the SECOND request hit
+    // the DB's unique constraint and came back with a 409 "Email
+    // already registered" — and since that promise resolved (rejected)
+    // last, its toast is what the user actually saw, even though the
+    // account was created successfully. Bailing out here if a request
+    // is already in flight makes this impossible.
+    if (!step1Data || register.isPending) return
     try {
       await register.mutateAsync({
         firstName:   step1Data.firstName,
@@ -165,8 +175,31 @@ export default function RegisterPage() {
               </div>
 
               <div className="flex gap-3">
-                <Button variant="secondary" onClick={() => setStep(1)} className="flex-1">← Back</Button>
-                <Button onClick={onSubmit} loading={register.isPending} className="flex-1">
+                <Button
+                  variant="secondary"
+                  onClick={() => setStep(1)}
+                  disabled={register.isPending}
+                  className="flex-1"
+                >
+                  ← Back
+                </Button>
+                {/*
+                  FIX: added `disabled={register.isPending}` on top of the
+                  existing `loading` prop. `loading` alone may only swap
+                  visuals (spinner) without actually disabling the
+                  underlying <button> element depending on how the Button
+                  component is implemented — `disabled` guarantees the
+                  browser itself blocks further click events while the
+                  request is in flight, which is the real fix for the
+                  double-submission bug (see onSubmit's guard above for
+                  the second layer of protection).
+                */}
+                <Button
+                  onClick={onSubmit}
+                  loading={register.isPending}
+                  disabled={register.isPending}
+                  className="flex-1"
+                >
                   Create account
                 </Button>
               </div>

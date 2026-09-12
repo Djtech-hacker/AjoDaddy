@@ -24,6 +24,10 @@ export class MailService {
       host: this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com'),
       port: this.configService.get<number>('SMTP_PORT', 587),
       secure: false,
+      family: 4, // force IPv4 — fixes ENETUNREACH on Render (IPv6 route missing)
+      connectionTimeout: 10000, // fail fast instead of hanging ~120s
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
       auth: {
         user: this.configService.get<string>('SMTP_USER', ''),
         pass: this.configService.get<string>('SMTP_PASS', ''),

@@ -151,7 +151,10 @@ export class GroupsService {
   }
   async createGroup(userId: string, dto: CreateGroupDto) {
     const creator = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
-    if (!creator || creator.status !== 'ACTIVE') throw new ForbiddenException('You must complete identity verification before creating a group. Go to Profile → Verify Identity.');
+    if (!creator || creator.status !== 'ACTIVE') throw new ForbiddenException('Please verify your email before creating a group.');
+    const identityRecord = await this.prisma.identityRecord.findUnique({ where: { userId } });
+    if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification before creating a group.');
+    if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verification before creating a group.');
     // Same check joinGroup() already enforces — a member removed for a
     // missed contribution carries a debt, and until it's settled they
     // shouldn't be able to sidestep it by starting a brand new group

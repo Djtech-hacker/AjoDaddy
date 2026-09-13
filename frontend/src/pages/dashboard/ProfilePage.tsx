@@ -20,9 +20,11 @@ import { useAuthStore } from '@/stores/authStore'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { kycApi } from '@/api/services'
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
+
 async function apiFetch(path: string, options: RequestInit = {}) {
   const token = useAuthStore.getState().accessToken
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

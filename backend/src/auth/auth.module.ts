@@ -3,7 +3,7 @@
 // ============================================================
 // ADDED (previous pass): verifyPassword() + POST /auth/verify-password.
 //
-// ADDED (this pass): the real OTP-for-PIN-change flow.
+// ADDED (previous pass): the real OTP-for-PIN-change flow.
 //   - POST /auth/send-pin-otp   — generates a 6-digit code, stores it in
 //     the existing verificationToken table (type: 'pin_change_otp',
 //     10 min expiry), emails it via MailService.sendPinChangeOtp().
@@ -11,10 +11,33 @@
 //     isn't already used, then updates the transaction PIN hash — same
 //     bcrypt path setTransactionPin() already uses.
 //
-// FIX (this pass): login() validated password/status but never checked
-// isEmailVerified, so a PENDING_VERIFICATION account (i.e. someone who
-// never clicked the emailed link) could still log in. register() and
-// verifyEmail() were already correct — this closes the one actual gap.
+// FIX (previous pass): login() validated password/status but never
+// checked isEmailVerified, so a PENDING_VERIFICATION account (i.e.
+// someone who never clicked the emailed link) could still log in.
+// register() and verifyEmail() were already correct — this closes the
+// one actual gap.
+//
+// FIX (this pass): register() was AWAITING sendVerificationEmail()
+// before responding to the client:
+//
+//   await this.sendVerificationEmail(...).catch((err) => { ... });
+//
+// The .catch() stopped it from throwing, but `await` still waits for
+// the promise to settle either way — so a slow or unreachable SMTP
+// destination (fake test domains, mail provider hiccups, etc.) could
+// block the whole POST /auth/register request for 14-15+ seconds.
+// That landed almost exactly on the frontend's axios `timeout: 15000`
+// (15s), so the browser gave up and showed "Registration failed" a
+// split second before the backend actually finished — even though the
+// user + wallet rows were already committed to the DB well before the
+// email send even started. Net effect: users saw a failure toast for
+// an account that was, in fact, successfully created.
+//
+// Fix is a one-line change: drop the `await`. The DB write is already
+// committed by this point; sending the verification email is a
+// fire-and-forget side effect the client has no reason to wait on.
+// The .catch() still runs and still logs failures for debugging — it
+// just no longer blocks the HTTP response.
 // ============================================================
 
 import {
@@ -228,7 +251,13 @@ export class AuthService {
       return newUser;
     });
 
-    await this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
+    // FIX: removed `await` here (see file-level note at the top). The
+    // user + wallet above are already committed — this is now
+    // fire-and-forget so a slow/unreachable mail server can no longer
+    // block the HTTP response for 14-15+ seconds and race the
+    // frontend's axios timeout. Failures still get logged below; they
+    // just don't hold up the response anymore.
+    this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
       // The user + wallet above are already committed — a failure here
       // (mail hiccup, audit log, etc.) must NOT make a successful
       // registration look like a failure to the frontend. Log it and

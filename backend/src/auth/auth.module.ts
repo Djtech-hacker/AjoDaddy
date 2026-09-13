@@ -1,662 +1,198 @@
 // ============================================================
-// AUTH MODULE — Full production authentication
+// MAIL SERVICE — Email sending via Resend (HTTPS API)
 // ============================================================
-// ADDED (previous pass): verifyPassword() + POST /auth/verify-password.
+// FIX: this used to send via raw SMTP (smtp.gmail.com:587) through
+// Nodemailer. On Render, every single send timed out after exactly
+// connectionTimeout (10s) — not intermittently, EVERY time, including
+// with force-IPv4 (`family: 4`) already applied. That pattern (clean,
+// consistent timeout, not a connection refusal or auth error) points
+// to the hosting provider blocking or silently dropping outbound
+// traffic on raw SMTP ports (25/465/587) — a common anti-spam measure
+// on PaaS platforms, especially free/starter tiers. No amount of SMTP
+// config tuning fixes a port that's blocked at the network level.
 //
-// ADDED (previous pass): the real OTP-for-PIN-change flow.
-//   - POST /auth/send-pin-otp   — generates a 6-digit code, stores it in
-//     the existing verificationToken table (type: 'pin_change_otp',
-//     10 min expiry), emails it via MailService.sendPinChangeOtp().
-//   - POST /auth/change-pin     — checks the code matches, isn't expired,
-//     isn't already used, then updates the transaction PIN hash — same
-//     bcrypt path setTransactionPin() already uses.
+// FIX: switched to Resend's HTTP API. It sends over plain HTTPS
+// (port 443), which is never blocked the way SMTP ports are — so this
+// sidesteps the problem entirely instead of trying to work around it.
 //
-// FIX (previous pass): login() validated password/status but never
-// checked isEmailVerified, so a PENDING_VERIFICATION account (i.e.
-// someone who never clicked the emailed link) could still log in.
-// register() and verifyEmail() were already correct — this closes the
-// one actual gap.
+// All public method signatures are UNCHANGED
+// (sendPasswordReset / sendEmailVerification / sendPinChangeOtp all
+// take the same arguments and return the same Promise<boolean>), so
+// nothing else in the codebase (auth.module.ts, etc.) needs to change.
 //
-// FIX (this pass): register() was AWAITING sendVerificationEmail()
-// before responding to the client:
-//
-//   await this.sendVerificationEmail(...).catch((err) => { ... });
-//
-// The .catch() stopped it from throwing, but `await` still waits for
-// the promise to settle either way — so a slow or unreachable SMTP
-// destination (fake test domains, mail provider hiccups, etc.) could
-// block the whole POST /auth/register request for 14-15+ seconds.
-// That landed almost exactly on the frontend's axios `timeout: 15000`
-// (15s), so the browser gave up and showed "Registration failed" a
-// split second before the backend actually finished — even though the
-// user + wallet rows were already committed to the DB well before the
-// email send even started. Net effect: users saw a failure toast for
-// an account that was, in fact, successfully created.
-//
-// Fix is a one-line change: drop the `await`. The DB write is already
-// committed by this point; sending the verification email is a
-// fire-and-forget side effect the client has no reason to wait on.
-// The .catch() still runs and still logs failures for debugging — it
-// just no longer blocks the HTTP response.
+// SETUP REQUIRED:
+//   1. Sign up at https://resend.com (free tier: 100 emails/day,
+//      3,000/month — plenty for dev/early production).
+//   2. Get an API key from the Resend dashboard.
+//   3. Add RESEND_API_KEY=re_xxxxxxxx to your environment variables
+//      (both locally in .env and on Render's dashboard).
+//   4. EMAIL_FROM can stay as the default 'onboarding@resend.dev' for
+//      testing — Resend provides this shared sending address with no
+//      setup. For production with your own domain, verify a domain in
+//      the Resend dashboard and switch EMAIL_FROM to an address on it
+//      (e.g. 'PayPaddy <noreply@yourdomain.com>').
 // ============================================================
 
-import {
-  Module, Controller, Post, Get, Body, Req, Res,
-  UseGuards, HttpCode, HttpStatus, UnauthorizedException,
-  BadRequestException, ConflictException, Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Strategy as JwtStrategy, ExtractJwt } from 'passport-jwt';
-import { PassportStrategy } from '@nestjs/passport';
-import { Request, Response } from 'express';
-import { IsEmail, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { Throttle } from '@nestjs/throttler';
-import * as argon2 from 'argon2';
-import { PrismaService } from '../prisma/prisma.service';
-import { UsersService } from '../users/users.service';
-import { NotificationsService } from '../notifications/notifications.service';
-import { MailService } from '../mail/mail.service';
-import { AuthGuard as PassportAuthGuard } from '@nestjs/passport';
-import { nanoid } from 'nanoid';
-import { UsersModule } from '../users/users.module';
-import { NotificationsModule } from '../notifications/notifications.module';
 
-// ── DTOs ─────────────────────────────────────────────────────
-
-export class RegisterDto {
-  @IsEmail({}, { message: 'Please provide a valid email address' })
-  email: string;
-
-  @IsString()
-  @MinLength(2) @MaxLength(50)
-  firstName: string;
-
-  @IsString()
-  @MinLength(2) @MaxLength(50)
-  lastName: string;
-
-  @IsString()
-  @MinLength(3) @MaxLength(30)
-  @Matches(/^[a-zA-Z0-9_]+$/, { message: 'Username can only contain letters, numbers, and underscores' })
-  username: string;
-
-  @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters' })
-  @Matches(
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
-    { message: 'Password must contain uppercase, lowercase, and a number' },
-  )
-  password: string;
-
-  @IsOptional()
-  @IsString()
-  referralCode?: string;
-}
-
-export class LoginDto {
-  @IsEmail()
-  email: string;
-
-  @IsString()
-  @MinLength(1)
-  password: string;
-}
-
-export class ForgotPasswordDto {
-  @IsEmail()
-  email: string;
-}
-
-export class ResetPasswordDto {
-  @IsString()
-  token: string;
-
-  @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, { message: 'Password must contain uppercase, lowercase, and a number' })
-  newPassword: string;
-}
-
-export class SetTransactionPinDto {
-  @IsString()
-  @Matches(/^\d{4}$/, { message: 'PIN must be exactly 4 digits' })
-  pin: string;
-}
-
-export class VerifyEmailDto {
-  @IsString()
-  token: string;
-}
-
-export class VerifyPasswordDto {
-  @IsString()
-  @MinLength(1)
-  password: string;
-}
-
-// NEW — body for POST /auth/change-pin
-export class ChangePinDto {
-  @IsString()
-  @MinLength(4, { message: 'Enter the code sent to your email' })
-  otp: string;
-
-  @IsString()
-  @Matches(/^\d{4}$/, { message: 'PIN must be exactly 4 digits' })
-  newPin: string;
-}
-
-// ── JWT Strategies ────────────────────────────────────────────
+const RESEND_API_URL = 'https://api.resend.com/emails';
 
 @Injectable()
-export class JwtAccessStrategy extends PassportStrategy(JwtStrategy, 'jwt') {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
-  ) {
-    super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ignoreExpiration: false,
-      secretOrKey: configService.get<string>('jwt.secret'),
-    });
-  }
+export class MailService {
+  private readonly logger = new Logger(MailService.name);
+  private readonly apiKey: string;
+  private readonly fromEmail: string;
+  private readonly appName: string;
+  private readonly frontendUrl: string;
+  private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png';
 
-  async validate(payload: any) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true, email: true, username: true, firstName: true, lastName: true,
-        role: true, status: true, isEmailVerified: true, deletedAt: true,
-      },
-    });
-    if (!user) throw new UnauthorizedException('User not found');
-    if (user.deletedAt) throw new UnauthorizedException('Account no longer exists');
-    if (user.status === 'SUSPENDED') throw new UnauthorizedException('Account suspended');
-    if (user.status === 'BANNED') throw new UnauthorizedException('Account banned');
-    return user;
-  }
-}
-
-@Injectable()
-export class JwtRefreshStrategy extends PassportStrategy(JwtStrategy, 'jwt-refresh') {
   constructor(private readonly configService: ConfigService) {
-    super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        (req: Request) => req?.cookies?.refresh_token,
-      ]),
-      ignoreExpiration: false,
-      secretOrKey: configService.get<string>('jwt.refreshSecret'),
-      passReqToCallback: true,
-    });
+    this.apiKey = this.configService.get<string>('RESEND_API_KEY', '');
+    this.fromEmail = this.configService.get<string>('EMAIL_FROM', 'PayPaddy <onboarding@resend.dev>');
+    this.appName = this.configService.get<string>('APP_NAME', 'PayPaddy');
+    this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
   }
 
-  async validate(req: Request, payload: any) {
-    const refreshToken = req?.cookies?.refresh_token;
-    return { ...payload, refreshToken };
-  }
-}
-
-// ── Guards ────────────────────────────────────────────────────
-
-@Injectable()
-export class JwtAuthGuard extends PassportAuthGuard('jwt') {}
-
-@Injectable()
-export class JwtRefreshGuard extends PassportAuthGuard('jwt-refresh') {}
-
-// ── Auth Service ─────────────────────────────────────────────
-
-@Injectable()
-export class AuthService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
-    private readonly usersService: UsersService,
-    private readonly notificationsService: NotificationsService,
-    private readonly mailService: MailService,
-  ) {}
-
-  async register(dto: RegisterDto, ipAddress: string) {
-    const existingEmail = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
-    if (existingEmail) throw new ConflictException('Email already registered');
-
-    const existingUsername = await this.prisma.user.findUnique({ where: { username: dto.username.toLowerCase() } });
-    if (existingUsername) throw new ConflictException('Username already taken');
-
-    const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3 });
-
-    let referredById: string | undefined;
-    if (dto.referralCode) {
-      const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referralCode } });
-      if (referrer) referredById = referrer.id;
+  private async send(to: string, subject: string, html: string): Promise<boolean> {
+    if (!this.apiKey) {
+      this.logger.warn('No RESEND_API_KEY set — logging email instead');
+      this.logger.log(`📧 TO: ${to} | SUBJECT: ${subject}`);
+      return false;
     }
 
-    const user = await this.prisma.executeTransaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email: dto.email.toLowerCase(),
-          username: dto.username.toLowerCase(),
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          passwordHash,
-          referredById,
-          status: 'PENDING_VERIFICATION',
+    try {
+      // Resend's HTTP API — plain HTTPS POST, no SMTP ports involved
+      // at all, so nothing here can be blocked the way port 587 was.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(RESEND_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          from: this.fromEmail,
+          to: [to],
+          subject,
+          html,
+        }),
+        signal: controller.signal,
       });
-      await tx.wallet.create({ data: { userId: newUser.id } });
-      return newUser;
-    });
 
-    // FIX: removed `await` here (see file-level note at the top). The
-    // user + wallet above are already committed — this is now
-    // fire-and-forget so a slow/unreachable mail server can no longer
-    // block the HTTP response for 14-15+ seconds and race the
-    // frontend's axios timeout. Failures still get logged below; they
-    // just don't hold up the response anymore.
-    this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
-      // The user + wallet above are already committed — a failure here
-      // (mail hiccup, audit log, etc.) must NOT make a successful
-      // registration look like a failure to the frontend. Log it and
-      // move on; the user can be sent a fresh verification link later.
-      console.error(`[register] sendVerificationEmail failed for ${user.email}:`, err);
-    });
+      clearTimeout(timeoutId);
 
-    await this.prisma.auditLog.create({
-      data: { actorId: user.id, action: 'USER_REGISTERED', entityType: 'User', entityId: user.id, ipAddress },
-    }).catch((err) => {
-      console.error(`[register] auditLog failed for ${user.id}:`, err);
-    });
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => '<unreadable body>');
+        throw new Error(`Resend API returned ${response.status}: ${errorBody}`);
+      }
 
-    return { message: 'Registration successful. Please check your email to verify your account.' };
-  }
-
-  async login(dto: LoginDto, ipAddress: string, userAgent: string, res: Response) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() },
-      select: { id: true, email: true, passwordHash: true, status: true, firstName: true, role: true, isEmailVerified: true, deletedAt: true },
-    });
-
-    const logAttempt = async (success: boolean, reason?: string) => {
-      await this.prisma.loginAttempt.create({
-        data: { userId: user?.id, email: dto.email.toLowerCase(), ipAddress, userAgent, success, reason },
-      });
-    };
-
-    if (!user || !user.passwordHash) {
-      await logAttempt(false, 'USER_NOT_FOUND');
-      throw new UnauthorizedException('Invalid email or password');
+      const data = await response.json();
+      this.logger.log(`Email sent to ${to} (id: ${data?.id ?? 'unknown'})`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to send email to ${to}`, err);
+      return false;
     }
-
-    const passwordValid = await argon2.verify(user.passwordHash, dto.password);
-    if (!passwordValid) {
-      await logAttempt(false, 'WRONG_PASSWORD');
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    // FIX: this was missing — a registered-but-unverified account could
-    // log in fine since only SUSPENDED/BANNED/deletedAt were checked
-    // below. register() already sends the verification email and
-    // verifyEmail() already flips this to true, so this just enforces
-    // it at the login gate.
-    if (!user.isEmailVerified) {
-      await logAttempt(false, 'EMAIL_NOT_VERIFIED');
-      throw new UnauthorizedException('Please verify your email before logging in. Check your inbox for the verification link.');
-    }
-
-    if (user.deletedAt)              { await logAttempt(false, 'ACCOUNT_DELETED');   throw new UnauthorizedException('This account no longer exists.'); }
-    if (user.status === 'SUSPENDED') { await logAttempt(false, 'ACCOUNT_SUSPENDED'); throw new UnauthorizedException('Account suspended. Contact support.'); }
-    if (user.status === 'BANNED')    { await logAttempt(false, 'ACCOUNT_BANNED');    throw new UnauthorizedException('Account banned.'); }
-
-    await logAttempt(true);
-    return this.generateTokensAndLogin(user, ipAddress, userAgent, res);
   }
 
-  async generateTokensAndLogin(user: any, ipAddress: string, userAgent: string, res: Response) {
-    const payload = { sub: user.id, email: user.email, role: user.role };
-
-    const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('jwt.secret'),
-      expiresIn: this.configService.get('jwt.expiresIn'),
-    });
-
-    const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('jwt.refreshSecret'),
-      expiresIn: this.configService.get('jwt.refreshExpiresIn'),
-    });
-
-    const refreshExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-    await this.prisma.executeTransaction(async (tx) => {
-      await tx.refreshToken.upsert({
-        where:  { token: refreshToken },
-        update: { isRevoked: false, expiresAt: refreshExpiry },
-        create: { userId: user.id, token: refreshToken, isRevoked: false, expiresAt: refreshExpiry },
-      });
-      await tx.session.create({
-        data: { userId: user.id, ipAddress, userAgent, deviceInfo: userAgent, expiresAt: refreshExpiry },
-      });
-    });
-
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      domain: process.env.COOKIE_DOMAIN || 'localhost',
-    });
-
-    const fullUser = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true, email: true, username: true, firstName: true, lastName: true,
-        avatarUrl: true, role: true, status: true, isEmailVerified: true,
-        hasTransactionPin: true, reputationScore: true, createdAt: true,
-      },
-    });
-
-    return { accessToken, user: fullUser };
+  private emailWrapper(content: string): string {
+    return `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+         <img src="${this.logoUrl}" alt="${this.appName}" height="130" style="display: inline-block; height: 130px; width: auto;" />   
+        </div>
+        ${content}
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+          <p style="color: #999; font-size: 11px;">
+            &copy; ${new Date().getFullYear()} ${this.appName}. Save Together. Grow Together.
+          </p>
+        </div>
+      </div>
+    `;
   }
 
-  async refreshTokens(userId: string, oldToken: string, res: Response) {
-    const stored = await this.prisma.refreshToken.findFirst({
-      where: { token: oldToken, userId, isRevoked: false },
-      include: { user: { select: { id: true, email: true, role: true, status: true } } },
-    });
+  async sendPasswordReset(to: string, firstName: string, token: string): Promise<boolean> {
+    const resetUrl = `${this.frontendUrl}/reset-password?token=${token}`;
 
-    if (!stored || stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Invalid or expired refresh token');
-    }
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">Reset your password</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${firstName || 'there'},<br><br>
+        We received a request to reset your password. Click the button below to choose a new one. This link expires in 1 hour.
+      </p>
 
-    await this.prisma.refreshToken.update({ where: { id: stored.id }, data: { isRevoked: true } });
-    return this.generateTokensAndLogin(stored.user, '', '', res);
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${resetUrl}"
+           style="display: inline-block; background: #1B5C3C; color: #fff; font-size: 14px; font-weight: 600;
+                  padding: 12px 32px; border-radius: 8px; text-decoration: none;">
+          Reset Password
+        </a>
+      </div>
+
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        If you didn't request this, just ignore this email — your password won't change.<br><br>
+        If the button doesn't work, copy and paste this URL into your browser:<br>
+        <a href="${resetUrl}" style="color: #1B5C3C; word-break: break-all;">${resetUrl}</a>
+      </p>
+    `);
+
+    return this.send(to, `Reset your ${this.appName} password`, html);
   }
 
-  async logout(userId: string, refreshToken: string, res: Response) {
-    await this.prisma.refreshToken.updateMany({
-      where: { userId, token: refreshToken },
-      data: { isRevoked: true },
-    });
-    res.clearCookie('refresh_token');
-    return { message: 'Logged out successfully' };
+  async sendEmailVerification(to: string, firstName: string, token: string): Promise<boolean> {
+    const verifyUrl = `${this.frontendUrl}/verify-email?token=${token}`;
+
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">Verify your email</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${firstName},<br><br>
+        Welcome to ${this.appName}! Please verify your email address to get started.
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${verifyUrl}"
+           style="display: inline-block; background: #1B5C3C; color: #fff; font-size: 14px; font-weight: 600;
+                  padding: 12px 32px; border-radius: 8px; text-decoration: none;">
+          Verify Email
+        </a>
+      </div>
+
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        This link expires in 24 hours.<br><br>
+        If the button doesn't work, copy and paste this URL:<br>
+        <a href="${verifyUrl}" style="color: #1B5C3C; word-break: break-all;">${verifyUrl}</a>
+      </p>
+    `);
+
+    return this.send(to, `Verify your ${this.appName} email`, html);
   }
 
-  async sendVerificationEmail(userId: string, email: string, firstName: string) {
-    const token = nanoid(64);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // Plain 6-digit code for the "change transaction PIN" flow. No
+  // link/button here on purpose: this is a code the user types back
+  // into the app, not something they click through.
+  async sendPinChangeOtp(to: string, firstName: string, code: string): Promise<boolean> {
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">Confirm your PIN change</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${firstName || 'there'},<br><br>
+        Use the code below to confirm changing your transaction PIN. This code expires in 10 minutes.
+      </p>
 
-    await this.prisma.verificationToken.create({
-      data: { userId, token, type: 'email_verification', expiresAt },
-    });
+      <div style="text-align: center; margin: 32px 0;">
+        <span style="display: inline-block; background: #F3F4F6; color: #1a1a1a; font-size: 32px; font-weight: 700;
+                     letter-spacing: 8px; padding: 16px 28px; border-radius: 12px;">
+          ${code}
+        </span>
+      </div>
 
-    await this.mailService.sendEmailVerification(email, firstName, token);
-  }
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        If you didn't request this, you can safely ignore this email — your PIN won't change without this code.
+      </p>
+    `);
 
-  async verifyEmail(dto: VerifyEmailDto) {
-    const record = await this.prisma.verificationToken.findUnique({ where: { token: dto.token } });
-    if (!record) throw new BadRequestException('Invalid verification token');
-    if (record.expiresAt < new Date()) throw new BadRequestException('Verification token expired');
-    if (record.usedAt) throw new BadRequestException('Token already used');
-
-    await this.prisma.executeTransaction(async (tx) => {
-      await tx.user.update({ where: { id: record.userId }, data: { isEmailVerified: true, status: 'ACTIVE' } });
-      await tx.verificationToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
-    });
-
-    return { message: 'Email verified successfully' };
-  }
-
-  async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
-    if (!user) return { message: 'If that email exists, a reset link has been sent.' };
-
-    const token = nanoid(64);
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-
-    await this.prisma.passwordReset.create({ data: { userId: user.id, token, expiresAt } });
-
-    await this.mailService.sendPasswordReset(user.email, user.firstName, token);
-
-    return { message: 'If that email exists, a reset link has been sent.' };
-  }
-
-  async resetPassword(dto: ResetPasswordDto) {
-    const record = await this.prisma.passwordReset.findUnique({ where: { token: dto.token } });
-    if (!record) throw new BadRequestException('Invalid reset token');
-    if (record.expiresAt < new Date()) throw new BadRequestException('Reset token expired');
-    if (record.usedAt) throw new BadRequestException('Token already used');
-
-    const passwordHash = await argon2.hash(dto.newPassword, { type: argon2.argon2id });
-
-    await this.prisma.executeTransaction(async (tx) => {
-      await tx.user.update({ where: { id: record.userId }, data: { passwordHash } });
-      await tx.passwordReset.update({ where: { id: record.id }, data: { usedAt: new Date() } });
-      await tx.refreshToken.updateMany({ where: { userId: record.userId }, data: { isRevoked: true } });
-    });
-
-    return { message: 'Password reset successfully. Please log in with your new password.' };
-  }
-
-  // ── Verify current password — used to re-confirm identity before a
-  // sensitive action (e.g. changing the transaction PIN) without
-  // creating a brand new session the way calling login() again would.
-  async verifyPassword(userId: string, password: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
-    if (!user?.passwordHash) return false;
-    return argon2.verify(user.passwordHash, password);
-  }
-
-  // ── Transaction PIN — uses bcrypt to match the contribution/withdrawal check ──
-  async setTransactionPin(userId: string, dto: SetTransactionPinDto) {
-    const bcrypt = await import('bcrypt');
-    const pinHash = await bcrypt.hash(dto.pin, 10);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { transactionPinHash: pinHash, hasTransactionPin: true },
-    });
-    return { message: 'Transaction PIN set successfully' };
-  }
-
-  async verifyTransactionPin(userId: string, pin: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { transactionPinHash: true },
-    });
-    if (!user?.transactionPinHash) return false;
-    const bcrypt = await import('bcrypt');
-    return bcrypt.compare(pin, user.transactionPinHash);
-  }
-
-  // ── NEW: PIN-change OTP ────────────────────────────────────
-  // Called only after verifyPassword() has already succeeded on the
-  // frontend, so we don't re-check the password here — this step's job
-  // is just "prove you own this inbox right now."
-  async sendPinChangeOtp(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { email: true, firstName: true },
-    });
-    if (!user) throw new NotFoundException('User not found');
-
-    // 6-digit numeric code, zero-padded, 10 minute expiry.
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    // Reuses verificationToken — `token` column holds the code here,
-    // `type` distinguishes it from email verification tokens.
-    await this.prisma.verificationToken.create({
-      data: { userId, token: code, type: 'pin_change_otp', expiresAt },
-    });
-
-    // NOTE: sendPinChangeOtp doesn't exist on MailService yet — add it
-    // alongside sendEmailVerification/sendPasswordReset. Signature:
-    //   sendPinChangeOtp(email: string, firstName: string, code: string)
-    // Body just needs to show the 6-digit code plainly (no link/button),
-    // and should mention it expires in 10 minutes.
-    await this.mailService.sendPinChangeOtp(user.email, user.firstName, code);
-
-    return { message: 'Code sent to your email' };
-  }
-
-  async changePinWithOtp(userId: string, dto: ChangePinDto) {
-    const record = await this.prisma.verificationToken.findFirst({
-      where: { userId, type: 'pin_change_otp', token: dto.otp },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (!record) throw new BadRequestException('Invalid or incorrect code');
-    if (record.usedAt) throw new BadRequestException('This code has already been used');
-    if (record.expiresAt < new Date()) throw new BadRequestException('This code has expired — request a new one');
-
-    const bcrypt = await import('bcrypt');
-    const pinHash = await bcrypt.hash(dto.newPin, 10);
-
-    await this.prisma.executeTransaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { transactionPinHash: pinHash, hasTransactionPin: true },
-      });
-      await tx.verificationToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
-    });
-
-    return { message: 'Transaction PIN changed successfully' };
+    return this.send(to, `Your ${this.appName} PIN change code`, html);
   }
 }
-
-// ── Auth Controller ───────────────────────────────────────────
-
-@ApiTags('Authentication')
-@Controller('auth')
-export class AuthController {
-  constructor(private readonly authService: AuthService) {}
-
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
-  @ApiOperation({ summary: 'Register a new user' })
-  register(@Body() dto: RegisterDto, @Req() req: Request) {
-    return this.authService.register(dto, req.ip || '');
-  }
-
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 10 } })
-  @ApiOperation({ summary: 'Login with email and password' })
-  login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    return this.authService.login(dto, req.ip || '', req.headers['user-agent'] || '', res);
-  }
-
-  @Post('refresh')
-  @UseGuards(JwtRefreshGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Refresh access token using refresh token cookie' })
-  refresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
-    return this.authService.refreshTokens(req.user.sub, req.user.refreshToken, res);
-  }
-
-  @Post('logout')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Logout and revoke tokens' })
-  logout(@Req() req: any, @Res({ passthrough: true }) res: Response) {
-    const refreshToken = req.cookies?.refresh_token;
-    return this.authService.logout(req.user.id, refreshToken, res);
-  }
-
-  @Post('verify-email')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify email address' })
-  verifyEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verifyEmail(dto);
-  }
-
-  @Post('forgot-password')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 3 } })
-  @ApiOperation({ summary: 'Request password reset email' })
-  forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto);
-  }
-
-  @Post('reset-password')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reset password with token' })
-  resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto);
-  }
-
-  @Post('verify-password')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 10 } })
-  @ApiOperation({ summary: 'Verify current password (used before sensitive actions like changing the transaction PIN)' })
-  async verifyPasswordRoute(@Req() req: any, @Body() dto: VerifyPasswordDto) {
-    const valid = await this.authService.verifyPassword(req.user.id, dto.password);
-    if (!valid) throw new UnauthorizedException('Incorrect password');
-    return { verified: true };
-  }
-
-  // NEW
-  @Post('send-pin-otp')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
-  @ApiOperation({ summary: 'Email a one-time code to confirm a transaction PIN change' })
-  sendPinOtp(@Req() req: any) {
-    return this.authService.sendPinChangeOtp(req.user.id);
-  }
-
-  // NEW
-  @Post('change-pin')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 10 } })
-  @ApiOperation({ summary: 'Change transaction PIN using the emailed one-time code' })
-  changePin(@Req() req: any, @Body() dto: ChangePinDto) {
-    return this.authService.changePinWithOtp(req.user.id, dto);
-  }
-
-  @Post('transaction-pin')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Set or update transaction PIN' })
-  setTransactionPin(@Req() req: any, @Body() dto: SetTransactionPinDto) {
-    return this.authService.setTransactionPin(req.user.id, dto);
-  }
-
-  @Get('me')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current authenticated user' })
-  getMe(@Req() req: any) {
-    return { user: req.user };
-  }
-}
-
-// ── Auth Module ───────────────────────────────────────────────
-
-@Module({
-  imports: [
-    PassportModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('jwt.secret'),
-        signOptions: { expiresIn: configService.get<string>('jwt.expiresIn') },
-      }),
-    }),
-    UsersModule,
-    NotificationsModule,
-  ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, JwtAuthGuard, JwtRefreshGuard],
-  exports: [AuthService, JwtAuthGuard, JwtRefreshGuard],
-})
-export class AuthModule {}

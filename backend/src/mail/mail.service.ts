@@ -1,64 +1,96 @@
 // ============================================================
-// MAIL SERVICE — Email sending via Gmail SMTP (Nodemailer)
+// MAIL SERVICE — Email sending via Resend (HTTPS API)
+// ============================================================
+// FIX: this used to send via raw SMTP (smtp.gmail.com:587) through
+// Nodemailer. On Render, every single send timed out after exactly
+// connectionTimeout (10s) — not intermittently, EVERY time, including
+// with force-IPv4 (`family: 4`) already applied. That pattern (clean,
+// consistent timeout, not a connection refusal or auth error) points
+// to the hosting provider blocking or silently dropping outbound
+// traffic on raw SMTP ports (25/465/587) — a common anti-spam measure
+// on PaaS platforms, especially free/starter tiers. No amount of SMTP
+// config tuning fixes a port that's blocked at the network level.
+//
+// FIX: switched to Resend's HTTP API. It sends over plain HTTPS
+// (port 443), which is never blocked the way SMTP ports are — so this
+// sidesteps the problem entirely instead of trying to work around it.
+//
+// All public method signatures are UNCHANGED
+// (sendPasswordReset / sendEmailVerification / sendPinChangeOtp all
+// take the same arguments and return the same Promise<boolean>), so
+// nothing else in the codebase (auth.module.ts, etc.) needs to change.
+//
+// SETUP REQUIRED:
+//   1. Sign up at https://resend.com (free tier: 100 emails/day,
+//      3,000/month — plenty for dev/early production).
+//   2. Get an API key from the Resend dashboard.
+//   3. Add RESEND_API_KEY=re_xxxxxxxx to your environment variables
+//      (both locally in .env and on Render's dashboard).
+//   4. EMAIL_FROM can stay as the default 'onboarding@resend.dev' for
+//      testing — Resend provides this shared sending address with no
+//      setup. For production with your own domain, verify a domain in
+//      the Resend dashboard and switch EMAIL_FROM to an address on it
+//      (e.g. 'PayPaddy <noreply@yourdomain.com>').
 // ============================================================
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
-import SMTPTransport from 'nodemailer/lib/smtp-transport';
+
+const RESEND_API_URL = 'https://api.resend.com/emails';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly transporter: nodemailer.Transporter;
+  private readonly apiKey: string;
   private readonly fromEmail: string;
   private readonly appName: string;
   private readonly frontendUrl: string;
   private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png';
 
   constructor(private readonly configService: ConfigService) {
+    this.apiKey = this.configService.get<string>('RESEND_API_KEY', '');
     this.fromEmail = this.configService.get<string>('EMAIL_FROM', 'PayPaddy <onboarding@resend.dev>');
     this.appName = this.configService.get<string>('APP_NAME', 'PayPaddy');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
-
-    // `family` (force IPv4) is a valid Nodemailer/Node net option that's
-    // missing from @types/nodemailer's Options type — extend it locally.
-    type MailOptions = SMTPTransport.Options & { family?: number };
-
-    const transportOptions: MailOptions = {
-      host: this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com'),
-      port: this.configService.get<number>('SMTP_PORT', 587),
-      secure: false,
-      family: 4, // force IPv4 — fixes ENETUNREACH on Render (IPv6 route missing)
-      connectionTimeout: 10000, // fail fast instead of hanging ~120s
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-      auth: {
-        user: this.configService.get<string>('SMTP_USER', ''),
-        pass: this.configService.get<string>('SMTP_PASS', ''),
-      },
-    };
-
-    this.transporter = nodemailer.createTransport(transportOptions);
   }
 
   private async send(to: string, subject: string, html: string): Promise<boolean> {
-    const user = this.configService.get<string>('SMTP_USER', '');
-    if (!user) {
-      this.logger.warn('No SMTP_USER set — logging email instead');
+    if (!this.apiKey) {
+      this.logger.warn('No RESEND_API_KEY set — logging email instead');
       this.logger.log(`📧 TO: ${to} | SUBJECT: ${subject}`);
       return false;
     }
 
     try {
-      const info = await this.transporter.sendMail({
-        from: this.fromEmail,
-        to,
-        subject,
-        html,
+      // Resend's HTTP API — plain HTTPS POST, no SMTP ports involved
+      // at all, so nothing here can be blocked the way port 587 was.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(RESEND_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.fromEmail,
+          to: [to],
+          subject,
+          html,
+        }),
+        signal: controller.signal,
       });
 
-      this.logger.log(`Email sent to ${to} (messageId: ${info.messageId})`);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => '<unreadable body>');
+        throw new Error(`Resend API returned ${response.status}: ${errorBody}`);
+      }
+
+      const data = await response.json();
+      this.logger.log(`Email sent to ${to} (id: ${data?.id ?? 'unknown'})`);
       return true;
     } catch (err) {
       this.logger.error(`Failed to send email to ${to}`, err);
@@ -138,8 +170,8 @@ export class MailService {
     return this.send(to, `Verify your ${this.appName} email`, html);
   }
 
-  // NEW — plain 6-digit code for the "change transaction PIN" flow.
-  // No link/button here on purpose: this is a code the user types back
+  // Plain 6-digit code for the "change transaction PIN" flow. No
+  // link/button here on purpose: this is a code the user types back
   // into the app, not something they click through.
   async sendPinChangeOtp(to: string, firstName: string, code: string): Promise<boolean> {
     const html = this.emailWrapper(`

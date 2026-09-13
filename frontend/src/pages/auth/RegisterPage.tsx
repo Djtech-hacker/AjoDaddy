@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useRegister } from '@/hooks/useApi'
 import { Button, Input, Select } from '@/components/ui'
 
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+
 const step1Schema = z.object({
   firstName: z.string().min(2, 'Min 2 characters'),
   lastName:  z.string().min(2, 'Min 2 characters'),
@@ -96,14 +98,9 @@ export default function RegisterPage() {
         initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
       >
-        <Link to="/" className="inline-flex items-center gap-2.5 mb-8">
-          <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2C8 2 3 5 3 9C3 11.76 5.24 14 8 14C10.76 14 13 11.76 13 9C13 5 8 2 8 2Z" fill="#A8E03A"/>
-              <circle cx="8" cy="9" r="2" fill="#1B5C3C"/>
-            </svg>
-          </div>
-          <span className="text-[15px] font-bold tracking-tight text-ink">PayPaddy</span>
+       
+               <Link to="/" className="w-full flex items-center justify-center mb-8">
+          <img src={LOGO_URL} alt="PayPaddy" className="h-24" />
         </Link>
 
         {/* Step indicator */}

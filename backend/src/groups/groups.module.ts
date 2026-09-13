@@ -153,8 +153,8 @@ export class GroupsService {
     const creator = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
     if (!creator || creator.status !== 'ACTIVE') throw new ForbiddenException('Please verify your email before creating a group.');
     const identityRecord = await this.prisma.identityRecord.findUnique({ where: { userId } });
-    if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification before creating a group.');
-    if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verification before creating a group.');
+    if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification in profile section before creating a group.');
+    if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verificationin profile section before creating a group.');
     // Same check joinGroup() already enforces — a member removed for a
     // missed contribution carries a debt, and until it's settled they
     // shouldn't be able to sidestep it by starting a brand new group
@@ -289,8 +289,8 @@ export class GroupsService {
       const outstandingDebts = await tx.debt.count({ where: { userId, status: 'OUTSTANDING' } });
       if (outstandingDebts > 0) throw new ForbiddenException('You have outstanding debts that must be settled before joining a new group.');
       const identityRecord = await tx.identityRecord.findUnique({ where: { userId } });
-      if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification before joining a group.');
-      if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verification before joining a group.');
+      if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification in profile sectionbefore joining a group.');
+      if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verification in profile section before joining a group.');
       if (group.visibility === 'INVITE_ONLY' || group.visibility === 'PRIVATE') {
         if (!dto.inviteCode) throw new ForbiddenException('Invite code required');
         const invite = await tx.inviteLink.findFirst({ where: { groupId, code: dto.inviteCode, isActive: true } });

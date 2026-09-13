@@ -137,6 +137,17 @@ export class KycService {
     return '*'.repeat(v.length - show) + v.slice(-show);
   }
 
+private dobsMatch(a: string, b: string): boolean {
+  if (!a || !b) return true;
+  const parse = (s: string) => {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    const digits = s.replace(/\D/g, '');
+    return digits.length === 8 ? digits : s.trim();
+  };
+  return parse(a) === parse(b);
+}
+
   private nameSimilarity(a: string, b: string): number {
     const s1 = a.toLowerCase().trim();
     const s2 = b.toLowerCase().trim();
@@ -334,7 +345,7 @@ export class KycService {
     const skipMatch       = process.env.KYC_REQUIRE_NIN !== 'true' && !ninFirst;
     const firstMatch      = skipMatch ? 100 : this.nameSimilarity(ninFirst, bvnFirst);
     const lastMatch       = skipMatch ? 100 : this.nameSimilarity(ninLast,  bvnLast);
-    const dobMatch        = skipMatch ? true : (ninDob && bvnDob ? ninDob === bvnDob : true);
+    const dobMatch        = skipMatch ? true : this.dobsMatch(ninDob, bvnDob);
     const identityMatched = firstMatch >= this.nameThreshold && lastMatch >= this.nameThreshold && dobMatch;
     const finalStatus     = identityMatched ? 'VERIFIED' : 'MANUAL_REVIEW';
     const rejectionReason = identityMatched ? null : `Name/DOB mismatch: first ${firstMatch}%, last ${lastMatch}%, dob ${dobMatch ? 'match' : 'mismatch'}`;

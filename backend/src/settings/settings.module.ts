@@ -36,6 +36,7 @@ import { IsNumber, IsOptional, IsBoolean, IsString, IsInt, IsISO8601, Min, Max }
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/auth.module';
 import { AdminGuard, SuperAdminGuard } from '../admin/admin.module';
+import { SkipThrottle } from '@nestjs/throttler';
 
 const SETTINGS_ID = 'singleton';
 
@@ -340,6 +341,7 @@ export class PlatformStatusController {
   constructor(private readonly settingsService: SettingsService) {}
 
   @Get('status')
+  @SkipThrottle()
   @ApiOperation({ summary: 'Public platform status — maintenance mode, schedule, announcement' })
   async getStatus() {
     const settings = await this.settingsService.getSettings();

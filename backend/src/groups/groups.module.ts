@@ -104,7 +104,7 @@ export class CreateGroupDto {
   @IsNumber() @Min(2) @Max(100) maxMembers: number;
   @IsDateString() startDate: string;
   @IsEnum(['PUBLIC','PRIVATE','INVITE_ONLY']) visibility: string;
-  @IsNumber() @Min(1) penaltyAmount: number;                        // mandatory — every group must have a real late fee
+  @IsOptional() @IsNumber() @Min(0) penaltyAmount?: number;
   @IsOptional() @IsBoolean() autoApproveMembers?: boolean;
   @IsOptional() @IsNumber() @Min(1) @Max(365) customCycleDays?: number;
   // How many times the group rotates through every member's payout position.

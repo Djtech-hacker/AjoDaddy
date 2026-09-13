@@ -21,6 +21,8 @@ export function validate(config: Record<string, unknown>) {
     RESEND_API_KEY:          Joi.string().optional(),
     EMAIL_FROM:              Joi.string().email().required(),
     BCRYPT_ROUNDS:           Joi.number().default(12),
+    MAILJET_API_KEY:    Joi.string().optional(),
+    MAILJET_SECRET_KEY: Joi.string().optional(),
   }).unknown(true);
 
   const { error, value } = schema.validate(config, { abortEarly: false });

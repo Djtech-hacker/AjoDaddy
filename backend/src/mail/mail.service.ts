@@ -1,19 +1,24 @@
 // ============================================================
-// MAIL SERVICE — Email sending via Resend (HTTPS API)
+// MAIL SERVICE — Email sending via Mailjet (HTTPS API)
 // ============================================================
-// FIX: this used to send via raw SMTP (smtp.gmail.com:587) through
-// Nodemailer. On Render, every single send timed out after exactly
-// connectionTimeout (10s) — not intermittently, EVERY time, including
-// with force-IPv4 (`family: 4`) already applied. That pattern (clean,
-// consistent timeout, not a connection refusal or auth error) points
-// to the hosting provider blocking or silently dropping outbound
-// traffic on raw SMTP ports (25/465/587) — a common anti-spam measure
-// on PaaS platforms, especially free/starter tiers. No amount of SMTP
-// config tuning fixes a port that's blocked at the network level.
+// Previously: raw SMTP (Gmail) — blocked at the network level on
+// Render (every send timed out at exactly connectionTimeout).
+// Then: Resend's HTTP API — works, but its free/sandbox tier only
+// allows sending TO the exact email address the account was signed up
+// with, until you verify a whole domain (costs money, needs a domain).
+// Then: attempted Brevo — API key generation kept failing with a
+// platform-side error unrelated to anything in this codebase.
 //
-// FIX: switched to Resend's HTTP API. It sends over plain HTTPS
-// (port 443), which is never blocked the way SMTP ports are — so this
-// sidesteps the problem entirely instead of trying to work around it.
+// FIX: switched to Mailjet. Same core benefit (plain HTTPS API, so no
+// SMTP port blocking) as Resend/Brevo, but Mailjet's free tier (200
+// emails/day, no credit card) only requires verifying a single SENDER
+// EMAIL ADDRESS — a 2-minute "click the link we emailed you" step —
+// after which you can send to ANY recipient, not just yourself.
+//
+// Mailjet's API uses HTTP Basic Auth with API_KEY as the username and
+// SECRET_KEY as the password (base64-encoded "key:secret" in the
+// Authorization header) — different from Resend/Brevo's single
+// Bearer-token style, but otherwise the same shape of integration.
 //
 // All public method signatures are UNCHANGED
 // (sendPasswordReset / sendEmailVerification / sendPinChangeOtp all
@@ -21,76 +26,106 @@
 // nothing else in the codebase (auth.module.ts, etc.) needs to change.
 //
 // SETUP REQUIRED:
-//   1. Sign up at https://resend.com (free tier: 100 emails/day,
-//      3,000/month — plenty for dev/early production).
-//   2. Get an API key from the Resend dashboard.
-//   3. Add RESEND_API_KEY=re_xxxxxxxx to your environment variables
-//      (both locally in .env and on Render's dashboard).
-//   4. EMAIL_FROM can stay as the default 'onboarding@resend.dev' for
-//      testing — Resend provides this shared sending address with no
-//      setup. For production with your own domain, verify a domain in
-//      the Resend dashboard and switch EMAIL_FROM to an address on it
-//      (e.g. 'PayPaddy <noreply@yourdomain.com>').
+//   1. Sign up free at https://mailjet.com (no credit card needed).
+//   2. Account Settings → Sender addresses & domains → Add a sender
+//      address → enter the email you want to send FROM → click the
+//      confirmation link Mailjet emails you. No domain required.
+//   3. Account Settings → REST API → Master API Key & Sub API Keys →
+//      copy both the API Key and the Secret Key (shown once).
+//   4. Add these two lines to env.validation.ts's schema (both
+//      optional, since only one email provider needs to be active):
+//        MAILJET_API_KEY:    Joi.string().optional(),
+//        MAILJET_SECRET_KEY: Joi.string().optional(),
+//   5. On Render (and locally in .env), set:
+//        MAILJET_API_KEY=your_api_key_here
+//        MAILJET_SECRET_KEY=your_secret_key_here
+//        EMAIL_FROM=your-verified-sender@example.com   (bare address
+//          only — env.validation.ts's Joi.string().email() check
+//          rejects the "Name <email>" format; the display name is
+//          sent separately via APP_NAME, see below)
+//   6. Redeploy. Registration/reset/PIN emails should now deliver to
+//      any recipient, not just your own inbox.
 // ============================================================
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-const RESEND_API_URL = 'https://api.resend.com/emails';
+const MAILJET_API_URL = 'https://api.mailjet.com/v3.1/send';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly apiKey: string;
+  private readonly secretKey: string;
   private readonly fromEmail: string;
   private readonly appName: string;
   private readonly frontendUrl: string;
   private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png';
 
   constructor(private readonly configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('RESEND_API_KEY', '');
-    this.fromEmail = this.configService.get<string>('EMAIL_FROM', 'PayPaddy <onboarding@resend.dev>');
-    this.appName = this.configService.get<string>('APP_NAME', 'PayPaddy');
+    this.apiKey = this.configService.get<string>('MAILJET_API_KEY', '');
+    this.secretKey = this.configService.get<string>('MAILJET_SECRET_KEY', '');
+    // NOTE: bare email only (e.g. 'you@gmail.com') — NOT the
+    // 'Name <email>' format, which env.validation.ts's Joi email check
+    // rejects. Display name is sent separately via `FromName` below,
+    // using APP_NAME.
+    this.fromEmail = this.configService.get<string>('EMAIL_FROM', '');
+    this.appName = this.configService.get<string>('APP_NAME', 'AjoDaddy');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
   }
 
   private async send(to: string, subject: string, html: string): Promise<boolean> {
-    if (!this.apiKey) {
-      this.logger.warn('No RESEND_API_KEY set — logging email instead');
+    if (!this.apiKey || !this.secretKey || !this.fromEmail) {
+      this.logger.warn('No MAILJET_API_KEY/MAILJET_SECRET_KEY/EMAIL_FROM set — logging email instead');
       this.logger.log(`📧 TO: ${to} | SUBJECT: ${subject}`);
       return false;
     }
 
     try {
-      // Resend's HTTP API — plain HTTPS POST, no SMTP ports involved
-      // at all, so nothing here can be blocked the way port 587 was.
+      // Mailjet's HTTP API — plain HTTPS POST, same as Resend/Brevo,
+      // so this sidesteps Render's SMTP port blocking the same way.
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(RESEND_API_URL, {
+      // Basic Auth: base64("API_KEY:SECRET_KEY")
+      const basicAuth = Buffer.from(`${this.apiKey}:${this.secretKey}`).toString('base64');
+
+      const response = await fetch(MAILJET_API_URL, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          Authorization: `Basic ${basicAuth}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: this.fromEmail,
-          to: [to],
-          subject,
-          html,
+          Messages: [
+            {
+              From: { Email: this.fromEmail, Name: this.appName },
+              To: [{ Email: to }],
+              Subject: subject,
+              HTMLPart: html,
+            },
+          ],
         }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
+      const data = await response.json().catch(() => null);
+
       if (!response.ok) {
-        const errorBody = await response.text().catch(() => '<unreadable body>');
-        throw new Error(`Resend API returned ${response.status}: ${errorBody}`);
+        throw new Error(`Mailjet API returned ${response.status}: ${JSON.stringify(data)}`);
       }
 
-      const data = await response.json();
-      this.logger.log(`Email sent to ${to} (id: ${data?.id ?? 'unknown'})`);
+      // Mailjet returns per-message status inside Messages[0].Status —
+      // even a 200 response can carry a "error" status for that
+      // specific message (e.g. unverified sender), so check it too.
+      const messageStatus = data?.Messages?.[0]?.Status;
+      if (messageStatus && messageStatus !== 'success') {
+        throw new Error(`Mailjet message status "${messageStatus}": ${JSON.stringify(data)}`);
+      }
+
+      this.logger.log(`Email sent to ${to} (status: ${messageStatus ?? 'unknown'})`);
       return true;
     } catch (err) {
       this.logger.error(`Failed to send email to ${to}`, err);

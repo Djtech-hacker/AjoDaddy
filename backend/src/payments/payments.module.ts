@@ -476,6 +476,35 @@ export class PaymentsService {
     }
   }
 
+  //--new code
+
+    // ── Reusable: send money out via Paystack Transfer ────────
+  async sendBankTransfer(
+    amountNaira: number,
+    accountNumber: string,
+    bankCode: string,
+    accountName: string,
+    reference: string,
+    reason: string,
+  ) {
+    const secretKey = this.configService.get('paystack.secretKey')
+    const amountKobo = Math.round(amountNaira * 100)
+
+    const recipientRes = await axios.post(
+      'https://api.paystack.co/transferrecipient',
+      { type: 'nuban', name: accountName, account_number: accountNumber, bank_code: bankCode, currency: 'NGN' },
+      { headers: { Authorization: `Bearer ${secretKey}` } },
+    )
+
+    const transferRes = await axios.post(
+      'https://api.paystack.co/transfer',
+      { source: 'balance', amount: amountKobo, recipient: recipientRes.data.data.recipient_code, reason, reference },
+      { headers: { Authorization: `Bearer ${secretKey}` } },
+    )
+
+    return { transferCode: transferRes.data.data.transfer_code, status: transferRes.data.data.status }
+  }
+  
   // ── Bank helpers ──────────────────────────────────────────
   async getBanks() {
     const secretKey = this.configService.get('paystack.secretKey')

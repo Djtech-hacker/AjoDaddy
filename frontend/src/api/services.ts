@@ -184,9 +184,13 @@ export const superAdminApi = {
   getAllDisputes:      (params?: any)               => api.get('/admin/disputes', { params }),
   getTransactions:    (params?: any)               => api.get('/admin/transactions', { params }),
   revealUserIdentity: (userId: string, password: string, facePhotoUrl?: string) => api.post(`/kyc/admin/reveal/${userId}`, { password, facePhotoUrl }),
-  // Company revenue — SYSTEM wallet balance, broken down by penalty fees vs platform fees
+   // Company revenue — SYSTEM wallet balance, broken down by penalty fees vs platform fees
   getRevenue:         ()                           => api.get('/admin/revenue'),
+  withdrawRevenue:    (data: { amount: number; accountNumber: string; bankCode: string; accountName: string; bankName?: string; password: string; facePhotoUrl: string }) => api.post('/admin/revenue/withdraw', data),
+    getDeposits:  ()                 => api.get('/admin/deposits'),
+  getUserAudit: (userId: string)   => api.get(`/admin/users/${userId}/audit`),
 }
+
 
 // ── Disputes (user-facing) ────────────────────────────────────
 export const disputesApi = {

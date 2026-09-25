@@ -18,11 +18,15 @@ import {
 import { Response } from 'express';
 import * as crypto from 'crypto';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { IsString, IsEnum } from 'class-validator';
+import { IsString, IsEnum, IsNumber, Min, IsOptional } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/auth.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuthService } from '../auth/auth.module';
+import { AuthModule } from '../auth/auth.module';
+import { PaymentsService } from '../payments/payments.module';
+import { PaymentsModule } from '../payments/payments.module';
 
 const SUPER_ADMIN_ONLY_ACTIONS = [
   'BAN_USER', 'UNBAN_USER', 'ROLE_CHANGED', 'BROADCAST_NOTIFICATION',
@@ -53,8 +57,22 @@ export class UpdateUserRoleDto { @IsEnum(['USER', 'CUSTOMER_SERVICE', 'ADMIN', '
 export class FreezeGroupDto { @IsString() reason: string; }
 export class CloseGroupDto { @IsString() reason: string; }
 export class RefundTransactionDto { @IsString() reason: string; }
+
 export class GroupBroadcastDto { @IsString() title: string; @IsString() body: string; }
+
 export class KycRejectDto { @IsString() reason: string; }
+
+export class WithdrawCompanyRevenueDto {
+  @IsNumber() @Min(500)
+  amount: number
+  @IsString() accountNumber: string
+  @IsString() bankCode: string
+  @IsString() accountName: string
+  @IsOptional() @IsString() bankName?: string
+  @IsString() password: string
+  @IsString() facePhotoUrl: string
+}
+
 
 @Injectable()
 export class AdminService {
@@ -63,6 +81,8 @@ export class AdminService {
   constructor(
     private readonly prisma:               PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly authService:          AuthService,
+    private readonly paymentsService:      PaymentsService,
   ) {}
 
   private decryptIdentity(text: string): string | null {
@@ -349,33 +369,27 @@ export class AdminService {
   // ── Company revenue (penalty fees + platform withdrawal fees) ────
   // Both are credited to the SYSTEM wallet (created to fix the
   // audit_logs FK-violation bug). This just reads and breaks it down.
-  async getRevenueOverview() {
+  
+   async getRevenueOverview() {
     const systemWallet = await this.prisma.wallet.findUnique({ where: { userId: 'SYSTEM' } });
     const walletBalance = Number(systemWallet?.balance || 0) / 100;
 
-    const [penaltyAgg, platformFeeAgg, recentPenalties, recentPlatformFees] = await Promise.all([
+    const [penaltyAgg, platformFeeAgg, withdrawnAgg, recentPenalties, recentPlatformFees, recentWithdrawals] = await Promise.all([
       this.prisma.walletTransaction.aggregate({ where: { userId: 'SYSTEM', type: 'PENALTY' }, _sum: { amount: true }, _count: true }),
       this.prisma.transaction.aggregate({ where: { userId: 'SYSTEM', type: 'WALLET_FUNDING' }, _sum: { amount: true }, _count: true }),
+      this.prisma.transaction.aggregate({ where: { userId: 'SYSTEM', type: 'WITHDRAWAL', status: { in: ['COMPLETED', 'PROCESSING'] } }, _sum: { amount: true }, _count: true }),
       this.prisma.walletTransaction.findMany({ where: { userId: 'SYSTEM', type: 'PENALTY' }, orderBy: { createdAt: 'desc' }, take: 20 }),
       this.prisma.transaction.findMany({ where: { userId: 'SYSTEM', type: 'WALLET_FUNDING' }, orderBy: { createdAt: 'desc' }, take: 20 }),
+      this.prisma.transaction.findMany({ where: { userId: 'SYSTEM', type: 'WITHDRAWAL' }, orderBy: { createdAt: 'desc' }, take: 20 }),
     ]);
 
-    // ── Resolve fromUserId → actual user (username/name) ──
-    // Both tables store the paying user's id inside metadata.fromUserId
-    // (the transaction row itself belongs to the SYSTEM wallet, not
-    // them), so this batch-fetches those users once and attaches them
-    // below rather than showing a raw id in the admin UI, which isn't
-    // searchable against anything.
     const fromUserIds = Array.from(new Set([
       ...recentPenalties.map((t: any) => t.metadata?.fromUserId).filter(Boolean),
       ...recentPlatformFees.map((t: any) => t.metadata?.fromUserId).filter(Boolean),
     ])) as string[];
 
     const fromUsers = fromUserIds.length
-      ? await this.prisma.user.findMany({
-          where: { id: { in: fromUserIds } },
-          select: { id: true, username: true, firstName: true, lastName: true },
-        })
+      ? await this.prisma.user.findMany({ where: { id: { in: fromUserIds } }, select: { id: true, username: true, firstName: true, lastName: true } })
       : [];
     const fromUserMap = new Map(fromUsers.map(u => [u.id, u]));
 
@@ -391,9 +405,175 @@ export class AdminService {
       penaltyCount:          penaltyAgg._count,
       totalFromPlatformFees: Number(platformFeeAgg._sum.amount || 0) / 100,
       platformFeeCount:      platformFeeAgg._count,
+      totalWithdrawn:        Number(withdrawnAgg._sum.amount || 0) / 100,
+      withdrawalCount:       withdrawnAgg._count,
       recentPenalties:       recentPenalties.map(attachFromUser),
       recentPlatformFees:    recentPlatformFees.map(attachFromUser),
+      recentWithdrawals:     recentWithdrawals.map(t => ({ ...t, amount: Number(t.amount) / 100 })),
     };
+  }
+
+    // ── Total money users have deposited into the platform ────
+  // Distinct from company revenue: this sums real user WALLET_FUNDING
+  // transactions (excludes SYSTEM), i.e. money users have actually put
+  // into their wallets via Paystack/Flutterwave.
+  async getPlatformDeposits() {
+    const [depositAgg, uniqueDepositors, recentDeposits, walletAgg] = await Promise.all([
+      this.prisma.transaction.aggregate({
+        where: { type: 'WALLET_FUNDING', status: 'COMPLETED', userId: { not: 'SYSTEM' } },
+        _sum: { amount: true }, _count: true,
+      }),
+      this.prisma.transaction.findMany({
+        where: { type: 'WALLET_FUNDING', status: 'COMPLETED', userId: { not: 'SYSTEM' } },
+        distinct: ['userId'], select: { userId: true },
+      }),
+      this.prisma.transaction.findMany({
+        where: { type: 'WALLET_FUNDING', status: 'COMPLETED', userId: { not: 'SYSTEM' } },
+        orderBy: { createdAt: 'desc' }, take: 20,
+        include: { user: { select: { username: true, firstName: true, lastName: true, email: true } } },
+      }),
+      this.prisma.wallet.aggregate({ where: { userId: { not: 'SYSTEM' } }, _sum: { balance: true } }),
+    ]);
+
+    return {
+      totalDeposited:     Number(depositAgg._sum.amount || 0) / 100,
+      depositCount:       depositAgg._count,
+      uniqueDepositors:   uniqueDepositors.length,
+      totalHeldInWallets: Number(walletAgg._sum.balance || 0) / 100, // what's currently sitting in user wallets right now
+      recentDeposits:     recentDeposits.map(t => ({ ...t, amount: Number(t.amount) / 100 })),
+    };
+  }
+
+  // ── Full per-user audit trail (Super Admin) ────────────────
+  // Everything this user has done or that's been done to them.
+  async getUserAuditTrail(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wallet: { select: { balance: true, lockedBalance: true } } },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const [
+      transactions, contributions, memberships, ownedGroups,
+      auditAsActor, auditAsTarget, fraudFlags,
+      disputesFiled, disputesAgainst, supportTickets,
+      loginAttempts, identityRecord,
+    ] = await Promise.all([
+      this.prisma.transaction.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      this.prisma.contribution.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 100, include: { group: { select: { name: true, slug: true } } } }),
+      this.prisma.groupMember.findMany({ where: { userId }, include: { group: { select: { name: true, slug: true, status: true } } } }),
+      this.prisma.group.findMany({ where: { ownerId: userId }, select: { id: true, name: true, slug: true, status: true, createdAt: true } }),
+      this.prisma.auditLog.findMany({ where: { actorId: userId }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.auditLog.findMany({ where: { entityId: userId, entityType: { in: ['User', 'USER'] } }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.fraudFlag.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.dispute.findMany({ where: { reporterId: userId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.dispute.findMany({ where: { reportedUserId: userId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.supportTicket.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.loginAttempt.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 30 }),
+      this.prisma.identityRecord.findUnique({ where: { userId } }),
+    ]);
+
+    return {
+      user: {
+        id: user.id, email: user.email, username: user.username,
+        firstName: user.firstName, lastName: user.lastName, phone: user.phone,
+        role: user.role, status: user.status, reputationScore: user.reputationScore,
+        isEmailVerified: user.isEmailVerified, isPhoneVerified: user.isPhoneVerified,
+        hasTransactionPin: user.hasTransactionPin,
+        totalContributed: Number(user.totalContributed || 0) / 100,
+        walletBalance: Number(user.wallet?.balance || 0) / 100,
+        lockedBalance: Number(user.wallet?.lockedBalance || 0) / 100,
+        createdAt: user.createdAt, deletedAt: user.deletedAt,
+      },
+      transactions:   transactions.map(t => ({ ...t, amount: Number(t.amount) / 100, fee: Number(t.fee || 0) / 100 })),
+      contributions:  contributions.map(c => ({ ...c, amount: Number(c.amount) / 100 })),
+      memberships, ownedGroups, auditAsActor, auditAsTarget, fraudFlags,
+      disputesFiled, disputesAgainst, supportTickets, loginAttempts,
+      identityRecord: identityRecord ? {
+        status: identityRecord.status, ninVerified: identityRecord.ninVerified,
+        bvnVerified: identityRecord.bvnVerified, identityMatched: identityRecord.identityMatched,
+        updatedAt: identityRecord.updatedAt,
+      } : null,
+    };
+  }
+
+  // ── Manually withdraw company revenue to a bank account ──
+  async withdrawCompanyRevenue(adminId: string, dto: WithdrawCompanyRevenueDto) {
+    const passwordValid = await this.authService.verifyPassword(adminId, dto.password)
+    if (!passwordValid) throw new ForbiddenException('Incorrect password')
+
+    if (!dto.facePhotoUrl) throw new BadRequestException('Face verification photo is required')
+
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminId },
+      select: { username: true, firstName: true, lastName: true, email: true, role: true },
+    })
+    if (admin?.role !== 'SUPER_ADMIN') throw new ForbiddenException('Only Super Admin can withdraw company revenue')
+
+    const amountKobo = BigInt(Math.round(dto.amount * 100))
+
+    const systemWallet = await this.prisma.wallet.findUnique({ where: { userId: 'SYSTEM' } })
+    if (!systemWallet) throw new NotFoundException('Company revenue wallet not found')
+
+    const available = systemWallet.balance - systemWallet.lockedBalance
+    if (available < amountKobo) {
+      throw new BadRequestException(`Insufficient company balance. Available: ₦${(Number(available) / 100).toLocaleString()}`)
+    }
+
+    const reference = `COMPANYWD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+
+    await this.prisma.executeTransaction(async (tx) => {
+      const fresh = await tx.wallet.findUnique({ where: { userId: 'SYSTEM' } })
+      const freshAvail = fresh.balance - fresh.lockedBalance
+      if (freshAvail < amountKobo) throw new BadRequestException('Insufficient company balance')
+
+      await tx.wallet.update({ where: { userId: 'SYSTEM' }, data: { balance: { decrement: amountKobo } } })
+
+      await tx.transaction.create({
+        data: {
+          userId: 'SYSTEM', walletId: fresh.id, type: 'WITHDRAWAL', status: 'PENDING',
+          amount: amountKobo,
+          balanceBefore: fresh.balance, balanceAfter: fresh.balance - amountKobo,
+          reference,
+          description: `Company revenue withdrawal to ${dto.accountName} (${dto.accountNumber}) by @${admin?.username}`,
+          metadata: {
+            accountNumber: dto.accountNumber, bankCode: dto.bankCode,
+            accountName: dto.accountName, bankName: dto.bankName,
+            initiatedBy: adminId, initiatedByUsername: admin?.username,
+          },
+        },
+      })
+    })
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: adminId, action: 'COMPANY_REVENUE_WITHDRAWAL', entityType: 'Wallet', entityId: systemWallet.id,
+        metadata: {
+          amount: dto.amount, reference,
+          accountName: dto.accountName, accountNumber: dto.accountNumber, bankName: dto.bankName,
+          withdrawnBy: admin?.username, withdrawnByName: `${admin?.firstName || ''} ${admin?.lastName || ''}`.trim(),
+          withdrawnByEmail: admin?.email,
+          facePhotoUrl: dto.facePhotoUrl,
+          passwordVerified: true,
+        },
+      },
+    })
+
+    try {
+      await this.paymentsService.sendBankTransfer(
+        dto.amount, dto.accountNumber, dto.bankCode, dto.accountName,
+        reference, `PayPaddy company revenue withdrawal by ${admin?.username}`,
+      )
+      await this.prisma.transaction.updateMany({ where: { reference }, data: { status: 'PROCESSING' } })
+      return { success: true, reference, message: `₦${dto.amount.toLocaleString()} withdrawal initiated — funds are being sent to ${dto.accountName}` }
+    } catch (err) {
+      await this.prisma.executeTransaction(async (tx) => {
+        const w = await tx.wallet.findUnique({ where: { userId: 'SYSTEM' } })
+        await tx.wallet.update({ where: { userId: 'SYSTEM' }, data: { balance: { increment: amountKobo } } })
+        await tx.transaction.updateMany({ where: { reference }, data: { status: 'FAILED' } })
+      })
+      throw new BadRequestException('Transfer failed — company wallet has been refunded. Check the audit log for this attempt.')
+    }
   }
 
   // ── KYC Management ────────────────────────────────────────
@@ -562,6 +742,19 @@ export class AdminController {
   @Get('revenue')
   @UseGuards(SuperAdminGuard)
   getRevenue() { return this.adminService.getRevenueOverview(); }
+   @Post('revenue/withdraw')
+  @UseGuards(SuperAdminGuard)
+  withdrawRevenue(@Req() req: any, @Body() dto: WithdrawCompanyRevenueDto) {
+    return this.adminService.withdrawCompanyRevenue(req.user.id, dto)
+  }
+  
+    @Get('deposits')
+  @UseGuards(SuperAdminGuard)
+  getDeposits() { return this.adminService.getPlatformDeposits(); }
+
+  @Get('users/:id/audit')
+  @UseGuards(SuperAdminGuard)
+  getUserAudit(@Param('id') id: string) { return this.adminService.getUserAuditTrail(id); }
 
   // ── KYC endpoints ─────────────────────────────────────────
   @Get('kyc/pending')
@@ -575,7 +768,7 @@ export class AdminController {
 }
 
 @Module({
-  imports:     [NotificationsModule],
+  imports:     [NotificationsModule, AuthModule, PaymentsModule],
   controllers: [AdminController],
   providers:   [AdminService],
   exports:     [AdminService],

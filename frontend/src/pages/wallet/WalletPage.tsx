@@ -4,10 +4,11 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button, Skeleton, Modal, Input, Select } from '@/components/ui'
 import { useWallet, useWalletTransactions, useInitiatePayment } from '@/hooks/useApi'
-import { paymentsApi, authApi, kycApi } from '@/api/services'
+import { paymentsApi, authApi, kycApi, walletApi, supportApi } from '@/api/services'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types'
@@ -60,6 +61,19 @@ const TX_META: Record<string, { label: string; icon: string; bg: string; color: 
 
 // ── Receipt modal ──────────────────────────────────────────────
 function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => void }) {
+  const { showToast } = useUIStore()
+  const [reporting, setReporting] = useState(false)
+  const [issueText, setIssueText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  // Reset the report state whenever a different (or no) transaction is shown
+  useEffect(() => {
+    setReporting(false)
+    setIssueText('')
+    setSent(false)
+  }, [tx?.id])
+
   if (!tx) return null
   const isCredit = TX_CREDIT.has(tx.type)
   const meta = (tx as any).metadata || {}
@@ -86,8 +100,48 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
       { label: 'Fee',            val: feeVal ? `₦${feeVal.toLocaleString()}` : '₦0' },
     ] : []),
   ]
+
+  const submitIssue = async () => {
+    if (!issueText.trim()) { showToast('Tell us what happened first', 'error'); return }
+    setSubmitting(true)
+    try {
+      const details = rows.map(r => `${r.label}: ${r.val}`).join('\n')
+      await supportApi.createTicket({
+        subject: `Issue with transaction ${tx.id}`,
+        message: `${issueText.trim()}\n\n— Transaction details —\n${details}`,
+        priority: 'MEDIUM',
+      })
+      setSent(true)
+      showToast('Sent to customer care', 'success')
+    } catch (err: any) {
+      showToast(err?.response?.data?.message || 'Could not send report', 'error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <Modal open={!!tx} onClose={onClose} title="Receipt" size="sm" footer={<Button onClick={onClose}>Close</Button>}>
+    <Modal
+      open={!!tx}
+      onClose={onClose}
+      title="Receipt"
+      size="sm"
+      footer={
+        sent ? (
+          <Button onClick={onClose}>Close</Button>
+        ) : reporting ? (
+          <>
+            <Button variant="secondary" onClick={() => setReporting(false)}>Back</Button>
+            <Button onClick={submitIssue} loading={submitting}>Send to customer care</Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={() => setReporting(true)}>Report an issue</Button>
+            <Button onClick={onClose}>Close</Button>
+          </>
+        )
+      }
+    >
       <div className="space-y-3">
         <div className="text-center py-4">
           <div className={`w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-[20px] mb-3 ${tx.status === 'COMPLETED' ? 'bg-emerald-50' : tx.status === 'FAILED' ? 'bg-red-50' : 'bg-amber-50'}`}>
@@ -95,6 +149,7 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
           </div>
           <p className="text-[24px] font-semibold text-gray-900 tabular-nums">{isCredit ? '+' : '-'}₦{tx.amount.toLocaleString()}</p>
         </div>
+
         <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
           {rows.map(r => (
             <div key={r.label} className="flex justify-between gap-4">
@@ -103,11 +158,30 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
             </div>
           ))}
         </div>
+
+        {sent ? (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-center">
+            <p className="text-[13px] font-semibold text-emerald-700">✓ Report sent</p>
+            <p className="text-[11px] text-emerald-600 mt-1">Customer care has this transaction's details and will follow up by email.</p>
+          </div>
+        ) : reporting ? (
+          <div className="space-y-2">
+            <label className="text-[12px] font-semibold text-gray-700">What happened?</label>
+            <textarea
+              autoFocus
+              rows={4}
+              value={issueText}
+              onChange={e => setIssueText(e.target.value)}
+              placeholder="e.g. Money was deducted but my wallet wasn't credited…"
+              className="w-full rounded-xl border border-gray-200 p-3 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 resize-none"
+            />
+            <p className="text-[11px] text-gray-400">The transaction details above are sent along with your message automatically.</p>
+          </div>
+        ) : null}
       </div>
     </Modal>
   )
 }
-
 // ── Transaction row ────────────────────────────────────────────
 function TxRow({ tx, onClick }: { tx: Transaction; onClick: () => void }) {
   const isCredit = TX_CREDIT.has(tx.type)
@@ -533,6 +607,7 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
 // ── Main page ──────────────────────────────────────────────────
 const PAGE_SIZE = 15
 const ALL_SIZE  = 500 // effectively "no limit" for a single wallet's history
+const BALANCE_HIDDEN_KEY = 'walletBalanceHidden'
 
 export default function WalletPage() {
   const [fundOpen,      setFundOpen]      = useState(false)
@@ -545,6 +620,16 @@ export default function WalletPage() {
   const [showAll,       setShowAll]       = useState(false)
   const [receiptTx,     setReceiptTx]     = useState<Transaction | null>(null)
 
+  // ── Hide/show balance — persisted across sessions ──
+  const [balanceHidden, setBalanceHidden] = useState(() => localStorage.getItem(BALANCE_HIDDEN_KEY) === 'true')
+  const toggleBalance = () => {
+    setBalanceHidden(prev => {
+      const next = !prev
+      localStorage.setItem(BALANCE_HIDDEN_KEY, String(next))
+      return next
+    })
+  }
+
   const { verifying }     = usePaymentVerify()
   const { user }          = useAuthStore()
   const { data: wallet, isLoading: walletLoading, refetch: refetchWallet } = useWallet()
@@ -554,6 +639,20 @@ export default function WalletPage() {
     type:  txType || undefined,
   })
   const initPayment = useInitiatePayment()
+
+  // FIX: totalFunded used to fall back to summing only the CURRENTLY
+  // LOADED PAGE of transactions (PAGE_SIZE = 15) whenever the wallet
+  // object didn't have totalFunded/totalDeposited. That silently
+  // under-reports lifetime funding for any user with more than 15
+  // transactions, or whose fundings got pushed off page 1 by other
+  // transaction types. /wallet/stats is the correct source — it should
+  // do a real database aggregate over ALL of this user's WALLET_FUNDING
+  // transactions, not whatever happens to be paginated into view.
+  const { data: statsData } = useQuery({
+    queryKey: ['wallet-stats'],
+    queryFn:  () => walletApi.getStats(),
+    select:   (res) => (res.data as any)?.data || res.data,
+  })
 
   const { register, handleSubmit, formState: { errors }, reset } = useForm<FundData>({
     resolver: zodResolver(fundSchema),
@@ -572,11 +671,14 @@ export default function WalletPage() {
   const w = wallet as any
   const hasPin = user?.hasTransactionPin
 
+  // FIX: no longer falls back to a paginated client-side sum — that was
+  // the actual bug. Source of truth is now /wallet/stats (a real
+  // aggregate), then the wallet payload, then 0. If this still shows an
+  // unexpected number, the bug has moved server-side into the /wallet/stats
+  // handler itself, not this page.
   const totalFunded: number =
-    w?.totalFunded ?? w?.totalDeposited ??
-    transactions
-      .filter((tx: Transaction) => tx.type === 'WALLET_FUNDING' && tx.status === 'COMPLETED')
-      .reduce((s: number, tx: Transaction) => s + tx.amount, 0)
+    statsData?.totalFunded ?? statsData?.totalDeposited ??
+    w?.totalFunded ?? w?.totalDeposited ?? 0
 
   const TX_TYPE_LABELS: Record<string, string> = {
     '': 'All types',
@@ -650,12 +752,35 @@ export default function WalletPage() {
                 <p className="text-[10px] sm:text-[11px] font-semibold text-white/40 uppercase tracking-[0.12em] mb-2">
                   Available Balance
                 </p>
-                <p className="text-[32px] sm:text-[44px] font-bold text-white tracking-tight leading-none tabular-nums mb-3 sm:mb-4">
-                  ₦{(w?.balance ?? 0).toLocaleString()}
-                </p>
+
+                <div className="flex items-center gap-3 mb-3 sm:mb-4">
+                  <p className="text-[32px] sm:text-[44px] font-bold text-white tracking-tight leading-none tabular-nums">
+                    {balanceHidden ? '₦••••••' : `₦${(w?.balance ?? 0).toLocaleString()}`}
+                  </p>
+                  <button
+                    onClick={toggleBalance}
+                    aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors flex-shrink-0"
+                  >
+                    {balanceHidden ? (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
                 {(w?.lockedBalance || 0) > 0 && (
-                  <p className="text-[11px] text-white/30 mb-2">₦{(w?.lockedBalance || 0).toLocaleString()} pending</p>
+                  <p className="text-[11px] text-white/30 mb-2">
+                    {balanceHidden ? '••••' : `₦${(w?.lockedBalance || 0).toLocaleString()}`} pending
+                  </p>
                 )}
+
                 <div className="flex items-center gap-2 mb-4 sm:mb-5">
                   <div className="w-2 h-2 rounded-full bg-emerald-400"/>
                   <span className="text-[11px] sm:text-[12px] font-medium text-emerald-400">Wallet is active</span>
@@ -694,7 +819,9 @@ export default function WalletPage() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] sm:text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Total Funded</p>
-                  <p className="text-[16px] sm:text-[20px] font-bold text-gray-900 tracking-tight mt-0.5 truncate">₦{totalFunded.toLocaleString()}</p>
+                  <p className="text-[16px] sm:text-[20px] font-bold text-gray-900 tracking-tight mt-0.5 truncate">
+                    {balanceHidden ? '₦••••••' : `₦${totalFunded.toLocaleString()}`}
+                  </p>
                   <p className="text-[10px] sm:text-[11px] text-emerald-600 font-semibold mt-0.5">↑ 0% this month</p>
                 </div>
               </div>

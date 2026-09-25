@@ -64,7 +64,8 @@ import { AuthGuard as PassportAuthGuard } from '@nestjs/passport';
 import { nanoid } from 'nanoid';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-
+import { SmsModule } from '../sms/sms.module';
+import { TermiiService } from '../sms/termii.service';
 // ── DTOs ─────────────────────────────────────────────────────
 
 export class RegisterDto {
@@ -92,9 +93,29 @@ export class RegisterDto {
   )
   password: string;
 
-  @IsOptional()
+ 
+
   @IsString()
-  referralCode?: string;
+  @Matches(/^\+?\d{10,15}$/, { message: 'Enter a valid phone number' })
+  phone: string;
+
+  @IsString()
+  phoneVerifiedToken: string;
+}
+
+export class SendPhoneOtpDto {
+  @IsString()
+  @Matches(/^\+?\d{10,15}$/, { message: 'Enter a valid phone number' })
+  phone: string;
+}
+
+export class VerifyPhoneOtpDto {
+  @IsString()
+  otpToken: string;
+
+  @IsString()
+  @MinLength(6) @MaxLength(6)
+  code: string;
 }
 
 export class LoginDto {
@@ -218,9 +239,25 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly notificationsService: NotificationsService,
     private readonly mailService: MailService,
+    private readonly termii: TermiiService,
   ) {}
 
   async register(dto: RegisterDto, ipAddress: string) {
+    // Confirm the phone was actually verified via the OTP flow, and that
+    // the proof token matches THIS phone number.
+    let phonePayload: any;
+    try {
+      phonePayload = this.jwtService.verify(dto.phoneVerifiedToken, { secret: this.configService.get('jwt.secret') });
+    } catch {
+      throw new BadRequestException('Phone verification expired. Please verify your phone number again.');
+    }
+    if (!phonePayload?.verified || phonePayload.phone !== dto.phone) {
+      throw new BadRequestException('Phone verification does not match. Please verify your phone number again.');
+    }
+
+    const existingPhone = await this.prisma.user.findFirst({ where: { phone: dto.phone } });
+    if (existingPhone) throw new ConflictException('Phone number already registered');
+
     const existingEmail = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
     if (existingEmail) throw new ConflictException('Email already registered');
 
@@ -229,11 +266,7 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3 });
 
-    let referredById: string | undefined;
-    if (dto.referralCode) {
-      const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referralCode } });
-      if (referrer) referredById = referrer.id;
-    }
+   
 
     const user = await this.prisma.executeTransaction(async (tx) => {
       const newUser = await tx.user.create({
@@ -243,7 +276,8 @@ export class AuthService {
           firstName: dto.firstName,
           lastName: dto.lastName,
           passwordHash,
-          referredById,
+          phone: dto.phone,
+          isPhoneVerified: true,
           status: 'PENDING_VERIFICATION',
         },
       });
@@ -382,6 +416,44 @@ export class AuthService {
     });
     res.clearCookie('refresh_token');
     return { message: 'Logged out successfully' };
+  }
+
+  
+  // ── Phone OTP (pre-registration) ───────────────────────────
+  // Stateless: no user row exists yet, so the OTP is encoded into a
+  // short-lived signed token instead of a DB row.
+  async sendPhoneOtp(phone: string) {
+    const digits = phone.replace(/\D/g, '');
+    const existing = await this.prisma.user.findFirst({ where: { phone: { contains: digits.slice(-10) } } });
+    if (existing) throw new ConflictException('This phone number is already registered.');
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const otpToken = this.jwtService.sign(
+      { phone, code },
+      { secret: this.configService.get('jwt.secret'), expiresIn: '10m' },
+    );
+
+    this.termii.sendOtp(phone, code).catch((err) => console.error('[sendPhoneOtp] Termii send failed:', err));
+
+    return { message: 'Code sent to your phone', otpToken };
+  }
+
+  async verifyPhoneOtp(dto: VerifyPhoneOtpDto) {
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(dto.otpToken, { secret: this.configService.get('jwt.secret') });
+    } catch {
+      throw new BadRequestException('Code expired or invalid. Please request a new one.');
+    }
+    if (payload.code !== dto.code.trim()) throw new BadRequestException('Incorrect code');
+
+    const phoneVerifiedToken = this.jwtService.sign(
+      { phone: payload.phone, verified: true },
+      { secret: this.configService.get('jwt.secret'), expiresIn: '15m' },
+    );
+
+    return { message: 'Phone verified', phoneVerifiedToken };
   }
 
   async sendVerificationEmail(userId: string, email: string, firstName: string) {
@@ -532,6 +604,22 @@ export class AuthService {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+    @Post('send-phone-otp')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @ApiOperation({ summary: 'Send OTP to a phone number before registration' })
+  sendPhoneOtp(@Body() dto: SendPhoneOtpDto) {
+    return this.authService.sendPhoneOtp(dto.phone);
+  }
+
+  @Post('verify-phone-otp')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @ApiOperation({ summary: 'Verify the phone OTP before completing registration' })
+  verifyPhoneOtp(@Body() dto: VerifyPhoneOtpDto) {
+    return this.authService.verifyPhoneOtp(dto);
+  }
+
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { ttl: 60000, limit: 5 } })
@@ -654,9 +742,13 @@ export class AuthController {
     }),
     UsersModule,
     NotificationsModule,
+    SmsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy, JwtAuthGuard, JwtRefreshGuard],
   exports: [AuthService, JwtAuthGuard, JwtRefreshGuard],
 })
 export class AuthModule {}
+
+
+

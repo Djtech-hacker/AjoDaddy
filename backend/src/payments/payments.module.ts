@@ -2,40 +2,31 @@
 // PAYMENTS MODULE — Paystack only for now (Flutterwave disabled)
 // ============================================================
 // FIX: removed the `processScheduledPayouts` cron and its helper
-// `creditPayoutToWallet`. That cron ran every 5 minutes, picked up
-// ANY payout row with status SCHEDULED across the whole platform,
-// and credited it immediately — with no check that contributions
-// had actually been collected, no poolBalance decrement, no audit
-// log entry, and no cycle advancement. It also marked the payout
-// COMPLETED using a different field (`processedAt`) than the one
-// GroupsService's real payout pipeline uses (`completedAt`), which
-// is why completed payouts kept showing a null completedAt.
-//
-// GroupsService (_executePayoutUnderLock, in groups.module.ts) is
-// the single, correct owner of payout processing: it verifies the
-// pool balance, decrements it, credits the wallet, writes the audit
-// log, and advances the cycle — all inside one transaction, only
-// once every active member's contribution for that cycle is PAID.
-// Having a second system race it against that logic caused payouts
-// to be marked complete before the pool was ever paid out, silently
-// blocking the real payout from ever running for that cycle.
+// `creditPayoutToWallet`. GroupsService (_executePayoutUnderLock, in
+// groups.module.ts) is the single, correct owner of payout processing.
 // ============================================================
 //
-// FIX #2: PLATFORM_FEE_PERCENT was a hardcoded module-level constant,
-// so Super Admin's "Platform fee (%)" setting (persisted to the
-// PlatformSetting table) was saved but never read by anything —
-// every withdrawal was silently charged the original 1% forever,
-// regardless of what was saved in Settings. Fee calculation now
-// pulls the live value from PlatformSetting on every request, with
-// the original 1% kept only as a fallback if that row is ever
-// missing (e.g. before it's first seeded).
+// FIX #2: platform fee is read live from the PlatformSetting table on
+// every request (falls back to 1% only if the row is missing).
 // ============================================================
 //
-// FIX #3: verifyBankAccount() swallowed the real Paystack error and
-// always threw the same generic "Could not verify account" message
-// regardless of the actual cause (bad secret key, wrong bank code,
-// test-mode restriction, Paystack outage, etc). Now logs the real
-// response and surfaces Paystack's own message where available.
+// FIX #3: verifyBankAccount() logs and surfaces the real Paystack error.
+// ============================================================
+//
+// FIX #4 (withdrawals):
+//  - Paystack balance is checked BEFORE the user's wallet is debited,
+//    so a low Paystack balance never causes a debit-then-refund cycle.
+//  - A user is only refunded when Paystack CLEARLY rejected the transfer
+//    (4xx). Timeouts / network errors / 5xx leave the withdrawal PENDING
+//    and the webhook or reconciliation cron settles it. This prevents
+//    paying the user AND refunding them.
+//  - All refunds go through refundFailedWithdrawal(), which only acts on
+//    PENDING/PROCESSING withdrawals, so duplicate webhooks, the cron and
+//    the request handler can never refund the same withdrawal twice.
+//  - Post-transfer steps (status update, platform fee, notification) can
+//    never trigger a refund.
+//  - checkStuckWithdrawals verifies with Paystack instead of blindly
+//    marking withdrawals FAILED (which used to make user money vanish).
 // ============================================================
 
 import {
@@ -59,9 +50,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { WalletModule } from '../wallet/wallet.module';
 
 // ── Constants ─────────────────────────────────────────────────
-// Fallback only — used if the PlatformSetting row somehow doesn't
-// exist yet. The real, live value is fetched from the DB on every
-// fee calculation via PaymentsService.getPlatformFeePercent().
 const DEFAULT_PLATFORM_FEE_PERCENT = 1
 const MIN_WITHDRAWAL_NAIRA  = 500
 const MAX_WITHDRAWAL_NAIRA  = 5_000_000
@@ -115,11 +103,8 @@ export class WithdrawDto {
   @IsString() bankCode: string
   @IsString() accountName: string
 
-  // Frontend sends this (the bank's display name, e.g. "OPay Digital
-  // Services") alongside bankCode so receipts/transaction rows can show
-  // a human-readable bank name. Was missing from the DTO, so with
-  // forbidNonWhitelisted: true in main.ts, every withdrawal request was
-  // rejected outright — this is what fixes that.
+  // Frontend sends the bank's display name alongside bankCode so
+  // receipts/transaction rows can show a human-readable bank name.
   @IsOptional() @IsString()
   bankName?: string
 
@@ -141,9 +126,6 @@ export class PaymentsService {
   ) {}
 
   // ── Live platform fee lookup ──────────────────────────────
-  // PlatformSetting is a singleton row (one row total). findFirst()
-  // is used rather than a hardcoded id so this doesn't need to know
-  // or assume what id the settings row was seeded with.
   private async getPlatformFeePercent(): Promise<number> {
     const setting = await this.prisma.platformSetting.findFirst({
       select: { platformFeePercent: true },
@@ -153,6 +135,99 @@ export class PaymentsService {
       return DEFAULT_PLATFORM_FEE_PERCENT
     }
     return Number(setting.platformFeePercent)
+  }
+
+  // ── Paystack balance lookup ───────────────────────────────
+  // Returns null if the lookup itself fails, so a hiccup on /balance
+  // doesn't block withdrawals; the transfer call decides in that case.
+  private async getPaystackBalanceKobo(): Promise<bigint | null> {
+    const secretKey = this.configService.get('paystack.secretKey')
+    try {
+      const { data } = await axios.get('https://api.paystack.co/balance', {
+        headers: { Authorization: `Bearer ${secretKey}` },
+      })
+      const ngn = data.data?.find((b: any) => b.currency === 'NGN')
+      return ngn ? BigInt(ngn.balance) : 0n
+    } catch (err) {
+      this.logger.error('Could not fetch Paystack balance', err.response?.data || err.message)
+      return null
+    }
+  }
+
+  // ── Idempotent refund ─────────────────────────────────────
+  // The updateMany is the guard: it only flips PENDING/PROCESSING -> FAILED.
+  // If the withdrawal is already FAILED or COMPLETED, count is 0 and NO
+  // refund happens. Returns true if it refunded, false if already handled.
+  private async refundFailedWithdrawal(
+    userId: string,
+    amountKobo: bigint,
+    reference: string,
+    reason: string,
+  ): Promise<boolean> {
+    const refunded = await this.prisma.executeTransaction(async (tx) => {
+      const claimed = await tx.transaction.updateMany({
+        where: { reference, type: 'WITHDRAWAL', status: { in: ['PENDING', 'PROCESSING'] } },
+        data:  { status: 'FAILED' },
+      })
+      if (claimed.count === 0) return false
+
+      const w = await tx.wallet.findUnique({ where: { userId } })
+      await tx.wallet.update({ where: { userId }, data: { balance: { increment: amountKobo } } })
+      await tx.transaction.create({
+        data: {
+          userId, walletId: w.id, type: 'REFUND', status: 'COMPLETED',
+          amount: amountKobo, balanceBefore: w.balance, balanceAfter: w.balance + amountKobo,
+          reference: `REFUND-${reference}`, description: 'Withdrawal failed — funds refunded',
+          metadata: { originalReference: reference, reason },
+        },
+      })
+      return true
+    })
+
+    if (refunded) {
+      await this.notificationsService.create({
+        userId, type: 'SYSTEM', title: '❌ Withdrawal failed',
+        body: 'Your withdrawal could not be processed. Funds have been returned to your wallet.',
+        data: { reference },
+      }).catch((e) => this.logger.error('Refund notification failed', e))
+    }
+    return refunded
+  }
+
+  // ── Platform fee -> SYSTEM wallet (idempotent) ────────────
+  // Does NOT include the Paystack transfer fee (paid out externally,
+  // not retained revenue).
+  private async creditPlatformFee(
+    fromUserId: string,
+    reference: string,
+    platformFeeNaira: number,
+    platformFeePercent: number,
+  ) {
+    if (!platformFeeNaira || platformFeeNaira <= 0) return
+    const feeRef = `PLATFORMFEE-${reference}`
+    try {
+      const already = await this.prisma.transaction.findFirst({ where: { reference: feeRef } })
+      if (already) return
+
+      const platformFeeKobo = BigInt(Math.round(platformFeeNaira * 100))
+      const systemWallet = await this.prisma.wallet.findUnique({ where: { userId: 'SYSTEM' } })
+      if (!systemWallet) return
+
+      await this.prisma.executeTransaction(async (tx) => {
+        await tx.wallet.update({ where: { userId: 'SYSTEM' }, data: { balance: { increment: platformFeeKobo } } })
+        await tx.transaction.create({
+          data: {
+            userId: 'SYSTEM', walletId: systemWallet.id, type: 'WALLET_FUNDING', status: 'COMPLETED',
+            amount: platformFeeKobo, balanceBefore: systemWallet.balance, balanceAfter: systemWallet.balance + platformFeeKobo,
+            reference: feeRef,
+            description: `Platform fee (${platformFeePercent}%) from withdrawal by user ${fromUserId}`,
+            metadata: { source: 'withdrawal_platform_fee', fromUserId, originalReference: reference, platformFeePercent },
+          },
+        })
+      })
+    } catch (e) {
+      this.logger.error('Failed to credit platform fee to SYSTEM wallet', e)
+    }
   }
 
   // ── Fee preview (call before showing withdrawal form) ─────
@@ -334,7 +409,7 @@ export class PaymentsService {
     if (fees.amountAfterFees <= 0)
       throw new BadRequestException('Amount too small after fees')
 
-    // Check balance
+    // Check user's wallet balance
     const wallet = await this.prisma.wallet.findUnique({ where: { userId } })
     if (!wallet) throw new BadRequestException('Wallet not found')
 
@@ -342,12 +417,19 @@ export class PaymentsService {
     if (available < amountKobo)
       throw new BadRequestException(`Insufficient balance. Available: ₦${(Number(available) / 100).toLocaleString()}`)
 
+    // ── Paystack balance pre-check (before touching the user's wallet) ──
+    const paystackBalance = await this.getPaystackBalanceKobo()
+    const requiredKobo = amountAfterKobo + BigInt(fees.paystackFee * 100)
+    if (paystackBalance !== null && paystackBalance < requiredKobo) {
+      this.logger.error(
+        `LOW PAYSTACK BALANCE: need ₦${Number(requiredKobo) / 100}, have ₦${Number(paystackBalance) / 100}. Top up now.`,
+      )
+      throw new BadRequestException('Withdrawals are temporarily unavailable. Please try again later.')
+    }
+
     const secretKey = this.configService.get('paystack.secretKey')
 
     // Verify bank account first (before touching wallet)
-    // FIX: swallowed the real Paystack error before — logs it now so a
-    // failure here shows exactly why in the terminal instead of just
-    // "Could not verify bank account."
     try {
       const res = await axios.get(
         `https://api.paystack.co/bank/resolve?account_number=${dto.accountNumber}&bank_code=${dto.bankCode}`,
@@ -368,7 +450,7 @@ export class PaymentsService {
 
     // Deduct from wallet atomically
     await this.prisma.executeTransaction(async (tx) => {
-      const fresh     = await tx.wallet.findUnique({ where: { userId } })
+      const fresh      = await tx.wallet.findUnique({ where: { userId } })
       const freshAvail = fresh.balance - fresh.lockedBalance
       if (freshAvail < amountKobo) throw new BadRequestException('Insufficient balance')
 
@@ -391,94 +473,90 @@ export class PaymentsService {
       })
     })
 
-    // Initiate Paystack transfer
+    // ── STEP 1: create transfer recipient ──────────────────────
+    // Nothing has been sent yet, so ANY failure here is safe to refund.
+    let recipientCode: string
     try {
       const recipientRes = await axios.post(
         'https://api.paystack.co/transferrecipient',
         { type: 'nuban', name: dto.accountName, account_number: dto.accountNumber, bank_code: dto.bankCode, currency: 'NGN' },
         { headers: { Authorization: `Bearer ${secretKey}` } },
       )
+      recipientCode = recipientRes.data.data.recipient_code
+    } catch (err) {
+      this.logger.error('Paystack recipient creation failed — refunding', err.response?.data || err.message)
+      await this.refundFailedWithdrawal(userId, amountKobo, reference, 'recipient_creation_failed')
+      throw new BadRequestException('Withdrawal failed. Your funds have been returned to your wallet.')
+    }
 
-      await axios.post(
+    // ── STEP 2: send the transfer ──────────────────────────────
+    // Only refund when Paystack CLEARLY rejected it (4xx). A timeout,
+    // network error or 5xx means the money may have gone out, so we must
+    // NOT refund; the webhook or reconciliation cron will settle it.
+    try {
+      const transferRes = await axios.post(
         'https://api.paystack.co/transfer',
-        {
-          source: 'balance', amount: Number(amountAfterKobo), // kobo
-          recipient: recipientRes.data.data.recipient_code,
-          reason: 'PayPaddy withdrawal', reference,
-        },
-        { headers: { Authorization: `Bearer ${secretKey}` } },
+        { source: 'balance', amount: Number(amountAfterKobo), recipient: recipientCode, reason: 'PayPaddy withdrawal', reference },
+        { headers: { Authorization: `Bearer ${secretKey}` }, timeout: 30000 },
       )
 
-      await this.prisma.transaction.updateMany({ where: { reference }, data: { status: 'PROCESSING' } })
-
-      // Route the platform fee into the platform revenue (SYSTEM) wallet instead
-      // of it just being an untracked surplus. Does NOT include the Paystack transfer
-      // fee, since that's paid out externally and isn't retained revenue.
-      if (fees.platformFee > 0) {
-        const platformFeeKobo = BigInt(Math.round(fees.platformFee * 100))
-        const systemWallet = await this.prisma.wallet.findUnique({ where: { userId: 'SYSTEM' } })
-        if (systemWallet) {
-          await this.prisma.executeTransaction(async (tx) => {
-            await tx.wallet.update({ where: { userId: 'SYSTEM' }, data: { balance: { increment: platformFeeKobo } } })
-            await tx.transaction.create({
-              data: {
-                userId: 'SYSTEM', walletId: systemWallet.id, type: 'WALLET_FUNDING', status: 'COMPLETED',
-                amount: platformFeeKobo, balanceBefore: systemWallet.balance, balanceAfter: systemWallet.balance + platformFeeKobo,
-                reference: `PLATFORMFEE-${reference}`, description: `Platform fee (${platformFeePercent}%) from withdrawal by user ${userId}`,
-                metadata: { source: 'withdrawal_platform_fee', fromUserId: userId, originalReference: reference, platformFeePercent },
-              },
-            })
-          }).catch((e) => this.logger.error('Failed to credit platform fee to SYSTEM wallet', e))
-        }
-      }
-
-      await this.notificationsService.create({
-        userId, type: 'SYSTEM', title: 'Withdrawal in progress',
-        body: `₦${fees.amountAfterFees.toLocaleString()} is being sent to your bank. This usually takes a few minutes.`,
-        data: { amount: fees.amountAfterFees, reference },
-      })
-
-      this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ${dto.accountNumber} (${reference}) [platform fee ${platformFeePercent}%]`)
-
-      return {
-        success: true, reference,
-        amountRequested: amountNaira,
-        platformFee:     fees.platformFee,
-        paystackFee:     fees.paystackFee,
-        amountSent:      fees.amountAfterFees,
-        message: `₦${fees.amountAfterFees.toLocaleString()} is being sent to your bank account`,
+      // With OTP confirmation ON, Paystack returns 200 with status 'otp'
+      // and the money does NOT move. Turn OTP off in Paystack settings.
+      if (transferRes.data?.data?.status === 'otp') {
+        this.logger.error(`Transfer ${reference} is waiting for OTP. Disable OTP confirmation in Paystack settings.`)
+        await this.refundFailedWithdrawal(userId, amountKobo, reference, 'paystack_otp_required')
+        throw new BadRequestException('Withdrawal failed. Your funds have been returned to your wallet.')
       }
     } catch (err) {
-      // Paystack failed — refund wallet
-      this.logger.error('Paystack transfer failed — refunding', err.response?.data)
+      if (err instanceof BadRequestException) throw err
 
-      await this.prisma.executeTransaction(async (tx) => {
-        const w = await tx.wallet.findUnique({ where: { userId } })
-        await tx.wallet.update({ where: { userId }, data: { balance: { increment: amountKobo } } })
-        await tx.transaction.updateMany({ where: { reference }, data: { status: 'FAILED' } })
-        await tx.transaction.create({
-          data: {
-            userId, walletId: w.id, type: 'REFUND', status: 'COMPLETED',
-            amount: amountKobo, balanceBefore: w.balance, balanceAfter: w.balance + amountKobo,
-            reference: `REFUND-${reference}`, description: 'Withdrawal failed — funds refunded',
-            metadata: { originalReference: reference },
-          },
-        })
+      const httpStatus = err.response?.status
+      const definitelyRejected = httpStatus >= 400 && httpStatus < 500
+
+      if (definitelyRejected) {
+        this.logger.error('Paystack transfer rejected — refunding', err.response?.data)
+        await this.refundFailedWithdrawal(userId, amountKobo, reference, err.response?.data?.code || 'transfer_rejected')
+        throw new BadRequestException('Withdrawal failed. Your funds have been returned to your wallet.')
+      }
+
+      // Unknown outcome: keep the withdrawal PENDING, do NOT refund.
+      this.logger.error(`Transfer outcome UNKNOWN for ${reference} — not refunding`, err.message)
+      throw new BadRequestException(
+        'Your withdrawal is being processed. Check your transaction history shortly.',
+      )
+    }
+
+    // ── STEP 3: post-processing ────────────────────────────────
+    // Paystack accepted the transfer. Nothing below may EVER trigger a
+    // refund, so each step is isolated and only logs on failure.
+    try {
+      await this.prisma.transaction.updateMany({
+        where: { reference, status: 'PENDING' },
+        data:  { status: 'PROCESSING' },
       })
+    } catch (e) { this.logger.error(`Could not mark ${reference} PROCESSING`, e) }
 
-      await this.notificationsService.create({
-        userId, type: 'SYSTEM', title: 'Withdrawal failed',
-        body: 'Your withdrawal could not be processed. Funds have been returned to your wallet.',
-        data: { reference },
-      })
+    await this.creditPlatformFee(userId, reference, fees.platformFee, platformFeePercent)
 
-      throw new BadRequestException('Withdrawal failed. Your funds have been returned to your wallet.')
+    await this.notificationsService.create({
+      userId, type: 'SYSTEM', title: 'Withdrawal in progress',
+      body: `₦${fees.amountAfterFees.toLocaleString()} is being sent to your bank. This usually takes a few minutes.`,
+      data: { amount: fees.amountAfterFees, reference },
+    }).catch((e) => this.logger.error('Withdrawal notification failed', e))
+
+    this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ${dto.accountNumber} (${reference}) [platform fee ${platformFeePercent}%]`)
+
+    return {
+      success: true, reference,
+      amountRequested: amountNaira,
+      platformFee:     fees.platformFee,
+      paystackFee:     fees.paystackFee,
+      amountSent:      fees.amountAfterFees,
+      message: `₦${fees.amountAfterFees.toLocaleString()} is being sent to your bank account`,
     }
   }
 
-  //--new code
-
-    // ── Reusable: send money out via Paystack Transfer ────────
+  // ── Reusable: send money out via Paystack Transfer ────────
   async sendBankTransfer(
     amountNaira: number,
     accountNumber: string,
@@ -504,7 +582,7 @@ export class PaymentsService {
 
     return { transferCode: transferRes.data.data.transfer_code, status: transferRes.data.data.status }
   }
-  
+
   // ── Bank helpers ──────────────────────────────────────────
   async getBanks() {
     const secretKey = this.configService.get('paystack.secretKey')
@@ -517,13 +595,6 @@ export class PaymentsService {
     } catch { throw new BadRequestException('Could not fetch bank list') }
   }
 
-  // FIX: this used to catch-and-discard the real Paystack error, always
-  // throwing the same generic "Could not verify account" message no
-  // matter what actually went wrong (wrong/missing secret key, invalid
-  // bank code, Paystack test-mode daily resolve limit, network error,
-  // Paystack outage, etc). Now it logs the real response body and
-  // surfaces Paystack's own message when one is available, so the
-  // terminal tells you the actual cause instead of a dead end.
   async verifyBankAccount(accountNumber: string, bankCode: string) {
     const secretKey = this.configService.get('paystack.secretKey')
     try {
@@ -544,24 +615,45 @@ export class PaymentsService {
     }
   }
 
-  // ── Cron: flag stuck withdrawals after 24h ────────────────
-  @Cron(CronExpression.EVERY_HOUR)
+  // ── Cron: reconcile stuck withdrawals with Paystack ───────
+  // Instead of blindly marking stuck withdrawals FAILED (which lost the
+  // user's money), ask Paystack what actually happened, then act on it.
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async checkStuckWithdrawals() {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000) // older than 30 min
     const stuck  = await this.prisma.transaction.findMany({
-      where: { type: 'WITHDRAWAL', status: 'PROCESSING', createdAt: { lt: cutoff } },
+      where: { type: 'WITHDRAWAL', status: { in: ['PENDING', 'PROCESSING'] }, createdAt: { lt: cutoff } },
     })
+    const secretKey = this.configService.get('paystack.secretKey')
+
     for (const tx of stuck) {
-      this.logger.warn(`Withdrawal ${tx.reference} stuck >24h — flagging`)
-      await this.prisma.transaction.update({
-        where: { id: tx.id },
-        data:  { status: 'FAILED', metadata: { ...(tx.metadata as any), flaggedReason: 'Stuck >24h' } },
-      })
-      await this.notificationsService.create({
-        userId: tx.userId, type: 'SYSTEM', title: 'Withdrawal under review',
-        body: 'Your withdrawal is taking longer than expected. Contact support if needed.',
-        data: { reference: tx.reference },
-      })
+      try {
+        const { data } = await axios.get(
+          `https://api.paystack.co/transfer/verify/${tx.reference}`,
+          { headers: { Authorization: `Bearer ${secretKey}` } },
+        )
+        const status = data.data?.status
+
+        if (status === 'success') {
+          await this.prisma.transaction.updateMany({
+            where: { id: tx.id, status: { in: ['PENDING', 'PROCESSING'] } },
+            data:  { status: 'COMPLETED' },
+          })
+          const meta: any = tx.metadata || {}
+          await this.creditPlatformFee(tx.userId, tx.reference, Number(meta.platformFee || 0), Number(meta.platformFeePercent || 0))
+        } else if (status === 'failed' || status === 'reversed') {
+          await this.refundFailedWithdrawal(tx.userId, tx.amount, tx.reference, `paystack_${status}`)
+        }
+        // pending / processing / queued / otp: leave it and check again next run
+      } catch (err) {
+        if (err.response?.status === 404) {
+          // Paystack has no record of this transfer, so no money left. Safe to refund.
+          this.logger.warn(`Withdrawal ${tx.reference} not found at Paystack — refunding`)
+          await this.refundFailedWithdrawal(tx.userId, tx.amount, tx.reference, 'transfer_not_found')
+        } else {
+          this.logger.error(`Could not verify stuck withdrawal ${tx.reference}`, err.response?.data || err.message)
+        }
+      }
     }
   }
 
@@ -591,51 +683,39 @@ export class PaymentsService {
   }
 
   private async handlePaystackTransferSuccess(data: any) {
-    await this.prisma.transaction.updateMany({
+    const tx = await this.prisma.transaction.findFirst({
       where: { reference: data.reference, type: 'WITHDRAWAL' },
+    })
+    if (!tx || tx.status === 'COMPLETED') return
+
+    await this.prisma.transaction.updateMany({
+      where: { id: tx.id },
       data:  { status: 'COMPLETED' },
     })
-    const tx = await this.prisma.transaction.findFirst({ where: { reference: data.reference } })
-    if (tx) {
-      await this.notificationsService.create({
-        userId: tx.userId, type: 'SYSTEM', title: '✅ Withdrawal successful',
-        body: `₦${(Number(tx.amount) / 100 - Number(tx.fee ?? 0n) / 100).toLocaleString()} has been sent to your bank account.`,
-        data: { reference: data.reference },
-      })
-    }
+
+    // Covers the case where the request handler never got to credit the fee
+    const meta: any = tx.metadata || {}
+    await this.creditPlatformFee(tx.userId, tx.reference, Number(meta.platformFee || 0), Number(meta.platformFeePercent || 0))
+
+    await this.notificationsService.create({
+      userId: tx.userId, type: 'SYSTEM', title: '✅ Withdrawal successful',
+      body: `₦${(Number(tx.amount) / 100 - Number(tx.fee ?? 0n) / 100).toLocaleString()} has been sent to your bank account.`,
+      data: { reference: data.reference },
+    })
   }
 
+  // refundFailedWithdrawal only refunds if the withdrawal is still
+  // PENDING/PROCESSING, so duplicate or late webhooks can't refund twice.
   private async handlePaystackTransferFailed(data: any) {
     const tx = await this.prisma.transaction.findFirst({
       where: { reference: data.reference, type: 'WITHDRAWAL' },
     })
     if (!tx) return
-
-    await this.prisma.executeTransaction(async (prismaClient) => {
-      const wallet = await prismaClient.wallet.findUnique({ where: { userId: tx.userId } })
-      await prismaClient.wallet.update({ where: { userId: tx.userId }, data: { balance: { increment: tx.amount } } })
-      await prismaClient.transaction.update({ where: { id: tx.id }, data: { status: 'FAILED' } })
-      await prismaClient.transaction.create({
-        data: {
-          userId: tx.userId, walletId: wallet.id, type: 'REFUND', status: 'COMPLETED',
-          amount: tx.amount, balanceBefore: wallet.balance, balanceAfter: wallet.balance + tx.amount,
-          reference: `REFUND-${data.reference}`, description: 'Withdrawal failed — funds refunded',
-          metadata: { originalReference: data.reference, reason: data.reason },
-        },
-      })
-    })
-
-    await this.notificationsService.create({
-      userId: tx.userId, type: 'SYSTEM', title: '❌ Withdrawal failed',
-      body: 'Your withdrawal failed and funds have been returned to your wallet.',
-      data: { reference: data.reference },
-    })
+    await this.refundFailedWithdrawal(tx.userId, tx.amount, tx.reference, data.reason || 'transfer_failed')
   }
 
   // ── Flutterwave Webhook ───────────────────────────────────
   // Dormant — Flutterwave disabled, kept here in case it's re-enabled later.
-  // Since nothing can initiate a Flutterwave payment anymore, this should
-  // never receive a legitimate, correctly-signed event in practice.
   async handleFlutterwaveWebhook(payload: any, signature: string) {
     const secret      = this.configService.get('flutterwave.webhookSecret')
     const expectedSig = crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex')

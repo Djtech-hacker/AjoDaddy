@@ -507,7 +507,7 @@ export default function SupportPage() {
                   </div>
                   <div className={`max-w-[80%] sm:max-w-[75%] flex flex-col ${r.isAdminReply ? 'items-end' : 'items-start'}`}>
                     <p className="text-[10px] text-gray-400 mb-1.5">{r.isAdminReply ? 'Support team' : 'You'} · {dayjs(r.createdAt).format('MMM D, h:mm A')}</p>
-                    <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${r.isAdminReply ? 'bg-gray-900 text-white rounded-tr-sm' : 'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
+                                        <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap ${r.isAdminReply ? 'bg-gray-900 text-white rounded-tr-sm' : 'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
                       {r.message}
                     </div>
                   </div>

@@ -38,12 +38,19 @@ export class SupportService {
   ) {}
 
   // ── User-facing ──────────────────────────────────────────
-  async createTicket(userId: string, dto: CreateTicketDto) {
+    async createTicket(userId: string, dto: CreateTicketDto) {
     const ticket = await this.prisma.supportTicket.create({
       data: { userId, subject: dto.subject, priority: (dto.priority as any) || 'MEDIUM' },
     });
     await this.prisma.ticketReply.create({ data: { ticketId: ticket.id, authorId: userId, isAdminReply: false, message: dto.message } });
     await this.prisma.auditLog.create({ data: { actorId: userId, action: 'TICKET_CREATED', entityType: 'SupportTicket', entityId: ticket.id, metadata: { subject: dto.subject } } });
+
+    const staff = await this.prisma.user.findMany({ where: { role: { in: ['CUSTOMER_SERVICE', 'ADMIN', 'SUPER_ADMIN'] } }, select: { id: true } });
+    await Promise.allSettled(staff.map(s => this.notificationsService.create({
+      userId: s.id, type: 'SYSTEM', title: '🎫 New support ticket',
+      body: dto.subject, data: { ticketId: ticket.id },
+    })));
+
     return ticket;
   }
 
@@ -59,13 +66,22 @@ export class SupportService {
     return { ticket, replies };
   }
 
-  async replyAsUser(userId: string, ticketId: string, dto: ReplyTicketDto) {
+   async replyAsUser(userId: string, ticketId: string, dto: ReplyTicketDto) {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket || ticket.userId !== userId) throw new NotFoundException('Ticket not found');
     await this.prisma.ticketReply.create({ data: { ticketId, authorId: userId, isAdminReply: false, message: dto.message } });
     if (['RESOLVED','CLOSED'].includes(ticket.status)) {
       await this.prisma.supportTicket.update({ where: { id: ticketId }, data: { status: 'OPEN' } });
     }
+
+    const notifyIds = ticket.assignedToId
+      ? [ticket.assignedToId]
+      : (await this.prisma.user.findMany({ where: { role: { in: ['CUSTOMER_SERVICE', 'ADMIN', 'SUPER_ADMIN'] } }, select: { id: true } })).map(u => u.id);
+    await Promise.allSettled(notifyIds.map(id => this.notificationsService.create({
+      userId: id, type: 'SYSTEM', title: '💬 New reply on a ticket',
+      body: dto.message.slice(0, 140), data: { ticketId },
+    })));
+
     return { message: 'Reply added' };
   }
 

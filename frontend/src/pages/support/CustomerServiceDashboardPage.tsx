@@ -216,7 +216,7 @@ export default function CustomerServiceDashboardPage() {
 
   return (
     <DashboardLayout title="Customer Service" subtitle="Tickets · Reports · Escalations">
-      <div className="p-6 max-w-7xl space-y-5">
+            <div className="p-3 sm:p-6 max-w-7xl space-y-5">
 
         <div className="flex gap-1 bg-white border border-black/[0.06] rounded-xl p-1 w-fit">
           {(['tickets','reports'] as Tab[]).map(t => (
@@ -239,36 +239,39 @@ export default function CustomerServiceDashboardPage() {
               <option value="RESOLVED">Resolved</option>
               <option value="CLOSED">Closed</option>
             </select>
-            <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
+           
+                       <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
               {ticketsLoading
                 ? <div className="p-5 space-y-3">{[...Array(4)].map((_,i) => <Skeleton key={i} className="h-14 rounded-xl"/>)}</div>
                 : tickets.length === 0 ? <EmptyState icon="💬" title="No tickets found"/>
-                : <table className="w-full">
+                : <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px]">
                     <thead className="bg-warm border-b border-black/[0.05]">
                       <tr>{['User','Subject','Priority','Status','Escalated','Created',''].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
                       {tickets.map((t: any) => (
                         <tr key={t.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
                           <td className="px-4 py-3">
-                            <p className="text-[12px] font-semibold text-ink">{t.user?.firstName} {t.user?.lastName}</p>
-                            <p className="text-[11px] text-mist font-mono">@{t.user?.username}</p>
-                            <p className="text-[10px] text-mist">{t.user?.email}</p>
+                            <p className="text-[12px] font-semibold text-ink whitespace-nowrap">{t.user?.firstName} {t.user?.lastName}</p>
+                            <p className="text-[11px] text-mist font-mono whitespace-nowrap">@{t.user?.username}</p>
+                            <p className="text-[10px] text-mist whitespace-nowrap">{t.user?.email}</p>
                           </td>
                           <td className="px-4 py-3 text-[12px] text-ink max-w-[200px] truncate">{t.subject}</td>
                           <td className="px-4 py-3"><Badge variant={pv(t.priority)}>{t.priority?.toLowerCase()}</Badge></td>
                           <td className="px-4 py-3"><Badge variant={tsv(t.status)}>{t.status?.replace('_',' ').toLowerCase()}</Badge></td>
-                          <td className="px-4 py-3 text-[11px]">
+                          <td className="px-4 py-3 text-[11px] whitespace-nowrap">
                             {t.escalatedAt ? <span className="text-orange-500 font-semibold">⬆ {dayjs(t.escalatedAt).fromNow()}</span> : <span className="text-mist">—</span>}
                           </td>
-                          <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
+                          <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
                           <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openTicket(t)}>Open</Button></td>
                         </tr>
                       ))}
                     </tbody>
-                  </table>}
+                  </table>
+                </div>}
               {ticketPag && ticketPag.totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
                   <p className="text-[12px] text-mist">Page {ticketPag.page} of {ticketPag.totalPages}</p>
@@ -294,34 +297,36 @@ export default function CustomerServiceDashboardPage() {
               <option value="RESOLVED">Resolved</option>
               <option value="DISMISSED">Dismissed</option>
             </select>
-            <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
+                        <div className="bg-white rounded-2xl border border-black/[0.06] overflow-hidden">
               {reportsLoading
                 ? <div className="p-5 space-y-3">{[...Array(4)].map((_,i) => <Skeleton key={i} className="h-14 rounded-xl"/>)}</div>
                 : reports.length === 0 ? <EmptyState icon="🚩" title="No reports found"/>
-                : <table className="w-full">
+                : <div className="overflow-x-auto">
+                  <table className="w-full min-w-[640px]">
                     <thead className="bg-warm border-b border-black/[0.05]">
                       <tr>{['Reporter','Target','Type','Status','Filed',''].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider">{h}</th>
+                        <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-mist uppercase tracking-wider whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
                       {reports.map((r: any) => (
                         <tr key={r.id} className="border-b border-black/[0.04] last:border-0 hover:bg-warm/50 transition-colors">
                           <td className="px-4 py-3">
-                            <p className="text-[12px] font-semibold text-ink">{r.reporter?.username || '—'}</p>
-                            <p className="text-[10px] text-mist">{r.reporter?.email}</p>
+                            <p className="text-[12px] font-semibold text-ink whitespace-nowrap">{r.reporter?.username || '—'}</p>
+                            <p className="text-[10px] text-mist whitespace-nowrap">{r.reporter?.email}</p>
                           </td>
-                          <td className="px-4 py-3 text-[11px] text-dim">
+                          <td className="px-4 py-3 text-[11px] text-dim whitespace-nowrap">
                             {r.reportedUser ? `@${r.reportedUser.username}` : r.groupId ? `Group · ${r.groupId.slice(0,8)}…` : <span className="text-mist">General</span>}
                           </td>
                           <td className="px-4 py-3 text-[12px] text-ink">{r.type}</td>
                           <td className="px-4 py-3"><Badge variant={dsv(r.status)}>{r.status?.replace('_',' ').toLowerCase()}</Badge></td>
-                          <td className="px-4 py-3 text-[10px] text-mist font-mono">{dayjs(r.createdAt).format('MMM D, h:mm A')}</td>
+                          <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(r.createdAt).format('MMM D, h:mm A')}</td>
                           <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openReport(r)}>Open</Button></td>
                         </tr>
                       ))}
                     </tbody>
-                  </table>}
+                  </table>
+                </div>}
               {reportPag && reportPag.totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-black/[0.05]">
                   <p className="text-[12px] text-mist">Page {reportPag.page} of {reportPag.totalPages}</p>
@@ -399,7 +404,7 @@ export default function CustomerServiceDashboardPage() {
                         </div>
                         <div className={`max-w-[72%] flex flex-col ${isCS ? 'items-end' : 'items-start'}`}>
                           <p className="text-[10px] text-mist mb-1">{name} · {dayjs(r.createdAt).format('MMM D, h:mm A')}</p>
-                          <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${isCS ? 'bg-brand text-white rounded-tr-sm' : 'bg-warm text-ink rounded-tl-sm'}`}>
+                                                    <div className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap ${isCS ? 'bg-brand text-white rounded-tr-sm' : 'bg-warm text-ink rounded-tl-sm'}`}>
                             {r.message}
                           </div>
                         </div>

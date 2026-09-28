@@ -14,10 +14,7 @@ import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types'
 import dayjs from 'dayjs'
 
-const fundSchema = z.object({
-  amount:   z.coerce.number().min(100, 'Minimum ₦100'),
-  provider: z.enum(['paystack']),
-})
+const fundSchema = z.object({ amount: z.coerce.number().min(100, 'Minimum ₦100'), provider: z.enum(['paystack']) })
 type FundData = z.infer<typeof fundSchema>
 
 const withdrawSchema = z.object({
@@ -34,12 +31,7 @@ const setPinSchema = z.object({
 }).refine(d => d.pin === d.confirmPin, { message: 'PINs do not match', path: ['confirmPin'] })
 type SetPinData = z.infer<typeof setPinSchema>
 
-// Change-PIN flow: (1) verify current account password via
-// POST /auth/verify-password (authApi.verifyPassword) — replaces the old
-// broken flow that relied on a "forgot password" reset LINK, not a code;
-// (2) on success, backend emails a real OTP via POST /auth/send-pin-otp
-// (authApi.sendPinChangeOtp); (3) user enters that OTP + new PIN, submitted
-// together via POST /auth/change-pin (authApi.changePinWithOtp).
+// Change-PIN: verify password -> emailed OTP -> OTP + new PIN.
 const changePinSchema = z.object({
   otp:        z.string().min(4, 'Enter the code sent to your email'),
   newPin:     z.string().length(4, 'PIN must be 4 digits').regex(/^\d{4}$/, 'Digits only'),
@@ -48,15 +40,21 @@ const changePinSchema = z.object({
 type ChangePinData = z.infer<typeof changePinSchema>
 
 const TX_CREDIT = new Set(['WALLET_FUNDING', 'PAYOUT', 'REFUND', 'REVERSAL'])
+const TX_LABEL: Record<string, string> = {
+  WALLET_FUNDING: 'Wallet funded via Paystack', PAYOUT: 'Payout received', REFUND: 'Refund', REVERSAL: 'Reversal',
+  CONTRIBUTION: 'Group contribution', WITHDRAWAL: 'Withdrawal to bank', PENALTY: 'Penalty',
+}
 
-const TX_META: Record<string, { label: string; icon: string; bg: string; color: string; badge: string; badgeCls: string }> = {
-  WALLET_FUNDING: { label: 'Wallet Funding',      icon: '↓', bg: '#F0FDF4', color: '#16A34A', badge: 'Funding',      badgeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
-  PAYOUT:         { label: 'Payout received',      icon: '↓', bg: '#F0FDF4', color: '#16A34A', badge: 'Payout',       badgeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
-  REFUND:         { label: 'Refund',               icon: '↓', bg: '#F0FDF4', color: '#16A34A', badge: 'Funding',      badgeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
-  REVERSAL:       { label: 'Reversal',             icon: '↺', bg: '#FFFBEB', color: '#D97706', badge: 'Reversal',     badgeCls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' },
-  CONTRIBUTION:   { label: 'Group Contribution',   icon: '👥', bg: '#EFF6FF', color: '#2563EB', badge: 'Contribution', badgeCls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' },
-  WITHDRAWAL:     { label: 'Withdrawal to Bank',   icon: '↑', bg: '#FFF7ED', color: '#EA580C', badge: 'Withdrawal',   badgeCls: 'bg-orange-50 text-orange-600 ring-1 ring-orange-200' },
-  PENALTY:        { label: 'Penalty',              icon: '⚠', bg: '#FEF2F2', color: '#DC2626', badge: 'Penalty',      badgeCls: 'bg-red-50 text-red-600 ring-1 ring-red-200' },
+function describe(tx: Transaction) {
+  const meta = (tx as any).metadata || {}
+  if (tx.type === 'WITHDRAWAL' && meta.bankName) return `Withdrawal to ${meta.bankName}`
+  if (tx.type === 'CONTRIBUTION' && meta.groupName) return `Contribution to ${meta.groupName}`
+  return TX_LABEL[tx.type] || tx.type.replace(/_/g, ' ')
+}
+
+function StatusPill({ status }: { status: string }) {
+  const cls = status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : status === 'FAILED' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cls}`}>{status === 'COMPLETED' ? 'Successful' : status.charAt(0) + status.slice(1).toLowerCase()}</span>
 }
 
 // ── Receipt modal ──────────────────────────────────────────────
@@ -67,21 +65,12 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
   const [submitting, setSubmitting] = useState(false)
   const [sent, setSent] = useState(false)
 
-  // Reset the report state whenever a different (or no) transaction is shown
-  useEffect(() => {
-    setReporting(false)
-    setIssueText('')
-    setSent(false)
-  }, [tx?.id])
+  useEffect(() => { setReporting(false); setIssueText(''); setSent(false) }, [tx?.id])
 
   if (!tx) return null
   const isCredit = TX_CREDIT.has(tx.type)
   const meta = (tx as any).metadata || {}
   const maskAcc = (a: string) => a ? a.slice(0,3) + '****' + a.slice(-3) : '—'
-  // FIX: this used to read `meta.fee`, which never existed — the combined
-  // fee (platform fee + Paystack transfer fee) is stored on the
-  // transaction's own top-level `fee` column, not inside metadata. That's
-  // why the receipt always showed ₦0 regardless of the real fee charged.
   const feeVal = tx.fee ? Number(tx.fee) : 0
   const rows = [
     { label: 'Transaction ID', val: tx.id },
@@ -91,9 +80,6 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
     { label: 'Status',         val: tx.status },
     { label: 'Date & time',    val: dayjs(tx.createdAt).format('MMM D, YYYY h:mm A') },
     ...(tx.type === 'WITHDRAWAL' ? [
-      // FIX: `meta.bankName` never existed before — only `bankCode` was ever
-      // sent/stored, so this always fell back to '—'. The bank's display
-      // name is now sent from the withdraw form and stored in metadata.
       { label: 'Bank',           val: meta.bankName || '—' },
       { label: 'Account number', val: meta.accountNumber ? maskAcc(meta.accountNumber) : '—' },
       { label: 'Recipient',      val: meta.accountName || '—' },
@@ -115,33 +101,16 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
       showToast('Sent to customer care', 'success')
     } catch (err: any) {
       showToast(err?.response?.data?.message || 'Could not send report', 'error')
-    } finally {
-      setSubmitting(false)
-    }
+    } finally { setSubmitting(false) }
   }
 
   return (
-    <Modal
-      open={!!tx}
-      onClose={onClose}
-      title="Receipt"
-      size="sm"
+    <Modal open={!!tx} onClose={onClose} title="Receipt" size="sm"
       footer={
-        sent ? (
-          <Button onClick={onClose}>Close</Button>
-        ) : reporting ? (
-          <>
-            <Button variant="secondary" onClick={() => setReporting(false)}>Back</Button>
-            <Button onClick={submitIssue} loading={submitting}>Send to customer care</Button>
-          </>
-        ) : (
-          <>
-            <Button variant="secondary" onClick={() => setReporting(true)}>Report an issue</Button>
-            <Button onClick={onClose}>Close</Button>
-          </>
-        )
-      }
-    >
+        sent ? <Button onClick={onClose}>Close</Button>
+        : reporting ? (<><Button variant="secondary" onClick={() => setReporting(false)}>Back</Button><Button onClick={submitIssue} loading={submitting}>Send to customer care</Button></>)
+        : (<><Button variant="secondary" onClick={() => setReporting(true)}>Report an issue</Button><Button onClick={onClose}>Close</Button></>)
+      }>
       <div className="space-y-3">
         <div className="text-center py-4">
           <div className={`w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-[20px] mb-3 ${tx.status === 'COMPLETED' ? 'bg-emerald-50' : tx.status === 'FAILED' ? 'bg-red-50' : 'bg-amber-50'}`}>
@@ -149,7 +118,6 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
           </div>
           <p className="text-[24px] font-semibold text-gray-900 tabular-nums">{isCredit ? '+' : '-'}₦{tx.amount.toLocaleString()}</p>
         </div>
-
         <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
           {rows.map(r => (
             <div key={r.label} className="flex justify-between gap-4">
@@ -158,7 +126,6 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
             </div>
           ))}
         </div>
-
         {sent ? (
           <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-center">
             <p className="text-[13px] font-semibold text-emerald-700">✓ Report sent</p>
@@ -167,55 +134,14 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
         ) : reporting ? (
           <div className="space-y-2">
             <label className="text-[12px] font-semibold text-gray-700">What happened?</label>
-            <textarea
-              autoFocus
-              rows={4}
-              value={issueText}
-              onChange={e => setIssueText(e.target.value)}
+            <textarea autoFocus rows={4} value={issueText} onChange={e => setIssueText(e.target.value)}
               placeholder="e.g. Money was deducted but my wallet wasn't credited…"
-              className="w-full rounded-xl border border-gray-200 p-3 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 resize-none"
-            />
+              className="w-full rounded-xl border border-gray-200 p-3 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 resize-none"/>
             <p className="text-[11px] text-gray-400">The transaction details above are sent along with your message automatically.</p>
           </div>
         ) : null}
       </div>
     </Modal>
-  )
-}
-// ── Transaction row ────────────────────────────────────────────
-function TxRow({ tx, onClick }: { tx: Transaction; onClick: () => void }) {
-  const isCredit = TX_CREDIT.has(tx.type)
-  const meta = (tx as any).metadata || {}
-  const m = TX_META[tx.type] || { label: tx.type.replace(/_/g,' '), icon: '·', bg: '#F9FAFB', color: '#6B7280', badge: tx.type, badgeCls: 'bg-gray-100 text-gray-500' }
-  const maskAcc = (a: string) => a ? a.slice(0,3) + '****' + a.slice(-3) : null
-
-  const sub = tx.type === 'WITHDRAWAL' && meta.bankName
-    ? `${meta.bankName}${meta.accountNumber ? ' • ' + maskAcc(meta.accountNumber) : ''} • ${dayjs(tx.createdAt).format('MMM D, YYYY')}`
-    : `${tx.type === 'CONTRIBUTION' && meta.groupName ? `Group: ${meta.groupName} • ` : ''}${dayjs(tx.createdAt).format('MMM D, YYYY • h:mm A')}`
-
-  return (
-    <div onClick={onClick}
-      className="flex items-center gap-3 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/60 -mx-4 sm:-mx-6 px-4 sm:px-6 transition-colors cursor-pointer">
-      <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[14px] sm:text-[16px] font-bold flex-shrink-0"
-        style={{ background: m.bg, color: m.color }}>
-        {m.icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] sm:text-[14px] font-semibold text-gray-900 truncate">{m.label}</p>
-        <p className="text-[11px] text-gray-400 mt-0.5 truncate">{sub}</p>
-      </div>
-      <span className={`hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0 ${m.badgeCls}`}>
-        {m.badge}
-      </span>
-      <div className="text-right flex-shrink-0">
-        <p className={`text-[13px] sm:text-[14px] font-bold tabular-nums ${isCredit ? 'text-emerald-600' : 'text-gray-900'}`}>
-          {isCredit ? '+' : '-'}₦{tx.amount.toLocaleString()}
-        </p>
-        <p className={`text-[10px] sm:text-[11px] font-medium mt-0.5 ${tx.status === 'COMPLETED' ? 'text-emerald-600' : tx.status === 'FAILED' ? 'text-red-500' : 'text-amber-600'}`}>
-          {tx.status === 'COMPLETED' ? 'Successful' : tx.status.charAt(0) + tx.status.slice(1).toLowerCase()}
-        </p>
-      </div>
-    </div>
   )
 }
 
@@ -267,20 +193,7 @@ function SetPinModal({ open, onClose, onSuccess }: { open: boolean; onClose: () 
 }
 
 // ── Change PIN modal ───────────────────────────────────────────
-// FIX: this used to send an email via authApi.forgotPassword() and asked the
-// user to paste an "OTP" — but that endpoint actually sends a password-reset
-// LINK, not a code, so the flow was broken from step one (there was never
-// a code to enter).
-//
-// New 3-step flow:
-//   1. Password  — confirm identity via authApi.verifyPassword()
-//   2. OTP       — backend emails a real one-time code via
-//                  authApi.sendPinChangeOtp() (fired automatically once
-//                  step 1 succeeds)
-//   3. New PIN   — user enters the OTP + new PIN together, submitted via
-//                  authApi.changePinWithOtp({ otp, newPin })
 type ChangePinStep = 'password' | 'otp'
-
 function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { showToast } = useUIStore()
   const { user } = useAuthStore()
@@ -291,62 +204,34 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
   const [resending, setResending] = useState(false)
   const [password, setPassword]   = useState('')
   const [passwordError, setPasswordError] = useState('')
-
   const { register, handleSubmit, formState: { errors }, reset } = useForm<ChangePinData>({ resolver: zodResolver(changePinSchema) })
 
   const sendOtp = async () => {
     setSendingOtp(true)
-    try {
-      await authApi.sendPinChangeOtp()
-      setStep('otp')
-      showToast(`Code sent to ${user?.email}`, 'success')
-    } catch (err: any) {
-      showToast(err?.response?.data?.message || 'Could not send code', 'error')
-    } finally {
-      setSendingOtp(false)
-    }
+    try { await authApi.sendPinChangeOtp(); setStep('otp'); showToast(`Code sent to ${user?.email}`, 'success') }
+    catch (err: any) { showToast(err?.response?.data?.message || 'Could not send code', 'error') }
+    finally { setSendingOtp(false) }
   }
-
   const verifyPassword = async () => {
     if (!password) { setPasswordError('Enter your password'); return }
-    setVerifying(true)
-    setPasswordError('')
-    try {
-      await authApi.verifyPassword(password)
-      await sendOtp()
-    } catch (err: any) {
-      setPasswordError(err?.response?.data?.message || 'Incorrect password')
-    } finally {
-      setVerifying(false)
-    }
+    setVerifying(true); setPasswordError('')
+    try { await authApi.verifyPassword(password); await sendOtp() }
+    catch (err: any) { setPasswordError(err?.response?.data?.message || 'Incorrect password') }
+    finally { setVerifying(false) }
   }
-
   const resendOtp = async () => {
     setResending(true)
-    try {
-      await authApi.sendPinChangeOtp()
-      showToast(`Code resent to ${user?.email}`, 'success')
-    } catch (err: any) {
-      showToast(err?.response?.data?.message || 'Could not resend code', 'error')
-    } finally {
-      setResending(false)
-    }
+    try { await authApi.sendPinChangeOtp(); showToast(`Code resent to ${user?.email}`, 'success') }
+    catch (err: any) { showToast(err?.response?.data?.message || 'Could not resend code', 'error') }
+    finally { setResending(false) }
   }
-
+  const handleClose = () => { reset(); setStep('password'); setPassword(''); setPasswordError(''); onClose() }
   const onSubmit = async (data: ChangePinData) => {
     setLoading(true)
-    try {
-      await authApi.changePinWithOtp({ otp: data.otp, newPin: data.newPin })
-      showToast('PIN changed', 'success')
-      handleClose()
-    } catch (err: any) {
-      showToast(err?.response?.data?.message || 'Failed', 'error')
-    } finally {
-      setLoading(false)
-    }
+    try { await authApi.changePinWithOtp({ otp: data.otp, newPin: data.newPin }); showToast('PIN changed', 'success'); handleClose() }
+    catch (err: any) { showToast(err?.response?.data?.message || 'Failed', 'error') }
+    finally { setLoading(false) }
   }
-
-  const handleClose = () => { reset(); setStep('password'); setPassword(''); setPasswordError(''); onClose() }
 
   return (
     <Modal open={open} onClose={handleClose} title="Change transaction PIN" size="sm"
@@ -363,15 +248,9 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
               <p className="text-[13px] font-semibold text-gray-900">Security check required</p>
               <p className="text-[12px] text-gray-500 mt-1">Enter your account password. We'll then email you a one-time code to confirm the change.</p>
             </div>
-            <Input
-              label="Password"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              error={passwordError}
-              onKeyDown={e => { if (e.key === 'Enter') verifyPassword() }}
-            />
+            <Input label="Password" type="password" placeholder="••••••••" value={password}
+              onChange={e => setPassword(e.target.value)} error={passwordError}
+              onKeyDown={e => { if (e.key === 'Enter') verifyPassword() }}/>
           </>
         ) : (
           <>
@@ -394,15 +273,6 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 // ── Withdraw modal ─────────────────────────────────────────────
-// Manual bank selection, like the original flow: pick a bank, type the
-// account number, one verify call fires once both are present. Kept
-// deliberately simple (no auto-detect) since Paystack test mode caps
-// real bank resolves at 3/day — auto-detect burned through that in a
-// single keystroke by checking several banks in parallel. Two fixes
-// from that experiment are kept here since they're unrelated to
-// auto-detect: sending bankName so receipts/rows show a real bank
-// name, and debouncing the fee calculation so a fast-typed amount
-// can't get overwritten by a stale, slower response.
 function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: () => void }) {
   const { showToast } = useUIStore()
   const [banks, setBanks]               = useState<{ name: string; code: string }[]>([])
@@ -439,11 +309,7 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
       .finally(() => setVerifying(false))
   }, [accountNumber, bankCode])
 
-  // FIX: previously fired one request per keystroke with no ordering
-  // guard — typing 20000 → 200000 quickly meant the 20000 response
-  // could resolve AFTER the 200000 one and silently overwrite it,
-  // showing stale fee numbers. Now debounced, and a token discards
-  // any response that isn't for the latest amount.
+  // Debounced fee lookup; token discards stale responses.
   const feesTokenRef = useRef(0)
   useEffect(() => {
     if (!amount || amount < 500) { setFees(null); return }
@@ -465,21 +331,14 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
     if (step === 'form') { setStep('confirm'); return }
     setSubmitting(true)
     try {
-      // FIX: the request never included the bank's display name — only
-      // bankCode — so nothing was ever available for receipts/rows to show
-      // as "Bank". The name is already sitting in local `banks` state from
-      // the dropdown; just attach it before sending.
       const bankName = banks.find(b => b.code === data.bankCode)?.name
       await paymentsApi.withdraw({ ...data, bankName })
       showToast('Withdrawal initiated — funds on the way', 'success')
-      handleClose()
-      onSuccess()
+      handleClose(); onSuccess()
     } catch (e: any) {
       showToast(e?.response?.data?.message || 'Withdrawal failed', 'error')
       setStep('form')
-    } finally {
-      setSubmitting(false)
-    }
+    } finally { setSubmitting(false) }
   }
   return (
     <Modal open={open} onClose={handleClose} title={step === 'confirm' ? 'Confirm withdrawal' : 'Withdraw funds'} size="sm"
@@ -515,13 +374,7 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
   )
 }
 
-
 // ── Outstanding debts ──────────────────────────────────────────
-// Shows any debt created after a missed contribution + expired grace
-// period (see GraceService.handleExpiredGrace / KycService.createDebt).
-// Lets the user pay it off directly from their wallet balance via
-// POST /kyc/debts/:debtId/settle — this was the only piece missing;
-// the backend logic already existed but nothing surfaced it anywhere.
 function DebtsSection({ onSettled }: { onSettled: () => void }) {
   const { showToast } = useUIStore()
   const [debts, setDebts]         = useState<any[] | null>(null)
@@ -535,65 +388,35 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
       .catch(() => setDebts([]))
       .finally(() => setLoading(false))
   }
-
   useEffect(() => { loadDebts() }, [])
 
   const outstanding = (debts || []).filter(d => d.status === 'OUTSTANDING')
-
   const handleSettle = async (debtId: string) => {
     setSettlingId(debtId)
-    try {
-      await kycApi.settleDebt(debtId)
-      showToast('Debt settled ✅', 'success')
-      loadDebts()
-      onSettled()
-    } catch (err: any) {
-      showToast(err?.response?.data?.message || 'Could not settle this debt', 'error')
-    } finally {
-      setSettlingId(null)
-    }
+    try { await kycApi.settleDebt(debtId); showToast('Debt settled ✅', 'success'); loadDebts(); onSettled() }
+    catch (err: any) { showToast(err?.response?.data?.message || 'Could not settle this debt', 'error') }
+    finally { setSettlingId(null) }
   }
-
-  if (loading) return null
-  if (outstanding.length === 0) return null
-
+  if (loading || outstanding.length === 0) return null
   const totalOwed = outstanding.reduce((s, d) => s + Number(d.totalOwed), 0)
 
   return (
-    <motion.div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden"
-      initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="px-4 sm:px-5 py-4 flex items-start gap-3">
-        <div className="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
-          <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] sm:text-[14px] font-bold text-red-800">
-            You have an outstanding debt — ₦{totalOwed.toLocaleString()}
-          </p>
-          <p className="text-[12px] text-red-600 mt-0.5">
-            This must be settled before you can join or create another group.
-          </p>
-        </div>
+    <motion.div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="px-4 sm:px-5 py-4">
+        <p className="text-[13px] sm:text-[14px] font-bold text-red-800">You have an outstanding debt — ₦{totalOwed.toLocaleString()}</p>
+        <p className="text-[12px] text-red-600 mt-0.5">This must be settled before you can join or create another group.</p>
       </div>
       <div className="border-t border-red-100 divide-y divide-red-100">
         {outstanding.map(d => (
           <div key={d.id} className="px-4 sm:px-5 py-3.5 flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <p className="text-[12.5px] font-semibold text-red-800">{d.description || 'Missed contribution'}</p>
-              <p className="text-[11px] text-red-500 mt-0.5">
-                ₦{Number(d.amount).toLocaleString()} owed + ₦{Number(d.lateFee).toLocaleString()} late fee
-                {d.createdAt ? ` · ${dayjs(d.createdAt).format('MMM D, YYYY')}` : ''}
-              </p>
+              <p className="text-[11px] text-red-500 mt-0.5">₦{Number(d.amount).toLocaleString()} owed + ₦{Number(d.lateFee).toLocaleString()} late fee{d.createdAt ? ` · ${dayjs(d.createdAt).format('MMM D, YYYY')}` : ''}</p>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <p className="text-[14px] font-bold text-red-800 tabular-nums">₦{Number(d.totalOwed).toLocaleString()}</p>
-              <button
-                onClick={() => handleSettle(d.id)}
-                disabled={settlingId === d.id}
-                className="h-8 px-3.5 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 disabled:opacity-60 transition-colors"
-              >
+              <button onClick={() => handleSettle(d.id)} disabled={settlingId === d.id}
+                className="h-8 px-3.5 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 disabled:opacity-60 transition-colors">
                 {settlingId === d.id ? 'Paying…' : 'Pay from wallet'}
               </button>
             </div>
@@ -604,50 +427,45 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
   )
 }
 
+// ── Quick operation card ───────────────────────────────────────
+function OpCard({ title, sub, icon, onClick }: { title: string; sub: string; icon: React.ReactNode; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="text-left bg-warm hover:bg-emerald-50 rounded-xl p-4 transition-colors">
+      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-brand mb-3">{icon}</div>
+      <p className="text-[13px] font-bold text-gray-900">{title}</p>
+      <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{sub}</p>
+    </button>
+  )
+}
+const ico = (d: string) => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={d}/></svg>
+
 // ── Main page ──────────────────────────────────────────────────
 const PAGE_SIZE = 15
-const ALL_SIZE  = 500 // effectively "no limit" for a single wallet's history
+const ALL_SIZE  = 500
 const BALANCE_HIDDEN_KEY = 'walletBalanceHidden'
 
 export default function WalletPage() {
+  const navigate = useNavigate()
   const [fundOpen,      setFundOpen]      = useState(false)
   const [withdrawOpen,  setWithdrawOpen]  = useState(false)
   const [setPinOpen,    setSetPinOpen]    = useState(false)
   const [changePinOpen, setChangePinOpen] = useState(false)
   const [txType,        setTxType]        = useState('')
-  const [typeOpen,      setTypeOpen]      = useState(false)
   const [page,          setPage]          = useState(1)
   const [showAll,       setShowAll]       = useState(false)
   const [receiptTx,     setReceiptTx]     = useState<Transaction | null>(null)
 
-  // ── Hide/show balance — persisted across sessions ──
   const [balanceHidden, setBalanceHidden] = useState(() => localStorage.getItem(BALANCE_HIDDEN_KEY) === 'true')
-  const toggleBalance = () => {
-    setBalanceHidden(prev => {
-      const next = !prev
-      localStorage.setItem(BALANCE_HIDDEN_KEY, String(next))
-      return next
-    })
-  }
+  const toggleBalance = () => setBalanceHidden(prev => { const next = !prev; localStorage.setItem(BALANCE_HIDDEN_KEY, String(next)); return next })
 
-  const { verifying }     = usePaymentVerify()
-  const { user }          = useAuthStore()
+  const { verifying } = usePaymentVerify()
+  const { user }      = useAuthStore()
   const { data: wallet, isLoading: walletLoading, refetch: refetchWallet } = useWallet()
-  const { data: txData,  isLoading: txLoading } = useWalletTransactions({
-    page:  showAll ? 1 : page,
-    limit: showAll ? ALL_SIZE : PAGE_SIZE,
-    type:  txType || undefined,
+  const { data: txData, isLoading: txLoading } = useWalletTransactions({
+    page: showAll ? 1 : page, limit: showAll ? ALL_SIZE : PAGE_SIZE, type: txType || undefined,
   })
   const initPayment = useInitiatePayment()
 
-  // FIX: totalFunded used to fall back to summing only the CURRENTLY
-  // LOADED PAGE of transactions (PAGE_SIZE = 15) whenever the wallet
-  // object didn't have totalFunded/totalDeposited. That silently
-  // under-reports lifetime funding for any user with more than 15
-  // transactions, or whose fundings got pushed off page 1 by other
-  // transaction types. /wallet/stats is the correct source — it should
-  // do a real database aggregate over ALL of this user's WALLET_FUNDING
-  // transactions, not whatever happens to be paginated into view.
   const { data: statsData } = useQuery({
     queryKey: ['wallet-stats'],
     queryFn:  () => walletApi.getStats(),
@@ -655,8 +473,7 @@ export default function WalletPage() {
   })
 
   const { register, handleSubmit, formState: { errors }, reset } = useForm<FundData>({
-    resolver: zodResolver(fundSchema),
-    defaultValues: { provider: 'paystack' },
+    resolver: zodResolver(fundSchema), defaultValues: { provider: 'paystack' },
   })
 
   useEffect(() => { if (!verifying) refetchWallet() }, [verifying])
@@ -670,33 +487,22 @@ export default function WalletPage() {
   const pagination = (txData as any)?.pagination
   const w = wallet as any
   const hasPin = user?.hasTransactionPin
-
-  // FIX: no longer falls back to a paginated client-side sum — that was
-  // the actual bug. Source of truth is now /wallet/stats (a real
-  // aggregate), then the wallet payload, then 0. If this still shows an
-  // unexpected number, the bug has moved server-side into the /wallet/stats
-  // handler itself, not this page.
-  const totalFunded: number =
-    statsData?.totalFunded ?? statsData?.totalDeposited ??
-    w?.totalFunded ?? w?.totalDeposited ?? 0
+  const totalFunded: number = statsData?.totalFunded ?? statsData?.totalDeposited ?? w?.totalFunded ?? w?.totalDeposited ?? 0
+  const mask = (v: string) => balanceHidden ? '₦••••••' : v
+  const balance = w?.balance ?? 0
+  const locked  = w?.lockedBalance ?? 0
 
   const TX_TYPE_LABELS: Record<string, string> = {
-    '': 'All types',
-    WALLET_FUNDING: 'Funding',
-    CONTRIBUTION:   'Contributions',
-    PAYOUT:         'Payouts',
-    WITHDRAWAL:     'Withdrawals',
+    '': 'All Transactions', WALLET_FUNDING: 'Funding', CONTRIBUTION: 'Contributions', PAYOUT: 'Payouts', WITHDRAWAL: 'Withdrawals',
   }
 
   return (
     <DashboardLayout title="Wallet" subtitle="Manage your funds securely">
       <div className="bg-[#F8F9FB] min-h-screen">
-        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-5 sm:py-8 space-y-4 sm:space-y-6">
+        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8 space-y-4">
 
-          {/* ── Outstanding debts — shown first, above everything else ── */}
           <DebtsSection onSettled={() => refetchWallet()}/>
 
-          {/* ── Verifying banner ── */}
           <AnimatePresence>
             {verifying && (
               <motion.div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center gap-3 shadow-sm"
@@ -707,283 +513,127 @@ export default function WalletPage() {
             )}
           </AnimatePresence>
 
-          {/* ── PIN banner ── */}
           {!hasPin && (
-            <motion.div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-3 flex-wrap"
-              initial={{ opacity:0, y:-8 }} animate={{ opacity:1, y:0 }}>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <p className="text-[13px] font-semibold text-amber-800">Set your transaction PIN</p>
                 <p className="text-[12px] text-amber-600 mt-0.5">Required for contributions and withdrawals.</p>
               </div>
-              <button onClick={() => setSetPinOpen(true)}
-                className="h-8 px-4 rounded-lg bg-amber-600 text-white text-[12px] font-semibold hover:bg-amber-700 transition-colors flex-shrink-0">
-                Set PIN
-              </button>
-            </motion.div>
-          )}
-
-          {/* ── Hero balance card ── */}
-          {walletLoading ? (
-            <Skeleton className="h-44 sm:h-52 w-full rounded-3xl"/>
-          ) : (
-            <motion.div
-              className="relative rounded-3xl overflow-hidden min-h-[180px] sm:min-h-[220px]"
-              style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #111827 60%, #0f1f0f 100%)' }}
-              initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }}
-              transition={{ duration:0.4, ease:[0.16,1,0.3,1] }}>
-
-              {/* Illustration — hidden on small screens */}
-              <div className="hidden sm:block absolute right-0 top-0 bottom-0 w-48 md:w-56 pointer-events-none select-none overflow-hidden">
-                <img
-                  src="https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png"
-                  alt="wallet illustration"
-                  className="h-full w-full object-contain object-bottom"
-                  style={{ filter: 'drop-shadow(0 20px 40px rgba(0,0,0,0.5))' }}
-                />
-              </div>
-
-              {/* Decorative dots — desktop only */}
-              <div className="hidden sm:block absolute top-5 right-48 w-2 h-2 rounded-full bg-emerald-500/40"/>
-              <div className="hidden sm:block absolute top-10 right-36 w-1.5 h-1.5 rounded-full bg-emerald-400/30"/>
-              <div className="hidden sm:block absolute bottom-8 right-52 w-3 h-3 rounded-full bg-emerald-500/20"/>
-
-              {/* Content */}
-              <div className="relative z-10 p-5 sm:p-7 sm:pr-52 md:pr-60">
-                <p className="text-[10px] sm:text-[11px] font-semibold text-white/40 uppercase tracking-[0.12em] mb-2">
-                  Available Balance
-                </p>
-
-                <div className="flex items-center gap-3 mb-3 sm:mb-4">
-                  <p className="text-[32px] sm:text-[44px] font-bold text-white tracking-tight leading-none tabular-nums">
-                    {balanceHidden ? '₦••••••' : `₦${(w?.balance ?? 0).toLocaleString()}`}
-                  </p>
-                  <button
-                    onClick={toggleBalance}
-                    aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/90 hover:bg-white/10 transition-colors flex-shrink-0"
-                  >
-                    {balanceHidden ? (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-
-                {(w?.lockedBalance || 0) > 0 && (
-                  <p className="text-[11px] text-white/30 mb-2">
-                    {balanceHidden ? '••••' : `₦${(w?.lockedBalance || 0).toLocaleString()}`} pending
-                  </p>
-                )}
-
-                <div className="flex items-center gap-2 mb-4 sm:mb-5">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400"/>
-                  <span className="text-[11px] sm:text-[12px] font-medium text-emerald-400">Wallet is active</span>
-                </div>
-                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                  <button onClick={() => setFundOpen(true)}
-                    className="inline-flex items-center gap-2 h-9 sm:h-11 px-4 sm:px-5 rounded-xl font-semibold text-[13px] sm:text-[14px] text-white transition-all hover:opacity-90 active:scale-95"
-                    style={{ background: '#16A34A', boxShadow: '0 4px 20px rgba(22,163,74,0.4)' }}>
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7"/>
-                    </svg>
-                    Fund wallet
-                  </button>
-                  <button onClick={() => setWithdrawOpen(true)}
-                    className="inline-flex items-center gap-2 h-9 sm:h-11 px-4 sm:px-5 rounded-xl font-semibold text-[13px] sm:text-[14px] text-white transition-all hover:bg-white/10 active:scale-95 border border-white/10"
-                    style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7"/>
-                    </svg>
-                    Withdraw
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── Stats cards ── */}
-          {!walletLoading && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              {/* Total funded */}
-              <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm flex items-center gap-3 sm:gap-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Total Funded</p>
-                  <p className="text-[16px] sm:text-[20px] font-bold text-gray-900 tracking-tight mt-0.5 truncate">
-                    {balanceHidden ? '₦••••••' : `₦${totalFunded.toLocaleString()}`}
-                  </p>
-                  <p className="text-[10px] sm:text-[11px] text-emerald-600 font-semibold mt-0.5">↑ 0% this month</p>
-                </div>
-              </div>
-
-              {/* Currency */}
-              <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm flex items-center gap-3 sm:gap-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/>
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Currency</p>
-                  <p className="text-[16px] sm:text-[20px] font-bold text-gray-900 tracking-tight mt-0.5">{w?.currency || 'NGN'}</p>
-                  <p className="text-[10px] sm:text-[11px] text-gray-400 mt-0.5">Nigerian Naira</p>
-                </div>
-              </div>
-
-              {/* Status */}
-              <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm flex items-center gap-3 sm:gap-4">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-violet-50 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 sm:w-6 sm:h-6 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Status</p>
-                  <p className="text-[16px] sm:text-[20px] font-bold text-gray-900 tracking-tight mt-0.5">{w?.isActive ? 'Active' : 'Inactive'}</p>
-                  <p className="text-[10px] sm:text-[11px] text-gray-400 mt-0.5">Your wallet is active</p>
-                </div>
-              </div>
+              <button onClick={() => setSetPinOpen(true)} className="h-8 px-4 rounded-lg bg-amber-600 text-white text-[12px] font-semibold hover:bg-amber-700">Set PIN</button>
             </div>
           )}
 
-          {/* ── Security ── */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm">
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] sm:text-[15px] font-bold text-gray-900">Security</p>
-                <p className="text-[12px] sm:text-[13px] font-semibold text-gray-600 mt-0.5">Transaction PIN</p>
-                <p className="text-[11px] sm:text-[12px] text-gray-400 truncate">
-                  {hasPin ? 'PIN is set — required for all payments' : 'No PIN set yet — required for payments'}
+          {/* Balance card */}
+          {walletLoading ? <Skeleton className="h-40 w-full rounded-2xl"/> : (
+            <div className="rounded-2xl bg-brand p-5 sm:p-7 flex items-start justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-[12px] text-white/60 font-medium">Total Wallet Balance</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-[34px] sm:text-[44px] font-extrabold text-white tracking-tight leading-none tabular-nums">{mask(`₦${balance.toLocaleString()}`)}</p>
+                  <button onClick={toggleBalance} aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      {balanceHidden
+                        ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                        : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>}
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-[11px] text-lime mt-3">
+                  Available: {mask(`₦${Math.max(balance - locked, 0).toLocaleString()}`)} • Pending lock: {mask(`₦${locked.toLocaleString()}`)} • Total funded: {mask(`₦${totalFunded.toLocaleString()}`)}
                 </p>
               </div>
-              <button
-                onClick={() => hasPin ? setChangePinOpen(true) : setSetPinOpen(true)}
-                className="flex items-center gap-1 sm:gap-1.5 text-[12px] sm:text-[13px] font-semibold text-gray-900 hover:text-gray-600 transition-colors flex-shrink-0">
-                <span className="hidden sm:inline">{hasPin ? 'Manage PIN' : 'Set PIN'}</span>
-                <span className="sm:hidden">{hasPin ? 'Manage' : 'Set'}</span>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
-                </svg>
+              <button onClick={() => setFundOpen(true)}
+                className="h-10 px-5 rounded-lg bg-lime text-black text-[13px] font-bold hover:opacity-90 active:scale-95 transition-all">
+                Fund Wallet
               </button>
+            </div>
+          )}
+
+          {/* Quick operations */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5">
+            <p className="text-[14px] font-bold text-gray-900 mb-3">Quick Operations</p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={() => setFundOpen(true)}
+                icon={ico('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}/>
+              <OpCard title="Withdraw to Bank" sub="Settle money directly into your verified account" onClick={() => setWithdrawOpen(true)}
+                icon={ico('M12 19l9 2-9-18-9 18 9-2zm0 0v-8')}/>
+              <OpCard title="Circle Escrow Settle" sub="Check pending locks and releases" onClick={() => navigate('/groups')}
+                icon={ico('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}/>
+              <OpCard title="Transaction PIN" sub={hasPin ? 'Change your secure verification PIN' : 'Set up your secure verification PIN'}
+                onClick={() => hasPin ? setChangePinOpen(true) : setSetPinOpen(true)}
+                icon={ico('M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z')}/>
             </div>
           </div>
 
-          {/* ── Transactions ── */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-50 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[14px] sm:text-[16px] font-bold text-gray-900">Transactions</p>
-                <p className="text-[11px] sm:text-[12px] text-gray-400 mt-0.5 hidden sm:block">View all your wallet activity</p>
-              </div>
-
-              {/* Dropdown */}
-              <div className="relative flex-shrink-0">
-                <button onClick={() => setTypeOpen(v => !v)}
-                  className="h-9 sm:h-10 pl-3 sm:pl-4 pr-2 sm:pr-3 rounded-xl border border-gray-200 bg-white text-[12px] sm:text-[13px] font-medium text-gray-700 flex items-center gap-1.5 sm:gap-2 hover:border-gray-300 transition-colors min-w-[100px] sm:min-w-[130px] justify-between">
-                  <span className="truncate">{TX_TYPE_LABELS[txType] || 'All types'}</span>
-                  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </button>
-                <AnimatePresence>
-                  {typeOpen && (
-                    <motion.div className="absolute right-0 top-11 sm:top-12 bg-white border border-gray-100 rounded-2xl shadow-xl z-20 overflow-hidden min-w-[160px] sm:min-w-[180px]"
-                      initial={{ opacity:0, y:-8, scale:0.95 }} animate={{ opacity:1, y:0, scale:1 }} exit={{ opacity:0, y:-8, scale:0.95 }}
-                      transition={{ duration:0.15 }}>
-                      {Object.entries(TX_TYPE_LABELS).map(([val, label]) => (
-                        <button key={val} onClick={() => { setTxType(val); setPage(1); setShowAll(false); setTypeOpen(false) }}
-                          className={`w-full flex items-center justify-between px-4 py-3 text-[13px] font-medium hover:bg-gray-50 transition-colors ${txType === val ? 'text-emerald-600' : 'text-gray-700'}`}>
-                          {label}
-                          {txType === val && (
-                            <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7"/>
-                            </svg>
-                          )}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+          {/* Ledger */}
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 sm:px-5 py-4 flex items-center justify-between gap-3">
+              <p className="text-[14px] font-bold text-gray-900">Transaction Ledger</p>
+              <select value={txType} onChange={e => { setTxType(e.target.value); setPage(1); setShowAll(false) }}
+                className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-[12px] font-medium text-gray-700 outline-none focus:border-brand cursor-pointer">
+                {Object.entries(TX_TYPE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+              </select>
             </div>
 
-            <div className="px-4 sm:px-6">
-              {txLoading ? (
-                <div className="space-y-3 py-4">
-                  {[...Array(5)].map((_,i) => <Skeleton key={i} className="h-14 sm:h-16 w-full rounded-xl"/>)}
-                </div>
-              ) : transactions.length === 0 ? (
-                <div className="py-12 sm:py-16 text-center">
-                  <p className="text-2xl mb-3">📄</p>
-                  <p className="text-[14px] font-semibold text-gray-800">No transactions yet</p>
-                  <p className="text-[12px] text-gray-400 mt-1">Fund your wallet to get started</p>
-                </div>
-              ) : (
-                <>
-                  {transactions.map(tx => <TxRow key={tx.id} tx={tx} onClick={() => setReceiptTx(tx)}/>)}
+            {txLoading ? (
+              <div className="space-y-3 p-4">{[...Array(5)].map((_,i) => <Skeleton key={i} className="h-10 w-full rounded-lg"/>)}</div>
+            ) : transactions.length === 0 ? (
+              <div className="py-14 text-center">
+                <p className="text-[14px] font-semibold text-gray-800">No transactions yet</p>
+                <p className="text-[12px] text-gray-400 mt-1">Fund your wallet to get started</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px]">
+                  <thead className="bg-warm">
+                    <tr>{['Type', 'Description', 'Date', 'Status', 'Amount'].map((h, i) => (
+                      <th key={h} className={`px-4 py-2.5 text-[11px] font-semibold text-gray-400 ${i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map(tx => {
+                      const credit = TX_CREDIT.has(tx.type)
+                      return (
+                        <tr key={tx.id} onClick={() => setReceiptTx(tx)} className="border-t border-gray-50 hover:bg-gray-50/70 cursor-pointer transition-colors">
+                          <td className="px-4 py-3 text-[12px] font-semibold whitespace-nowrap">
+                            <span className={credit ? 'text-emerald-600' : 'text-red-500'}>{credit ? '↓ Credit' : '↑ Debit'}</span>
+                          </td>
+                          <td className="px-4 py-3 text-[12px] text-gray-800">{describe(tx)}</td>
+                          <td className="px-4 py-3 text-[11px] text-gray-400 whitespace-nowrap">{dayjs(tx.createdAt).format('MMM D, YYYY • h:mm A')}</td>
+                          <td className="px-4 py-3"><StatusPill status={tx.status}/></td>
+                          <td className={`px-4 py-3 text-[12px] font-bold text-right tabular-nums whitespace-nowrap ${credit ? 'text-emerald-600' : 'text-gray-900'}`}>
+                            {credit ? '+' : '-'}₦{tx.amount.toLocaleString()}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-                  {/* Prev/Next pagination — only relevant when NOT showing everything */}
-                  {!showAll && pagination && pagination.totalPages > 1 && (
-                    <div className="py-4 border-t border-gray-50 flex items-center justify-between flex-wrap gap-2">
-                      <p className="text-[11px] sm:text-[12px] text-gray-400">
-                        Page {pagination.page} of {pagination.totalPages}
-                      </p>
-                      <div className="flex gap-2">
-                        <button disabled={page === 1} onClick={() => setPage(p => p-1)}
-                          className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors">
-                          Prev
-                        </button>
-                        <button disabled={page >= pagination.totalPages} onClick={() => setPage(p => p+1)}
-                          className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors">
-                          Next
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            {!showAll && pagination && pagination.totalPages > 1 && (
+              <div className="px-4 py-3 border-t border-gray-50 flex items-center justify-between flex-wrap gap-2">
+                <p className="text-[11px] text-gray-400">Page {pagination.page} of {pagination.totalPages}</p>
+                <div className="flex gap-2">
+                  <button disabled={page === 1} onClick={() => setPage(p => p-1)} className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">Prev</button>
+                  <button disabled={page >= pagination.totalPages} onClick={() => setPage(p => p+1)} className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">Next</button>
+                </div>
+              </div>
+            )}
 
             {transactions.length > 0 && !txLoading && (
-              <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-50 text-center">
-                {showAll ? (
-                  <button
-                    onClick={() => { setShowAll(false); setPage(1) }}
-                    className="text-[12px] sm:text-[13px] font-semibold text-gray-500 hover:text-gray-700 transition-colors inline-flex items-center gap-1.5">
-                    Show less
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowAll(true)}
-                    className="text-[12px] sm:text-[13px] font-semibold text-emerald-600 hover:text-emerald-700 transition-colors inline-flex items-center gap-1.5">
-                    View all transactions
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
-                    </svg>
-                  </button>
-                )}
+              <div className="px-4 py-3 border-t border-gray-50 text-center">
+                {showAll
+                  ? <button onClick={() => { setShowAll(false); setPage(1) }} className="text-[12px] font-semibold text-gray-500 hover:text-gray-700">Show less</button>
+                  : <button onClick={() => setShowAll(true)} className="text-[12px] font-semibold text-brand hover:opacity-80">View all transactions</button>}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* ── Modals ── */}
       <Modal open={fundOpen} onClose={() => setFundOpen(false)} title="Fund your wallet" size="sm"
         footer={<><Button variant="secondary" onClick={() => setFundOpen(false)}>Cancel</Button><Button onClick={handleSubmit(onFund)} loading={initPayment.isPending}>Continue to payment</Button></>}>
         <p className="text-[13px] text-gray-500 mb-5">You'll be redirected to Paystack to complete payment. Funds reflect instantly.</p>

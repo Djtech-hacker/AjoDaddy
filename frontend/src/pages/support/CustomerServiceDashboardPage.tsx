@@ -375,9 +375,12 @@ export default function CustomerServiceDashboardPage() {
             {ticketDetail?.user && (
               <div className="py-4 border-b border-black/[0.05]">
                 <div className="flex items-center gap-3 bg-warm rounded-xl px-4 py-3">
-                  <div className="w-9 h-9 rounded-full bg-ink flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
-                    {ticketDetail.user.firstName?.[0]}{ticketDetail.user.lastName?.[0]}
-                  </div>
+                  {ticketDetail.user.avatarUrl
+                    ? <img src={ticketDetail.user.avatarUrl} alt={`${ticketDetail.user.firstName} ${ticketDetail.user.lastName}`} className="w-9 h-9 rounded-full object-cover flex-shrink-0"/>
+                    : <div className="w-9 h-9 rounded-full bg-ink flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
+                        {ticketDetail.user.firstName?.[0]}{ticketDetail.user.lastName?.[0]}
+                      </div>
+                  }
                   <div>
                     <p className="text-[13px] font-semibold text-ink">{ticketDetail.user.firstName} {ticketDetail.user.lastName}</p>
                     <p className="text-[11px] text-mist">@{ticketDetail.user.username} · {ticketDetail.user.email}</p>
@@ -472,9 +475,12 @@ export default function CustomerServiceDashboardPage() {
 
             <div className="py-4 border-b border-black/[0.05]">
               <div className="flex items-center gap-3 bg-warm rounded-xl px-4 py-3">
-                <div className="w-9 h-9 rounded-full bg-ink flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
-                  {(reportDetail?.reporter?.username || '?')[0].toUpperCase()}
-                </div>
+                {reportDetail?.reporter?.avatarUrl
+                  ? <img src={reportDetail.reporter.avatarUrl} alt={reportDetail.reporter.username} className="w-9 h-9 rounded-full object-cover flex-shrink-0"/>
+                  : <div className="w-9 h-9 rounded-full bg-ink flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
+                      {(reportDetail?.reporter?.username || '?')[0].toUpperCase()}
+                    </div>
+                }
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-semibold text-ink">@{reportDetail?.reporter?.username || '—'}</p>
                   <p className="text-[11px] text-mist">{reportDetail?.reporter?.email || '—'}</p>

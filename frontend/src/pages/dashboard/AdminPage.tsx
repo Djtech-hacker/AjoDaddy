@@ -58,10 +58,13 @@ function RoleBadge({ role }: { role: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold ${c.cls}`}>{c.label}</span>
 }
 
-function UserAvatar({ firstName, lastName }: { firstName?: string; lastName?: string }) {
+function UserAvatar({ firstName, lastName, avatarUrl }: { firstName?: string; lastName?: string; avatarUrl?: string }) {
   const initials = ((firstName?.[0] || '') + (lastName?.[0] || '')).toUpperCase() || '?'
   const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-violet-500', 'bg-amber-500', 'bg-pink-500', 'bg-teal-500']
   const color = colors[(firstName?.charCodeAt(0) || 0) % colors.length]
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt={initials} className="w-10 h-10 rounded-full object-cover flex-shrink-0"/>
+  }
   return (
     <div className={`w-10 h-10 ${color} rounded-full flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0`}>
       {initials}
@@ -497,7 +500,7 @@ export default function AdminPage() {
                       <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <UserAvatar firstName={u.firstName} lastName={u.lastName}/>
+                            <UserAvatar firstName={u.firstName} lastName={u.lastName} avatarUrl={u.avatarUrl}/>
                             <div><p className="text-[13px] font-semibold text-gray-900">{u.firstName} {u.lastName}</p><p className="text-[11px] text-gray-400">@{u.username}</p>{u.role!=='USER'&&<RoleBadge role={u.role}/>}</div>
                           </div>
                         </td>
@@ -740,7 +743,7 @@ export default function AdminPage() {
                         <tr key={r.id} className={`hover:bg-gray-50/60 transition-colors ${r.status==='MANUAL_REVIEW'?'bg-orange-50/20':r.status==='REJECTED'?'bg-red-50/20':r.status==='VERIFIED'?'bg-emerald-50/20':''}`}>
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
-                              <UserAvatar firstName={r.user?.firstName} lastName={r.user?.lastName}/>
+                              <UserAvatar firstName={r.user?.firstName} lastName={r.user?.lastName} avatarUrl={r.user?.avatarUrl}/>
                               <div><p className="text-[13px] font-semibold text-gray-900">{r.user?.firstName} {r.user?.lastName}</p><p className="text-[11px] text-gray-400">@{r.user?.username}</p><p className="text-[11px] text-gray-400 font-mono">{r.user?.email}</p></div>
                             </div>
                           </td>

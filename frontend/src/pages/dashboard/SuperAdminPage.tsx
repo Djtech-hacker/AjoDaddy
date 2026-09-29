@@ -6,6 +6,8 @@ import { superAdminApi, paymentsApi } from '@/api/services'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+dayjs.extend(relativeTime)
 
 type Tab = 'overview' | 'cs-oversight' | 'users' | 'revenue' | 'settings' | 'audit'
 
@@ -36,6 +38,7 @@ export default function SuperAdminPage() {
   const [dash, setDash]             = useState<any>(null)
   const [dashLoading, setDL]        = useState(false)
   const [recentReports, setRecentReports] = useState<any[]>([])
+  const [recentAudit, setRecentAudit]     = useState<any[]>([])
   const [reportStats, setReportStats]     = useState<any>(null)
 
   const [csTickets, setCsTickets]         = useState<any[]>([])
@@ -70,8 +73,8 @@ export default function SuperAdminPage() {
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   // ── Per-user audit trail (search a user, see everything they've done) ──
-  const [auditUser, setAuditUser]         = useState<any>(null)   // the row that was clicked, shown immediately
-  const [auditData, setAuditData]         = useState<any>(null)   // full response once loaded
+  const [auditUser, setAuditUser]         = useState<any>(null)
+  const [auditData, setAuditData]         = useState<any>(null)
   const [auditLoading, setAuditLoading]   = useState(false)
   const [auditSection, setAuditSection]   = useState<AuditSection>('transactions')
 
@@ -121,12 +124,18 @@ export default function SuperAdminPage() {
   const loadDash = async () => {
     setDL(true)
     try {
-      const [dashRes, reportsRes] = await Promise.all([superAdminApi.getDashboard(), superAdminApi.getAllDisputes({ page: 1, limit: 10 })])
+      const [dashRes, reportsRes, auditRes] = await Promise.all([
+        superAdminApi.getDashboard(),
+        superAdminApi.getAllDisputes({ page: 1, limit: 10 }),
+        superAdminApi.getFullAuditLog({ page: 1, limit: 4 }),
+      ])
       setDash((dashRes.data as any)?.data || dashRes.data)
       const rd = (reportsRes.data as any)?.data || reportsRes.data
       const disputes = rd?.disputes || []
       setRecentReports(disputes)
       setReportStats({ total: rd?.pagination?.total || 0, open: disputes.filter((d: any) => d.status === 'OPEN').length, escalated: disputes.filter((d: any) => d.status === 'ESCALATED').length, resolved: disputes.filter((d: any) => d.status === 'RESOLVED').length })
+      const ad = (auditRes.data as any)?.data || auditRes.data
+      setRecentAudit(ad?.logs || [])
     } catch { showToast('Could not load dashboard', 'error') }
     finally { setDL(false) }
   }
@@ -544,56 +553,107 @@ export default function SuperAdminPage() {
         {tab === 'overview' && (
           <>
             {dashLoading ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">{[...Array(6)].map((_,i) => <Skeleton key={i} className="h-24 rounded-2xl"/>)}</div>
+              <div className="grid md:grid-cols-3 gap-4">{[...Array(3)].map((_,i) => <Skeleton key={i} className="h-32 rounded-2xl"/>)}</div>
             ) : (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                  {[
-                    { label: 'Total users',     val: overview.users?.total || 0,           sub: `${overview.users?.newToday||0} today` },
-                    { label: 'Active groups',   val: overview.groups?.active || 0,          sub: `of ${overview.groups?.total||0} total` },
-                    { label: 'Platform volume', val: `₦${((overview.finance?.totalVolume||0)/1000).toFixed(0)}K`, sub: 'all time' },
-                    { label: 'Fraud flags',     val: overview.alerts?.fraudFlags || 0,      sub: 'Unresolved', accent: (overview.alerts?.fraudFlags||0)>0 },
-                    { label: 'Suspended users', val: overview.users?.suspended || 0,        sub: 'Accounts' },
-                    { label: 'Pending payouts', val: overview.finance?.pendingPayouts || 0, sub: 'Awaiting' },
-                  ].map(m => (
-                    <motion.div key={m.label} className={`rounded-2xl border p-4 sm:p-5 ${(m as any).accent ? 'bg-red-50 border-red-100' : 'bg-white border-black/[0.06]'}`} initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
-                      <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-2">{m.label}</p>
-                      <p className={`text-[20px] sm:text-[24px] font-extrabold tracking-tight ${(m as any).accent ? 'text-red-600' : 'text-ink'}`}>{m.val}</p>
-                      <p className="text-[11px] text-mist mt-1">{m.sub}</p>
-                    </motion.div>
-                  ))}
+                <div>
+                  <h2 className="text-[20px] font-extrabold tracking-tight text-ink">Super Admin Console</h2>
+                  <p className="text-[12px] text-mist mt-0.5">System metrics, auditing, and platform security flags</p>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-5">
+                {/* Top row */}
+                <div className="grid md:grid-cols-3 gap-4">
+                  <motion.div className="rounded-2xl bg-brand text-white p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-white/70">Core platform state</p>
+                      <span className="flex items-center gap-1.5 text-[10px] font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-lime"/>Operational</span>
+                    </div>
+                    <p className="text-[24px] font-extrabold tracking-tight mt-3">All Systems Normal</p>
+                    <p className="text-[10px] text-white/60 mt-3">Central Bank partner gateway active • Webhooks live</p>
+                  </motion.div>
+
+                  <motion.div className="rounded-2xl bg-white border border-black/[0.06] p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-mist">Active sessions</p>
+                    <p className="text-[24px] font-extrabold tracking-tight text-ink mt-3">
+                      {(overview.system?.activeSessions ?? overview.users?.active ?? 0).toLocaleString()} <span className="text-[16px] font-bold">/ min</span>
+                    </p>
+                    <p className="text-[10px] text-brand mt-3">↑ {overview.users?.newToday || 0} new users today</p>
+                  </motion.div>
+
+                  <motion.div className="rounded-2xl bg-white border border-black/[0.06] p-5" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-mist">Response metrics</p>
+                    <p className="text-[24px] font-extrabold tracking-tight text-ink mt-3">{overview.system?.avgResponseMs ?? '—'} ms</p>
+                    <p className="text-[10px] text-mist mt-3">Gateway average payload</p>
+                  </motion.div>
+                </div>
+
+                {/* Middle row */}
+                <div className="grid md:grid-cols-[1.6fr_1fr] gap-4">
                   <div className="bg-white rounded-2xl border border-black/[0.06] p-5">
-                    <p className="text-[14px] font-bold text-ink mb-4">Role breakdown</p>
-                    {[
-                      { role: 'SUPER_ADMIN',     label: 'Super Admins', color: 'bg-emerald-500' },
-                      { role: 'ADMIN',            label: 'Admins',       color: 'bg-blue-500'    },
-                      { role: 'CUSTOMER_SERVICE', label: 'CS Agents',    color: 'bg-amber-500'   },
-                      { role: 'USER',             label: 'Regular users',color: 'bg-sand'        },
-                    ].map(r => (
-                      <div key={r.role} className="flex items-center justify-between gap-2 py-2.5 border-b border-black/[0.04] last:border-0">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${r.color}`}/>
-                          <p className="text-[13px] font-medium text-ink truncate">{r.label}</p>
-                        </div>
-                        <Button size="sm" variant="secondary" onClick={() => { setRoleFilter(r.role); setTab('users') }}>View →</Button>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[13px] font-bold text-ink">Recent Audit Trails</p>
+                      <button onClick={() => setTab('audit')} className="text-[11px] text-brand font-semibold">View all →</button>
+                    </div>
+                    {recentAudit.length === 0 ? (
+                      <p className="text-[12px] text-mist text-center py-6">No recent activity</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {recentAudit.map((log: any) => (
+                          <button key={log.id} onClick={() => setLogDetail(log)} className="w-full text-left bg-warm rounded-lg px-3 py-2.5 flex items-start justify-between gap-3 hover:bg-sand transition-colors">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-semibold text-ink truncate">
+                                {log.action?.replace(/_/g,' ').toLowerCase().replace(/^\w/, (c: string) => c.toUpperCase())} by {log.user?.username ? `@${log.user.username}` : 'system'}
+                              </p>
+                              <p className="text-[10px] text-mist truncate">{log.metadata?.reason || log.entityType || '—'}</p>
+                            </div>
+                            <span className="text-[10px] text-mist flex-shrink-0">{dayjs(log.createdAt).fromNow()}</span>
+                          </button>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                  <div className="bg-white rounded-2xl border border-black/[0.06] p-5">
-                    <p className="text-[14px] font-bold text-ink mb-4">Quick actions</p>
-                    <div className="space-y-2.5">
-                      <Button variant="secondary" className="w-full justify-start" onClick={() => setTab('cs-oversight')}>🎧 CS Oversight</Button>
-                      <Button variant="secondary" className="w-full justify-start" onClick={() => setTab('revenue')}>💰 Company revenue</Button>
-                      <Button variant="secondary" className="w-full justify-start" onClick={() => setTab('settings')}>⚙️ Platform settings</Button>
-                      <Button variant="secondary" className="w-full justify-start" onClick={() => setTab('users')}>👥 Manage roles</Button>
-                      <Button variant="secondary" className="w-full justify-start" onClick={() => setTab('audit')}>📋 Full audit trail</Button>
+
+                  <div className="space-y-4">
+                    <div className="rounded-2xl bg-black text-white p-5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-lime">Weekly revenue yield</p>
+                      <p className="text-[24px] font-extrabold tracking-tight mt-2">₦{Number(overview.finance?.weeklyRevenue ?? overview.finance?.totalRevenue ?? 0).toLocaleString()}</p>
+                      <p className="text-[10px] text-white/50 mt-2">{overview.finance?.platformFeePercent ?? 0.5}% platform transaction fee share</p>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-black/[0.06] p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-[12px] font-bold text-ink">Fraud Shield Flags</p>
+                        {(overview.alerts?.fraudFlags || 0) > 0 && <span className="text-[9px] font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">HIGH</span>}
+                      </div>
+                      {(dash?.recentFraudFlags || []).length === 0 ? (
+                        <p className="text-[11px] text-mist text-center py-3">{overview.alerts?.fraudFlags || 0} unresolved flags</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {dash.recentFraudFlags.slice(0, 3).map((f: any) => (
+                            <div key={f.id} className="bg-warm rounded-lg px-3 py-2 flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-semibold text-ink truncate">{f.user ? `${f.user.firstName} ${f.user.lastName}` : f.type}</p>
+                                <p className="text-[10px] text-mist truncate">{f.description || f.type}</p>
+                              </div>
+                              {f.riskScore != null && <span className="text-[10px] font-bold text-red-500 flex-shrink-0">{f.riskScore}% Risk</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
+                {/* Super Actions */}
+                <div className="bg-white rounded-2xl border border-black/[0.06] p-5 md:max-w-[58%]">
+                  <p className="text-[13px] font-bold text-ink mb-3">Super Actions</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => setTab('settings')} className="h-9 px-4 rounded-lg bg-brand text-white text-[11px] font-semibold hover:opacity-90 transition-opacity">🔔 Broadcast System Alert</button>
+                    <button onClick={() => setTab('settings')} className="h-9 px-4 rounded-lg border border-red-400 text-red-500 text-[11px] font-semibold hover:bg-red-50 transition-colors">System Maintenance Mode</button>
+                  </div>
+                </div>
+
+                {/* Complaints & Reports */}
                 <div className="bg-white rounded-2xl border border-black/[0.06] p-4 sm:p-5">
                   <div className="flex items-center justify-between mb-4 gap-2">
                     <p className="text-[14px] font-bold text-ink">Complaints & Reports</p>
@@ -602,10 +662,10 @@ export default function SuperAdminPage() {
                   {reportStats && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-5">
                       {[
-                        { label: 'Total',     val: reportStats.total,     color: 'text-ink'          },
-                        { label: 'Open',      val: reportStats.open,      color: 'text-amber-600'    },
-                        { label: 'Escalated', val: reportStats.escalated, color: 'text-red-600'      },
-                        { label: 'Resolved',  val: reportStats.resolved,  color: 'text-emerald-600'  },
+                        { label: 'Total',     val: reportStats.total,     color: 'text-ink'         },
+                        { label: 'Open',      val: reportStats.open,      color: 'text-amber-600'   },
+                        { label: 'Escalated', val: reportStats.escalated, color: 'text-red-600'     },
+                        { label: 'Resolved',  val: reportStats.resolved,  color: 'text-emerald-600' },
                       ].map(s => (
                         <div key={s.label} className="bg-warm rounded-xl p-4">
                           <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-1">{s.label}</p>
@@ -789,7 +849,10 @@ export default function SuperAdminPage() {
                     {csAgents.map((a: any) => (
                       <div key={a.id} className="bg-white rounded-2xl border border-black/[0.06] p-5">
                         <div className="flex items-center gap-3 mb-4">
-                          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-[13px] font-bold flex-shrink-0">{a.firstName?.[0]}{a.lastName?.[0]}</div>
+                          {a.avatarUrl
+  ? <img src={a.avatarUrl} alt={`${a.firstName} ${a.lastName}`} className="w-10 h-10 rounded-full object-cover flex-shrink-0"/>
+  : <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-[13px] font-bold flex-shrink-0">{a.firstName?.[0]}{a.lastName?.[0]}</div>
+}
                           <div className="flex-1 min-w-0">
                             <p className="text-[13px] font-semibold text-ink truncate">{a.firstName} {a.lastName}</p>
                             <p className="text-[11px] text-mist font-mono truncate">@{a.username}</p>
@@ -1523,10 +1586,10 @@ export default function SuperAdminPage() {
         footer={<><Button variant="secondary" onClick={() => { setBanModal(null); setBanReason('') }}>Cancel</Button><Button variant="danger" loading={banLoading} disabled={!banReason.trim()} onClick={handleBan}>Permanently ban</Button></>}>
         <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-4">
           <p className="text-[13px] font-semibold text-red-600 mb-1">Super Admin action — permanent</p>
-          <p className="text-[12px] text-red-500">This user will be permanently banned from PayPaddy. Only you can reverse this.</p>
+          <p className="text-[12px] text-red-500">This user will be permanently banned from AjoDaddy. Only you can reverse this.</p>
         </div>
         <Input label="Reason" placeholder="e.g. Severe fraud, platform abuse" value={banReason} onChange={e => setBanReason(e.target.value)}/>
-      </Modal> 
+      </Modal>
 
       {/* ── Delete account modal ── */}
       <Modal open={!!deleteModal} onClose={() => { setDeleteModal(null); setDeleteReason('') }} title={`Delete ${deleteModal?.firstName}'s account?`} size="sm"

@@ -9,10 +9,16 @@
 // stats grid showed 0/—/₦0 for everyone, and Recent Activity dates
 // rendered as "Invalid Date". Every read below now checks BOTH casings
 // (camelCase first, snake_case as fallback) so it works correctly
-// whichever your backend actually sends — I don't have users.module.ts
-// to confirm the exact response shape, so this is the safe fix rather
-// than guessing and possibly breaking it the other way.
-import { useState, useEffect } from 'react'
+// whichever your backend actually sends.
+//
+// ADDED: click-to-upload profile picture. The avatar circle in the
+// hero card is now clickable on your own profile — it opens a file
+// picker, uploads straight to POST /users/me/avatar (multipart,
+// matches UsersService.uploadAvatar in users.module.ts), and updates
+// the picture immediately on success. Useful for anyone who registered
+// before the register-page photo step existed, or who just wants to
+// change it later.
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -37,6 +43,27 @@ async function apiFetch(path: string, options: RequestInit = {}) {
     throw new Error(err.message || `API error ${res.status}`)
   }
   return res.json()
+}
+
+// Separate from apiFetch because this sends multipart/form-data — no
+// 'Content-Type' header set manually, the browser fills in the correct
+// boundary itself. Matches UsersService.uploadAvatar's expected field
+// name ('file') and POST /users/me/avatar's response shape.
+async function uploadAvatarFile(file: File): Promise<string> {
+  const token = useAuthStore.getState().accessToken
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await fetch(`${API_BASE}/users/me/avatar`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.message || 'Upload failed')
+  }
+  const data = await res.json()
+  return (data.data ?? data).avatarUrl
 }
 
 interface UserStreak { userId: string; currentStreak: number; longestStreak: number; lastContributionDate: string }
@@ -123,7 +150,6 @@ function KycStatusCard({ isOwn }: { isOwn: boolean }) {
   const isUnderReview  = kycStatus?.status === 'MANUAL_REVIEW'
   const isRejected     = kycStatus?.status === 'REJECTED'
   const isNotStarted   = !kycStatus || kycStatus?.status === 'NOT_STARTED' || kycStatus?.status === 'PENDING'
-  // Only show a verified tick if the whole KYC passed — not if it was later rejected
   const ninOk          = kycStatus?.ninVerified && !isRejected
   const bvnOk          = kycStatus?.bvnVerified && !isRejected
 
@@ -164,8 +190,6 @@ function KycStatusCard({ isOwn }: { isOwn: boolean }) {
             </div>
             <span style={{ fontSize:18 }}>{bvnOk ? '✅' : '○'}</span>
           </div>
-
-        
 
           {/* CTA */}
           {isOwn && !isVerified && !isUnderReview && (
@@ -240,13 +264,6 @@ function LeaderboardCard() {
   )
 }
 
-// FIX: removed the email field — the backend's UpdateProfileDto only
-// accepts firstName, lastName, bio, phone. There's no email property at
-// all, so typing a new email here and hitting Save silently did nothing;
-// the change was dropped before it ever reached the database. Changing
-// email properly needs re-verification + a uniqueness check, which is a
-// bigger feature for later — for now this just stops the form from
-// lying about what it can do.
 function EditModal({ profile, onClose, onSave }: { profile: FullProfile; onClose: () => void; onSave: (d: any) => void }) {
   const { register, handleSubmit, formState: { isSubmitting } } = useForm({
     defaultValues: { firstName: profile.firstName, lastName: profile.lastName, bio: profile.bio },
@@ -292,6 +309,8 @@ export function ProfilePage() {
   const [showEdit, setShowEdit] = useState(false)
   const [copied, setCopied]     = useState(false)
   const [claiming, setClaiming] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const isOwn = !username || username === me?.username
 
   useEffect(() => {
@@ -324,12 +343,36 @@ export function ProfilePage() {
     } finally { setClaiming(false) }
   }
 
-  // FIX: was building /profile/${username}, but App.tsx only defines
-  // /u/:username for viewing someone else's profile — /profile/:username
-  // doesn't exist anywhere in the router, so the copied link always 404'd.
   function copyLink() {
     navigator.clipboard.writeText(`${window.location.origin}/u/${profile?.username}`)
     setCopied(true); setTimeout(() => setCopied(false), 2000)
+  }
+
+  // NEW — click-to-upload avatar. Runs the file straight through to
+  // POST /users/me/avatar and swaps the displayed picture on success.
+  // Silently no-ops on failure (bad file type, too large, network
+  // error) rather than showing an error state — the user just sees
+  // their old picture stay put and can try again.
+     async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !me?.id) return
+    if (!file.type.startsWith('image/')) return
+    if (file.size > 5 * 1024 * 1024) return
+    setUploadingAvatar(true)
+    try {
+      const avatarUrl = await uploadAvatarFile(file)
+      setProfile(prev => prev ? { ...prev, avatarUrl } : prev)
+      // Update authStore's user too — the sidebar card and topbar
+      // avatar both read from here (via useAuthStore), not from this
+      // page's local `profile` state. setUser() goes through the
+      // store's own persist middleware, so it also survives refresh.
+      const currentUser = useAuthStore.getState().user
+      if (currentUser) {
+        useAuthStore.getState().setUser({ ...currentUser, avatarUrl })
+      }
+    } catch { /* silently ignore — the avatar just won't update */ }
+    finally { setUploadingAvatar(false) }
   }
 
   if (loading) return <DashboardLayout title="Profile"><SkeletonPage /></DashboardLayout>
@@ -343,9 +386,6 @@ export function ProfilePage() {
 
   const initials   = `${profile.firstName?.[0]||''}${profile.lastName?.[0]||''}`
   const memberSince = new Date(profile.createdAt ?? profile.created_at).toLocaleDateString('en-NG', { month:'long', year:'numeric' })
-  // FIX: reputationScore (camelCase, matches Prisma) with reputation_score
-  // as a fallback — was previously reputation_score only, which was always
-  // undefined, so every user's Trust Score showed 0/1000 "Bronze".
   const score      = profile.reputationScore ?? profile.reputation_score ?? 0
   const tier       = getTier(score)
   const tierIdx    = TIERS.findIndex(t => t.name === tier.name)
@@ -357,10 +397,6 @@ export function ProfilePage() {
   const alreadyClaimed = lastDate === today
   const calDays    = Array.from({ length:28 }, (_,i) => ({ isToday: i===27, isDone: i>=28-(streak?.currentStreak??0) && i!==27 }))
 
-  // FIX: every stat below now reads camelCase first (matches your Prisma
-  // ProfileStats model) with the old snake_case as a fallback — previously
-  // ONLY the snake_case names were read, so this whole grid always showed
-  // 0 / — / ₦0 regardless of the user's real activity.
   const stats = profile.stats || {}
   const groupsJoined      = stats.groupsJoined ?? stats.groups_joined ?? 0
   const groupsCreated     = stats.groupsCreated ?? stats.groups_created ?? 0
@@ -388,13 +424,30 @@ export function ProfilePage() {
         {/* ── Hero card ── */}
         <motion.div className="pp-hero-card" {...fade(0)}>
           <div className="pp-hero-inner">
-            <div className="pp-av-wrap">
+            <div
+              className="pp-av-wrap"
+              onClick={() => isOwn && fileInputRef.current?.click()}
+              style={isOwn ? { cursor: 'pointer' } : undefined}
+            >
               <div className="pp-av-inner">
                 {profile.avatarUrl
                   ? <img src={profile.avatarUrl} className="pp-av-img" alt={initials}/>
                   : <span className="pp-av-letters">{initials}</span>}
+                {uploadingAvatar && (
+                  <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,.5)', display:'flex', alignItems:'center', justifyContent:'center', borderRadius:'50%' }}>
+                    <span style={{ fontSize:10, color:'#fff', fontWeight:600 }}>...</span>
+                  </div>
+                )}
               </div>
               <div className="pp-av-dot"/>
+              {isOwn && (
+                <div className="pp-av-edit">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                </div>
+              )}
+              {isOwn && (
+                <input ref={fileInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={onPickAvatar}/>
+              )}
             </div>
             <div className="pp-hero-info">
               <p className="pp-welcome">Welcome back,</p>
@@ -530,9 +583,6 @@ export function ProfilePage() {
             <p className="pp-section-label">Recent Activity</p>
             {profile.activity.map(item => {
               const icon = ACTIVITY_ICONS[item.type] || '📌'
-              // FIX: createdAt first, created_at as fallback — was
-              // created_at-only, which rendered as "Invalid Date" for
-              // every activity entry since the field never existed.
               const rawDate = item.createdAt ?? item.created_at
               const date = rawDate ? new Date(rawDate).toLocaleDateString('en-NG', { month:'short', day:'numeric' }) : ''
               const amt  = item.metadata?.amount
@@ -561,10 +611,11 @@ const CSS = `
   .pp-hero-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 20px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
   .pp-hero-inner { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
   .pp-av-wrap { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
-  .pp-av-inner { width: 72px; height: 72px; border-radius: 50%; background: #111827; border: 3px solid #fff; box-shadow: 0 0 0 2px #22C55E; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .pp-av-inner { width: 72px; height: 72px; border-radius: 50%; background: #111827; border: 3px solid #fff; box-shadow: 0 0 0 2px #22C55E; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
   .pp-av-letters { color: #fff; font-weight: 800; font-size: 22px; }
   .pp-av-img { width: 100%; height: 100%; object-fit: cover; }
   .pp-av-dot { position: absolute; bottom: 3px; right: 3px; width: 14px; height: 14px; background: #22C55E; border-radius: 50%; border: 2px solid #fff; }
+  .pp-av-edit { position: absolute; bottom: -2px; left: -2px; width: 22px; height: 22px; background: #111827; border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; pointer-events: none; }
   .pp-welcome { font-size: 12px; color: #22C55E; font-weight: 600; margin-bottom: 2px; }
   .pp-hero-info { flex: 1; min-width: 200px; }
   .pp-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
@@ -579,10 +630,6 @@ const CSS = `
   .pp-kpi-item:last-child { border-right: none; }
   .pp-kpi-icon { color: #9CA3AF; }
   .pp-kpi-val { font-size: 15px; font-weight: 700; color: #111827; white-space: nowrap; }
-  /* FIX: on narrow phones this row previously stayed in one un-wrapping
-     flex line and got clipped by the card's overflow:hidden (the
-     "CONTRIBUTIONS" label showing as "CONT" in mobile testing). Now it
-     wraps to 2 columns under 420px so nothing gets cut off. */
   @media (max-width: 420px) {
     .pp-hero-kpi { border-radius: 12px; }
     .pp-kpi-item { flex: 1 1 50%; border-right: 1px solid #E5E7EB; border-bottom: 1px solid #E5E7EB; }

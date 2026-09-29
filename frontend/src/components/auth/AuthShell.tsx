@@ -8,8 +8,8 @@ export default function AuthShell({ children, panel }: { children: React.ReactNo
   return (
     <div className="min-h-screen bg-warm flex">
       <div className="flex-1 flex flex-col px-5 sm:px-12 py-6 min-w-0">
-        <Link to="/" className="flex justify-center lg:justify-start">
-          <img src={LOGO_URL} alt="PayPaddy" className="h-28 sm:h-36 w-auto object-contain" />
+        <Link to="/" className="flex justify-center">
+          <img src={LOGO_URL} alt="AjoDaddy" className="h-28 sm:h-36 w-auto object-contain" />
         </Link>
         <div className="flex-1 flex items-center justify-center py-4">
           <motion.div className="w-full max-w-[400px]"
@@ -18,7 +18,7 @@ export default function AuthShell({ children, panel }: { children: React.ReactNo
             {children}
           </motion.div>
         </div>
-        <p className="text-[11px] text-mist">Secured by PayPaddy Shield · CBN compliant processors</p>
+        <p className="text-[11px] text-mist text-center">Secured by AjoDaddy Shield · CBN compliant processors</p>
       </div>
       <div className="hidden lg:flex flex-1 bg-black text-white p-14 flex-col justify-between">
         {panel}

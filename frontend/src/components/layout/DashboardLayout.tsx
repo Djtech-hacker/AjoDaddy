@@ -60,7 +60,7 @@ function Sidebar({ onClose, mobile }: { onClose?: () => void; mobile?: boolean }
       <div className="px-4 py-4 flex items-center justify-between">
         {/* Dark chip keeps the logo legible on the light sidebar */}
         <Link to="/" className="bg-void rounded-xl px-3 py-2 inline-flex">
-          <img src={LOGO_URL} alt="PayPaddy" className="h-9 w-auto object-contain" />
+          <img src={LOGO_URL} alt="AjoDaddy" className="h-9 w-auto object-contain" />
         </Link>
         {mobile && (
           <button onClick={onClose} aria-label="Close menu"

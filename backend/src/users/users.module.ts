@@ -16,13 +16,25 @@
 // around a fixed 0-1000 scale with 5 tiers. This clamps every change
 // to that range so the score (and therefore the tier, and the
 // progress bar) always makes sense.
+//
+// ADDED (this pass): uploadAvatarFromDataUrl() — the register flow
+// (auth.module.ts) collects a profile picture in the browser as a
+// base64 data URL and needs it uploaded to Cloudinary the same way
+// uploadAvatar() does for the existing multipart-file route, but
+// there's no Express.Multer.File at registration time — just a raw
+// string. This is the same upload/transform/save logic, adapted for
+// that input shape, and swallows its own errors so a bad or oversized
+// image can never fail — or even flicker — the account-creation
+// response; the user just ends up with no avatar and can set one from
+// Profile afterward.
 // ============================================================
 
 import {
   Module, Controller, Get, Patch, Post, Body, Req, Param,
   Query, UseGuards, Injectable, NotFoundException,
-  BadRequestException, Logger,
+  BadRequestException, Logger, UseInterceptors, UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsString, IsOptional, MaxLength } from 'class-validator';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -261,7 +273,8 @@ export class UsersService {
     });
   }
 
-  // ── Avatar upload ──────────────────────────────────────────
+  // ── Avatar upload (multipart file — used by the "change photo"
+  // route on the Profile page, once one exists) ──────────────
   async uploadAvatar(userId: string, file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
     if (file.size > 5 * 1024 * 1024) throw new BadRequestException('Image must be under 5MB');
@@ -290,6 +303,35 @@ export class UsersService {
       );
       stream.end(file.buffer);
     });
+  }
+
+  // ── Avatar upload from a base64 data URL — used at registration,
+  // where RegisterPage.tsx already crops/shrinks the image in the
+  // browser and sends it as a raw `data:image/...` string rather
+  // than a multipart file upload. Deliberately swallows its own
+  // errors (logs and returns) rather than throwing: a broken or
+  // oversized image here must never turn a successful account
+  // creation into a failed registration response. Called from
+  // AuthService.register() right after the user + wallet are
+  // committed.
+  async uploadAvatarFromDataUrl(userId: string, dataUrl: string) {
+    if (!dataUrl?.startsWith('data:image/')) return;
+    try {
+      const result = await cloudinary.uploader.upload(dataUrl, {
+        folder:         'paypaddy/avatars',
+        public_id:      `user_${userId}`,
+        overwrite:      true,
+        transformation: [
+          { width: 400, height: 400, crop: 'fill', gravity: 'face', quality: 'auto:good' },
+        ],
+      });
+      await this.prisma.user.update({
+        where: { id: userId },
+        data:  { avatarUrl: result.secure_url },
+      });
+    } catch (err) {
+      this.logger.error(`[uploadAvatarFromDataUrl] failed for ${userId}:`, err);
+    }
   }
 
   // ── Claim daily streak ─────────────────────────────────────
@@ -561,6 +603,15 @@ export class UsersController {
   @ApiOperation({ summary: 'Get own badges' })
   getBadges(@Req() req: any) {
     return this.usersService.getUserBadges(req.user.id);
+  }
+
+  // NEW — lets the Profile page offer a "change photo" button later.
+  // Not called from anywhere in the frontend yet.
+  @Post('me/avatar')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Upload or replace own profile picture' })
+  uploadAvatar(@Req() req: any, @UploadedFile() file: Express.Multer.File) {
+    return this.usersService.uploadAvatar(req.user.id, file);
   }
 
   @Get('leaderboard')

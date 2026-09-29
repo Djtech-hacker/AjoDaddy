@@ -17,27 +17,23 @@
 // register() and verifyEmail() were already correct — this closes the
 // one actual gap.
 //
-// FIX (this pass): register() was AWAITING sendVerificationEmail()
-// before responding to the client:
+// FIX (previous pass): register() was AWAITING sendVerificationEmail()
+// before responding to the client, which could block the whole POST
+// /auth/register request long enough to race the frontend's axios
+// timeout even though the user + wallet rows were already committed.
+// Fixed by dropping the `await` — it's now fire-and-forget.
 //
-//   await this.sendVerificationEmail(...).catch((err) => { ... });
-//
-// The .catch() stopped it from throwing, but `await` still waits for
-// the promise to settle either way — so a slow or unreachable SMTP
-// destination (fake test domains, mail provider hiccups, etc.) could
-// block the whole POST /auth/register request for 14-15+ seconds.
-// That landed almost exactly on the frontend's axios `timeout: 15000`
-// (15s), so the browser gave up and showed "Registration failed" a
-// split second before the backend actually finished — even though the
-// user + wallet rows were already committed to the DB well before the
-// email send even started. Net effect: users saw a failure toast for
-// an account that was, in fact, successfully created.
-//
-// Fix is a one-line change: drop the `await`. The DB write is already
-// committed by this point; sending the verification email is a
-// fire-and-forget side effect the client has no reason to wait on.
-// The .catch() still runs and still logs failures for debugging — it
-// just no longer blocks the HTTP response.
+// ADDED (this pass): register() now accepts an optional avatarUrl (a
+// base64 data URL the register form already crops/shrinks client-side)
+// and, once the user + wallet are committed, hands it to
+// UsersService.uploadAvatarFromDataUrl() to push it to Cloudinary and
+// save the resulting link. This is awaited (unlike the email send)
+// because it's a single fast Cloudinary call rather than a slow SMTP
+// round trip, and a profile picture is core account data the client
+// reasonably expects to be saved by the time registration responds —
+// not a background side effect. uploadAvatarFromDataUrl() itself never
+// throws, so a bad/oversized image still can't fail registration; the
+// user just ends up with no avatar and can set one later from Profile.
 // ============================================================
 
 import {
@@ -93,14 +89,21 @@ export class RegisterDto {
   )
   password: string;
 
- 
-
   @IsString()
   @Matches(/^\+?\d{10,15}$/, { message: 'Enter a valid phone number' })
   phone: string;
 
   @IsString()
   phoneVerifiedToken: string;
+
+  // NEW — the register form crops/shrinks the picture client-side and
+  // sends it as a base64 data URL. Optional: registration must still
+  // succeed with no photo at all. 200000 chars is generous headroom
+  // for a small 256-400px JPEG data URL.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200000)
+  avatarUrl?: string;
 }
 
 export class SendPhoneOtpDto {
@@ -159,7 +162,7 @@ export class VerifyPasswordDto {
   password: string;
 }
 
-// NEW — body for POST /auth/change-pin
+// body for POST /auth/change-pin
 export class ChangePinDto {
   @IsString()
   @MinLength(4, { message: 'Enter the code sent to your email' })
@@ -266,8 +269,6 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3 });
 
-   
-
     const user = await this.prisma.executeTransaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
@@ -284,6 +285,17 @@ export class AuthService {
       await tx.wallet.create({ data: { userId: newUser.id } });
       return newUser;
     });
+
+    // NEW: upload the registration profile picture, if one was provided.
+    // Awaited (unlike the email send below) — this is a single fast
+    // Cloudinary call, not a slow SMTP round trip, and the picture is
+    // core account data rather than a side effect the client shouldn't
+    // have to wait on. uploadAvatarFromDataUrl() swallows its own
+    // errors, so a bad/oversized image can never turn this successful
+    // registration into a failure response.
+    if (dto.avatarUrl) {
+      await this.usersService.uploadAvatarFromDataUrl(user.id, dto.avatarUrl);
+    }
 
     // FIX: removed `await` here (see file-level note at the top). The
     // user + wallet above are already committed — this is now
@@ -418,7 +430,6 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
-  
   // ── Phone OTP (pre-registration) ───────────────────────────
   // Stateless: no user row exists yet, so the OTP is encoded into a
   // short-lived signed token instead of a DB row.
@@ -542,7 +553,7 @@ export class AuthService {
     return bcrypt.compare(pin, user.transactionPinHash);
   }
 
-  // ── NEW: PIN-change OTP ────────────────────────────────────
+  // ── PIN-change OTP ──────────────────────────────────────────
   // Called only after verifyPassword() has already succeeded on the
   // frontend, so we don't re-check the password here — this step's job
   // is just "prove you own this inbox right now."
@@ -563,11 +574,6 @@ export class AuthService {
       data: { userId, token: code, type: 'pin_change_otp', expiresAt },
     });
 
-    // NOTE: sendPinChangeOtp doesn't exist on MailService yet — add it
-    // alongside sendEmailVerification/sendPasswordReset. Signature:
-    //   sendPinChangeOtp(email: string, firstName: string, code: string)
-    // Body just needs to show the 6-digit code plainly (no link/button),
-    // and should mention it expires in 10 minutes.
     await this.mailService.sendPinChangeOtp(user.email, user.firstName, code);
 
     return { message: 'Code sent to your email' };
@@ -688,7 +694,6 @@ export class AuthController {
     return { verified: true };
   }
 
-  // NEW
   @Post('send-pin-otp')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -699,7 +704,6 @@ export class AuthController {
     return this.authService.sendPinChangeOtp(req.user.id);
   }
 
-  // NEW
   @Post('change-pin')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -749,6 +753,3 @@ export class AuthController {
   exports: [AuthService, JwtAuthGuard, JwtRefreshGuard],
 })
 export class AuthModule {}
-
-
-

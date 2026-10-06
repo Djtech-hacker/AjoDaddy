@@ -1,29 +1,20 @@
 // ============================================================
-// ProfilePage.tsx — PayPaddy Premium Profile + KYC Status
+// ProfilePage.tsx — AjoDaddy Profile (original features + Figma settings)
 // ============================================================
-// FIX: several fields were only read in snake_case (groups_joined,
-// reputation_score, created_at, etc.) while your Prisma schema defines
-// them camelCase (groupsJoined, reputationScore, createdAt). Prisma
-// returns whatever casing is in the schema, so these were silently
-// always undefined — Trust Score showed 0/1000 for everyone, the whole
-// stats grid showed 0/—/₦0 for everyone, and Recent Activity dates
-// rendered as "Invalid Date". Every read below now checks BOTH casings
-// (camelCase first, snake_case as fallback) so it works correctly
-// whichever your backend actually sends.
-//
-// ADDED: click-to-upload profile picture. The avatar circle in the
-// hero card is now clickable on your own profile — it opens a file
-// picker, uploads straight to POST /users/me/avatar (multipart,
-// matches UsersService.uploadAvatar in users.module.ts), and updates
-// the picture immediately on success. Useful for anyone who registered
-// before the register-page photo step existed, or who just wants to
-// change it later.
+// KEPT: hero, identity verification, Recent Activity, Edit modal, avatar upload.
+// REMOVED: Trust Score, Streak, Stats, Badges, Leaderboard.
+// ADDED (from Figma): email + Verified badge in hero, Personal
+//       Information, Residential Address, Security & Authentication,
+//       Bank & Payment Methods and "Save settings changes".
+// UPDATED: Bank & Payment Methods is now <BankAccountsCard /> (add / default / remove
+//       saved bank accounts, name-matched to the verified identity, PIN-confirmed).
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, UseFormRegister, UseFormSetFocus } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '@/stores/authStore'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import BankAccountsCard from '@/components/BankAccountsCard'
 import { kycApi } from '@/api/services'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
@@ -45,10 +36,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
-// Separate from apiFetch because this sends multipart/form-data — no
-// 'Content-Type' header set manually, the browser fills in the correct
-// boundary itself. Matches UsersService.uploadAvatar's expected field
-// name ('file') and POST /users/me/avatar's response shape.
+// multipart — no manual Content-Type; field name 'file' matches UsersService.uploadAvatar
 async function uploadAvatarFile(file: File): Promise<string> {
   const token = useAuthStore.getState().accessToken
   const formData = new FormData()
@@ -79,6 +67,7 @@ interface ProfileStats {
   totalPayoutsReceived?: number; total_payouts_received?: number
   totalContributed?: number; total_contributed?: number
 }
+interface BankAccount { bankName?: string; accountType?: string; accountNumberMasked?: string }
 interface FullProfile {
   id: string; username: string; firstName: string; lastName: string; email: string
   bio: string; avatarUrl: string; createdAt: string; created_at: string
@@ -86,6 +75,11 @@ interface FullProfile {
   currentStreak: number; longestStreak: number
   streak: UserStreak; achievements: Achievement[]; stats: ProfileStats
   activity: ActivityFeedItem[]; rank: LeaderboardRank
+  // new settings fields
+  phone?: string; phoneNumber?: string; dateOfBirth?: string
+  streetAddress?: string; city?: string; state?: string; postalCode?: string; country?: string
+  twoFactorEnabled?: boolean; passwordChangedAt?: string; lastLoginAt?: string; lastLoginInfo?: string
+  bankAccount?: BankAccount
 }
 
 async function fetchFullProfile(usernameOrId: string, byUsername = false): Promise<FullProfile | null> {
@@ -94,11 +88,6 @@ async function fetchFullProfile(usernameOrId: string, byUsername = false): Promi
     const res = await apiFetch(path)
     return res.data ?? res
   } catch { return null }
-}
-
-async function fetchLeaderboard(category: string) {
-  try { const res = await apiFetch(`/users/leaderboard?category=${category}&limit=10`); return res.data ?? res }
-  catch { return [] }
 }
 
 const TIERS = [
@@ -110,19 +99,6 @@ const TIERS = [
 ]
 function getTier(score: number) { return TIERS.find(t => score >= t.min && score <= t.max) || TIERS[0] }
 
-const BADGE_META: Record<string, { icon: string; label: string; desc: string }> = {
-  FIRST_CONTRIBUTION: { icon: '🌱', label: 'New Saver',         desc: 'Made your first contribution' },
-  STREAK_7:           { icon: '🔥', label: 'Early Contributor', desc: 'Contributed 7 times in a row' },
-  STREAK_30:          { icon: '⚡', label: 'Streak Starter',    desc: '30 consecutive contributions' },
-  STREAK_90:          { icon: '💎', label: 'Consistent Saver',  desc: '90 consecutive contributions' },
-  PERFECT_CYCLE:      { icon: '🏆', label: 'Trusted Member',    desc: 'Completed a perfect cycle' },
-  CONTRIBUTED_100K:   { icon: '👥', label: 'Group Builder',     desc: 'Contributed ₦100,000 total' },
-  EARLY_SUPPORTER:    { icon: '🎯', label: 'Active Saver',      desc: 'Joined in the first 30 days' },
-  TOP_SAVER:          { icon: '🥇', label: 'Cycle Champ',       desc: 'Top 10% of all contributors' },
-  VERIFIED:           { icon: '✅', label: 'Reliable',          desc: 'Identity verified' },
-  VETERAN:            { icon: '🎖️', label: 'Top Contributor',   desc: '1 year as a member' },
-}
-
 const ACTIVITY_ICONS: Record<string, string> = {
   JOINED_GROUP: '👥', CONTRIBUTION: '💳', BADGE_EARNED: '🏅', CYCLE_COMPLETE: '🔄', PAYOUT_RECEIVED: '💵',
 }
@@ -133,134 +109,211 @@ const fade = (delay = 0) => ({
   transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1], delay },
 })
 
-// ── KYC Status Card ────────────────────────────────────────────
-function KycStatusCard({ isOwn }: { isOwn: boolean }) {
+function timeAgo(iso?: string) {
+  if (!iso) return null
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  if (days < 1) return 'today'
+  if (days < 31) return `${days} day${days === 1 ? '' : 's'} ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`
+  const years = Math.floor(months / 12)
+  return `${years} year${years === 1 ? '' : 's'} ago`
+}
+
+// ── Identity verification (styled like the settings cards) ──────
+const TickIcon = ({ ok }: { ok: boolean }) => (
+  <span className={`kyc-tick ${ok ? 'ok' : ''}`} aria-hidden>
+    {ok && <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+  </span>
+)
+
+function KycStatusCard({ isOwn, onStatus }: { isOwn: boolean; onStatus?: (s: any) => void }) {
   const navigate = useNavigate()
   const [kycStatus, setKycStatus] = useState<any>(null)
   const [loading, setLoading]     = useState(true)
 
   useEffect(() => {
     kycApi.getStatus()
-      .then(r => setKycStatus(r.data?.data || r.data))
+      .then(r => { const s = r.data?.data || r.data; setKycStatus(s); onStatus?.(s) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
-  const isVerified     = kycStatus?.status === 'VERIFIED'
-  const isUnderReview  = kycStatus?.status === 'MANUAL_REVIEW'
-  const isRejected     = kycStatus?.status === 'REJECTED'
-  const isNotStarted   = !kycStatus || kycStatus?.status === 'NOT_STARTED' || kycStatus?.status === 'PENDING'
-  const ninOk          = kycStatus?.ninVerified && !isRejected
-  const bvnOk          = kycStatus?.bvnVerified && !isRejected
+  const isVerified    = kycStatus?.status === 'VERIFIED'
+  const isUnderReview = kycStatus?.status === 'MANUAL_REVIEW'
+  const isRejected    = kycStatus?.status === 'REJECTED'
+  const ninOk = !!kycStatus?.ninVerified && !isRejected
+  const bvnOk = !!kycStatus?.bvnVerified && !isRejected
+
+  const pill = isVerified ? { cls: 'ok', text: 'Verified' }
+    : isUnderReview ? { cls: 'warn', text: 'Under review' }
+    : isRejected ? { cls: 'err', text: 'Rejected' }
+    : { cls: 'err', text: 'Not verified' }
+
+  const steps = [
+    { label: 'NIN', value: ninOk ? kycStatus?.ninMasked : 'Not verified', ok: ninOk },
+    { label: 'BVN', value: bvnOk ? kycStatus?.bvnMasked : 'Not verified', ok: bvnOk },
+    { label: 'Face scan', value: isVerified ? 'Completed' : 'Not completed', ok: isVerified },
+  ]
+
+  const cta = isRejected ? 'Resubmit verification' : bvnOk ? 'Complete face scan' : ninOk ? 'Complete BVN verification' : 'Start identity verification'
 
   return (
-    <div className="pp-card">
-      <div className="pp-card-hd">
-        <p className="pp-section-label">Identity Verification</p>
-        {isVerified     && <span style={{ fontSize:11, fontWeight:700, color:'#16A34A', background:'#F0FDF4', padding:'3px 10px', borderRadius:20, border:'1px solid #BBF7D0' }}>✓ Verified</span>}
-        {isUnderReview  && <span style={{ fontSize:11, fontWeight:700, color:'#B45309', background:'#FEF3C7', padding:'3px 10px', borderRadius:20, border:'1px solid #FDE68A' }}>⏳ Under review</span>}
-        {isRejected     && <span style={{ fontSize:11, fontWeight:700, color:'#DC2626', background:'#FEF2F2', padding:'3px 10px', borderRadius:20, border:'1px solid #FECACA' }}>❌ Rejected</span>}
-        {isNotStarted   && <span style={{ fontSize:11, fontWeight:700, color:'#DC2626', background:'#FEF2F2', padding:'3px 10px', borderRadius:20, border:'1px solid #FECACA' }}>Not verified</span>}
+    <section className="pp-card">
+      <div className="ps-h kyc-hd">
+        <span>Identity verification</span>
+        <span className={`kyc-pill ${pill.cls}`}>{pill.text}</span>
       </div>
 
       {loading ? (
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          {[1,2].map(i => <div key={i} className="pp-skel" style={{ height:52, borderRadius:12 }}/>)}
-        </div>
+        <div className="kyc-grid">{[1,2,3].map(i => <div key={i} className="pp-skel" style={{ height:58, borderRadius:10 }}/>)}</div>
       ) : (
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          {/* NIN row */}
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:'#F9FAFB', border:'1px solid #E5E7EB', borderRadius:12, padding:'12px 14px' }}>
-            <div>
-              <p style={{ fontSize:10, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:2 }}>NIN</p>
-              <p style={{ fontSize:14, fontFamily:'DM Mono, monospace', fontWeight:700, color:'#111827' }}>
-                {ninOk ? kycStatus.ninMasked : '— Not verified'}
-              </p>
-            </div>
-            <span style={{ fontSize:18 }}>{ninOk ? '✅' : '○'}</span>
+        <>
+          <div className="kyc-grid">
+            {steps.map(st => (
+              <div key={st.label} className="kyc-item">
+                <div>
+                  <p className="kyc-label">{st.label}</p>
+                  <p className={`kyc-value ${st.ok ? '' : 'muted'}`}>{st.value}</p>
+                </div>
+                <TickIcon ok={st.ok} />
+              </div>
+            ))}
           </div>
 
-          {/* BVN row */}
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:'#F9FAFB', border:'1px solid #E5E7EB', borderRadius:12, padding:'12px 14px' }}>
-            <div>
-              <p style={{ fontSize:10, fontWeight:700, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:2 }}>BVN</p>
-              <p style={{ fontSize:14, fontFamily:'DM Mono, monospace', fontWeight:700, color:'#111827' }}>
-                {bvnOk ? kycStatus.bvnMasked : '— Not verified'}
-              </p>
-            </div>
-            <span style={{ fontSize:18 }}>{bvnOk ? '✅' : '○'}</span>
-          </div>
-
-          {/* CTA */}
-          {isOwn && !isVerified && !isUnderReview && (
-            <button onClick={() => navigate('/verify-identity')}
-              style={{ marginTop:4, height:40, borderRadius:10, background: isRejected ? '#DC2626' : '#111827', color:'#fff', border:'none', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'Inter, sans-serif' }}>
-              {isRejected ? 'Resubmit Verification →' : bvnOk ? 'Complete Face Scan →' : ninOk ? 'Complete BVN Verification →' : 'Start Identity Verification →'}
-            </button>
-          )}
           {isOwn && isRejected && (
-            <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:10, padding:'10px 12px', marginTop:2 }}>
-              <p style={{ fontSize:12, color:'#DC2626', fontWeight:600 }}>❌ Your identity verification was rejected.</p>
-              {kycStatus?.rejectionReason && <p style={{ fontSize:11, color:'#B91C1C', marginTop:4 }}>Reason: {kycStatus.rejectionReason}</p>}
+            <p className="kyc-note err">Your identity verification was rejected.{kycStatus?.rejectionReason ? ` Reason: ${kycStatus.rejectionReason}` : ''}</p>
+          )}
+          {isOwn && isUnderReview && <p className="kyc-note warn">Your identity is under manual review. We'll notify you within 24 hours.</p>}
+          {isOwn && isVerified && <p className="kyc-note ok">Identity fully verified. All AjoDaddy features are unlocked.</p>}
+
+          {isOwn && !isVerified && !isUnderReview && (
+            <div className="ps-save-row" style={{ marginTop: 14 }}>
+              <button type="button" className="ps-save" onClick={() => navigate('/verify-identity')}>{cta} →</button>
             </div>
           )}
-          {isOwn && isUnderReview && (
-            <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:10, padding:'10px 12px', marginTop:2 }}>
-              <p style={{ fontSize:12, color:'#B45309', fontWeight:600 }}>⏳ Your identity is under manual review. We'll notify you within 24 hours.</p>
-            </div>
-          )}
-          {isOwn && isVerified && (
-            <div style={{ background:'#F0FDF4', border:'1px solid #BBF7D0', borderRadius:10, padding:'10px 12px', marginTop:2 }}>
-              <p style={{ fontSize:12, color:'#16A34A', fontWeight:600 }}>✅ Identity fully verified. All PayPaddy features are unlocked.</p>
-            </div>
-          )}
-        </div>
+        </>
       )}
+    </section>
+  )
+}
+
+// ── Settings (Figma): Personal, Address, Security, Bank, Save ──
+type SettingsValues = {
+  firstName: string; lastName: string; email: string; phone: string; dateOfBirth: string
+  streetAddress: string; city: string; state: string; postalCode: string; country: string
+}
+
+// Defined at module level so inputs are not remounted on re-render
+function Field({ name, label, register, setFocus, type = 'text', locked = false, wide = false }: {
+  name: keyof SettingsValues; label: string; register: UseFormRegister<SettingsValues>; setFocus: UseFormSetFocus<SettingsValues>
+  type?: string; locked?: boolean; wide?: boolean
+}) {
+  return (
+    <div className={`ps-field ${wide ? 'ps-wide' : ''}`}>
+      <label htmlFor={`f-${name}`}>{label}</label>
+      <div className={`ps-input ${locked ? 'ps-locked' : ''}`}>
+        <input id={`f-${name}`} type={type} readOnly={locked} {...register(name)} />
+        {!locked && (
+          <button type="button" className="ps-pen" aria-label={`Edit ${label.toLowerCase()}`} onClick={() => setFocus(name)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+        )}
+      </div>
     </div>
   )
 }
 
-function LeaderboardCard() {
-  const [tab, setTab]     = useState('STREAK')
-  const [rows, setRows]   = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
-  const tabs = [{ id:'STREAK', label:'Streak' }, { id:'REPUTATION', label:'Trust' }, { id:'CONTRIBUTED', label:'Savings' }, { id:'CREATORS', label:'Builders' }]
-  useEffect(() => {
-    setLoading(true)
-    fetchLeaderboard(tab).then(d => { setRows(Array.isArray(d) ? d : []); setLoading(false) })
-  }, [tab])
-  const colors = ['#B45309','#6B7280','#92400E','#7C3AED','#BE185D','#1D4ED8','#065F46','#B91C1C']
+function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; userId: string; onSaved: (d: Partial<FullProfile>) => void }) {
+  const navigate = useNavigate()
+  const [twoFA, setTwoFA] = useState(!!profile.twoFactorEnabled)
+  const [status, setStatus] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
+  const { register, handleSubmit, reset, setFocus, formState: { isSubmitting, isDirty } } = useForm<SettingsValues>({
+    defaultValues: {
+      firstName: profile.firstName ?? '', lastName: profile.lastName ?? '', email: profile.email ?? '',
+      phone: profile.phone ?? profile.phoneNumber ?? '',
+      dateOfBirth: profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : '',
+      streetAddress: profile.streetAddress ?? '', city: profile.city ?? '', state: profile.state ?? '',
+      postalCode: profile.postalCode ?? '', country: profile.country ?? 'Nigeria',
+    },
+  })
+
+  async function onSave(values: SettingsValues) {
+    setStatus(null)
+    try {
+      const { email, ...payload } = values // email is read-only
+      await apiFetch(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, twoFactorEnabled: twoFA }) })
+      onSaved({ ...payload, twoFactorEnabled: twoFA })
+      reset(values)
+      const cur = useAuthStore.getState().user
+      if (cur) useAuthStore.getState().setUser({ ...cur, firstName: values.firstName, lastName: values.lastName })
+      setStatus({ type: 'ok', msg: 'Settings saved' })
+    } catch (e: any) {
+      setStatus({ type: 'err', msg: e?.message || 'Could not save your changes. Try again.' })
+    }
+  }
+
+  const pwChanged = timeAgo(profile.passwordChangedAt)
+  const f = { register, setFocus }
+  const twoFAChanged = twoFA !== !!profile.twoFactorEnabled
+
   return (
-    <div className="pp-card">
-      <p className="pp-section-label">Leaderboard</p>
-      <div className="pp-tabs">
-        {tabs.map(t => <button key={t.id} className={`pp-tab ${tab===t.id?'pp-tab-on':''}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}
-      </div>
-      {loading ? (
-        [...Array(5)].map((_,i) => <div key={i} className="pp-skel" style={{ height:44, borderRadius:10, marginBottom:4 }}/>)
-      ) : rows.length === 0 ? (
-        <div className="pp-lb-empty">
-          <div className="pp-lb-empty-icon">🏆</div>
-          <p className="pp-lb-empty-title">No data yet</p>
-          <p className="pp-lb-empty-sub">Check back later to see the leaderboard.</p>
-        </div>
-      ) : rows.map((row, i) => {
-        const u = row.user || row.users || {}
-        const initials = ((u.firstName?.[0]||'')+(u.lastName?.[0]||''))||'?'
-        const medals = ['🥇','🥈','🥉']
-        return (
-          <div key={row.userId||i} className={`pp-lb-row ${i===0?'pp-lb-top':''}`}>
-            <div className="pp-lb-rank">{i<3?medals[i]:`${i+1}`}</div>
-            <div className="pp-lb-av" style={{ background:colors[i%colors.length] }}>{initials}</div>
-            <div className="pp-lb-info">
-              <div className="pp-lb-name">{u.firstName} {u.lastName}</div>
-              <div className="pp-lb-handle">@{u.username}</div>
-            </div>
-            <div className="pp-lb-score">{row.score??'—'}</div>
+    <form className="ps-form" onSubmit={handleSubmit(onSave)}>
+      <div className="ps-grid">
+        <section className="pp-card">
+          <h3 className="ps-h">Personal information</h3>
+          <div className="ps-fields">
+            <Field name="firstName" label="First name" {...f} />
+            <Field name="lastName" label="Last name" {...f} />
+            <Field name="email" label="Email address" type="email" locked wide {...f} />
+            <Field name="phone" label="Phone number" type="tel" {...f} />
+            <Field name="dateOfBirth" label="Date of birth" type="date" {...f} />
           </div>
-        )
-      })}
-    </div>
+        </section>
+
+        <section className="pp-card">
+          <h3 className="ps-h">Residential address</h3>
+          <div className="ps-fields">
+            <Field name="streetAddress" label="Street address" wide {...f} />
+            <Field name="city" label="City" {...f} />
+            <Field name="state" label="State / Region" {...f} />
+            <Field name="postalCode" label="ZIP / Postal code" {...f} />
+            <Field name="country" label="Country" {...f} />
+          </div>
+        </section>
+      </div>
+
+      <div className="ps-grid">
+        <section className="pp-card">
+          <h3 className="ps-h">Security &amp; authentication</h3>
+          <div className="ps-row">
+            <span className="ps-row-title">Two-factor authentication (2FA)</span>
+            <button type="button" role="switch" aria-checked={twoFA} aria-label="Two-factor authentication"
+              className={`ps-switch ${twoFA ? 'on' : ''}`} onClick={() => setTwoFA(v => !v)}><span /></button>
+          </div>
+          <div className="ps-row ps-row-line">
+            <div>
+              <span className="ps-row-title">Password</span>
+              {pwChanged && <p className="ps-tiny">Last changed: {pwChanged}</p>}
+            </div>
+            <button type="button" className="ps-ghost" onClick={() => navigate('/forgot-password')}>Change password</button>
+          </div>
+          {(profile.lastLoginInfo || profile.lastLoginAt) && (
+            <p className="ps-login">Last login: {profile.lastLoginInfo ?? new Date(profile.lastLoginAt!).toLocaleString('en-NG')}</p>
+          )}
+        </section>
+
+        {/* Saved bank accounts: add / make default / remove (PIN-confirmed) */}
+        <BankAccountsCard />
+      </div>
+
+      <div className="ps-save-row">
+        {status && <span className={`ps-status ${status.type}`} role="status">{status.msg}</span>}
+        <button type="submit" className="ps-save" disabled={isSubmitting || (!isDirty && !twoFAChanged)}>
+          {isSubmitting ? 'Saving…' : 'Save settings changes'} →
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -302,14 +355,14 @@ function SkeletonPage() {
 
 export function ProfilePage() {
   const { username }  = useParams<{ username?: string }>()
-  const navigate      = useNavigate()
   const { user: me }  = useAuthStore()
   const [profile, setProfile]   = useState<FullProfile | null>(null)
   const [loading, setLoading]   = useState(true)
   const [showEdit, setShowEdit] = useState(false)
   const [copied, setCopied]     = useState(false)
-  const [claiming, setClaiming] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [avatarError, setAvatarError] = useState<string | null>(null)
+  const [kycVerified, setKycVerified] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isOwn = !username || username === me?.username
 
@@ -328,50 +381,26 @@ export function ProfilePage() {
     setShowEdit(false)
   }
 
-  async function claimStreak() {
-    if (!me?.id || !profile) return
-    const today = new Date().toLocaleDateString('en-CA')
-    setClaiming(true)
-    try {
-      const res = await apiFetch(`/users/${me.id}/streak/claim`, { method:'POST' })
-      const updated = res.data ?? res
-      setProfile(prev => prev ? { ...prev, streak: { ...prev.streak, ...updated, lastContributionDate: updated.lastContributionDate ?? today }, currentStreak: updated.currentStreak, longestStreak: updated.longestStreak } : prev)
-    } catch (err: any) {
-      if (err?.message?.toLowerCase().includes('already claimed')) {
-        setProfile(prev => prev ? { ...prev, streak: { ...prev.streak, lastContributionDate: today } } : prev)
-      }
-    } finally { setClaiming(false) }
-  }
-
   function copyLink() {
     navigator.clipboard.writeText(`${window.location.origin}/u/${profile?.username}`)
     setCopied(true); setTimeout(() => setCopied(false), 2000)
   }
 
-  // NEW — click-to-upload avatar. Runs the file straight through to
-  // POST /users/me/avatar and swaps the displayed picture on success.
-  // Silently no-ops on failure (bad file type, too large, network
-  // error) rather than showing an error state — the user just sees
-  // their old picture stay put and can try again.
-     async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file || !me?.id) return
-    if (!file.type.startsWith('image/')) return
-    if (file.size > 5 * 1024 * 1024) return
+    setAvatarError(null)
+    if (!file.type.startsWith('image/')) { setAvatarError('Choose an image file.'); return }
+    if (file.size > 5 * 1024 * 1024) { setAvatarError('Image must be under 5 MB.'); return }
     setUploadingAvatar(true)
     try {
       const avatarUrl = await uploadAvatarFile(file)
       setProfile(prev => prev ? { ...prev, avatarUrl } : prev)
-      // Update authStore's user too — the sidebar card and topbar
-      // avatar both read from here (via useAuthStore), not from this
-      // page's local `profile` state. setUser() goes through the
-      // store's own persist middleware, so it also survives refresh.
+      // sidebar/topbar read from authStore, so update it too
       const currentUser = useAuthStore.getState().user
-      if (currentUser) {
-        useAuthStore.getState().setUser({ ...currentUser, avatarUrl })
-      }
-    } catch { /* silently ignore — the avatar just won't update */ }
+      if (currentUser) useAuthStore.getState().setUser({ ...currentUser, avatarUrl })
+    } catch (err: any) { setAvatarError(err?.message || 'Photo upload failed.') }
     finally { setUploadingAvatar(false) }
   }
 
@@ -385,36 +414,14 @@ export function ProfilePage() {
   )
 
   const initials   = `${profile.firstName?.[0]||''}${profile.lastName?.[0]||''}`
-  const memberSince = new Date(profile.createdAt ?? profile.created_at).toLocaleDateString('en-NG', { month:'long', year:'numeric' })
+  const rawCreated = profile.createdAt ?? profile.created_at
+  const memberSince = rawCreated ? new Date(rawCreated).toLocaleDateString('en-NG', { month:'long', year:'numeric' }) : '—'
   const score      = profile.reputationScore ?? profile.reputation_score ?? 0
   const tier       = getTier(score)
-  const tierIdx    = TIERS.findIndex(t => t.name === tier.name)
-  const nextTier   = TIERS[tierIdx + 1]
-  const pct        = nextTier ? Math.min(100, ((score - tier.min) / Math.max(1, nextTier.min - tier.min)) * 100) : 100
-  const streak     = profile.streak
-  const today      = new Date().toLocaleDateString('en-CA')
-  const lastDate   = streak?.lastContributionDate ? new Date(streak.lastContributionDate + 'T12:00:00').toLocaleDateString('en-CA') : null
-  const alreadyClaimed = lastDate === today
-  const calDays    = Array.from({ length:28 }, (_,i) => ({ isToday: i===27, isDone: i>=28-(streak?.currentStreak??0) && i!==27 }))
-
   const stats = profile.stats || {}
   const groupsJoined      = stats.groupsJoined ?? stats.groups_joined ?? 0
-  const groupsCreated     = stats.groupsCreated ?? stats.groups_created ?? 0
   const completedCycles   = stats.completedCycles ?? stats.completed_cycles ?? 0
-  const onTimePaymentPct  = stats.onTimePaymentPct ?? stats.on_time_payment_pct ?? 0
   const totalPayouts      = stats.totalPayoutsReceived ?? stats.total_payouts_received ?? 0
-  const totalContributed  = stats.totalContributed ?? stats.total_contributed ?? 0
-
-  const STATS = [
-    { icon:'👥', val: groupsJoined,   label:'Groups Joined',  sub:'All time' },
-    { icon:'🔗', val: groupsCreated,  label:'Groups Created', sub:'All time' },
-    { icon:'🔄', val: completedCycles,label:'Cycles Done',    sub:'All time' },
-    { icon:'📦', val: onTimePaymentPct > 0 ? `${onTimePaymentPct}%` : '—', label:'On-time Rate', sub:'' },
-    { icon:'💰', val: totalPayouts > 0 ? `₦${totalPayouts.toLocaleString()}` : '₦0', label:'Total Payouts', sub:'All time' },
-    { icon:'📈', val: totalContributed > 0 ? `₦${totalContributed.toLocaleString()}` : '₦0', label:'Contributed', sub:'All time' },
-  ]
-
-  const earned = new Set((profile.achievements ?? []).map(a => a.type))
 
   return (
     <DashboardLayout title={isOwn ? 'My Profile' : `@${profile.username}`}>
@@ -453,8 +460,11 @@ export function ProfilePage() {
               <p className="pp-welcome">Welcome back,</p>
               <div className="pp-name-row">
                 <span className="pp-name">{profile.firstName} {profile.lastName}</span>
+                {kycVerified && <span className="ps-badge">Verified member</span>}
                 <span className="pp-tier-pill" style={{ color:tier.color, background:tier.bg, borderColor:tier.color+'40' }}>{tier.name} Member</span>
               </div>
+              {isOwn && profile.email && <p className="ps-hero-email">{profile.email}</p>}
+              {avatarError && <p className="ps-hero-err" role="alert">{avatarError}</p>}
               <div className="pp-meta-row">
                 <span className="pp-meta-item"><svg className="pp-meta-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Member since <strong>{memberSince}</strong></span>
                 <span className="pp-meta-item"><svg className="pp-meta-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>Member ID <strong>PP-{profile.id?.slice(0,5).toUpperCase()}</strong></span>
@@ -489,93 +499,19 @@ export function ProfilePage() {
           </div>
         </motion.div>
 
-        {/* ── KYC Status (own profile only) ── */}
-        {isOwn && (
-          <motion.div {...fade(0.06)}>
-            <KycStatusCard isOwn={isOwn}/>
+        {/* ── Settings from Figma (own profile only) ── */}
+        {isOwn && me?.id && (
+          <motion.div {...fade(0.04)}>
+            <SettingsForm profile={profile} userId={me.id} onSaved={d => setProfile(prev => prev ? { ...prev, ...d } : prev)} />
           </motion.div>
         )}
 
-        {/* ── Trust + Streak ── */}
-        <div className="pp-two-col">
-          <motion.div className="pp-card" {...fade(0.08)}>
-            <div className="pp-card-hd">
-              <p className="pp-section-label">Trust Score</p>
-            </div>
-            <div className="pp-trust-row">
-              <span className="pp-trust-num">{score}</span>
-              <span className="pp-trust-denom">/1000</span>
-              <span className="pp-tier-pill ml-3" style={{ color:tier.color, background:tier.bg, borderColor:tier.color+'40' }}>🏅 {tier.name}</span>
-            </div>
-            <div className="pp-prog-track">
-              <motion.div className="pp-prog-fill" initial={{ width:0 }} animate={{ width:`${pct}%` }}
-                transition={{ duration:1.4, ease:[0.16,1,0.3,1], delay:0.4 }} style={{ background:tier.color }}/>
-            </div>
-            <div className="pp-tier-labels">
-              {TIERS.map(t => <span key={t.name} style={t.name===tier.name?{color:tier.color,fontWeight:700}:{}}>{t.name}</span>)}
-            </div>
-            <div className="pp-trust-footer">
-              <div className="pp-tf-item"><p className="pp-tf-val" style={{ color:'#22C55E' }}>+102</p><p className="pp-tf-sub">vs last month</p></div>
-              <div className="pp-tf-item"><p className="pp-tf-val">{onTimePaymentPct > 0 ? `${onTimePaymentPct}%` : '— —'}</p><p className="pp-tf-sub">On-time rate</p></div>
-              <div className="pp-tf-item"><p className="pp-tf-val">Excellent</p><p className="pp-tf-sub">Reliability</p></div>
-            </div>
+        {/* ── KYC Status (own profile only) ── */}
+        {isOwn && (
+          <motion.div {...fade(0.06)}>
+            <KycStatusCard isOwn={isOwn} onStatus={s => setKycVerified(s?.status === 'VERIFIED')}/>
           </motion.div>
-
-          <motion.div className="pp-card" {...fade(0.1)}>
-            <div className="pp-card-hd"><p className="pp-section-label">Contribution Streak</p></div>
-            <div className="pp-streak-row">
-              <span className="pp-streak-fire">🔥</span>
-              <span className="pp-streak-num">{streak?.currentStreak ?? 0}</span>
-              <span className="pp-streak-sub">days streak</span>
-            </div>
-            <div className="pp-cal-hd">
-              <span className="pp-cal-label">Last 28 days</span>
-              <span className="pp-cal-done" style={{ color:'#22C55E' }}>{streak?.currentStreak ?? 0} / 28 days</span>
-            </div>
-            <div className="pp-cal">
-              {calDays.map((d,i) => <div key={i} className={`pp-cd ${d.isToday?'pp-cd-today':d.isDone?'pp-cd-done':''}`}/>)}
-            </div>
-            {isOwn && (
-              <button className="pp-claim-btn" onClick={claimStreak} disabled={alreadyClaimed||claiming}
-                style={alreadyClaimed?{opacity:.5,cursor:'not-allowed'}:{}}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                {claiming ? 'Claiming…' : alreadyClaimed ? '✓ Claimed today' : "Claim today's streak"}
-              </button>
-            )}
-          </motion.div>
-        </div>
-
-        {/* ── Stats ── */}
-        <motion.div className="pp-stats-grid" {...fade(0.14)}>
-          {STATS.map(s => (
-            <div key={s.label} className="pp-stat">
-              <div className="pp-stat-icon">{s.icon}</div>
-              <div><p className="pp-stat-val">{s.val}</p><p className="pp-stat-label">{s.label}</p><p className="pp-stat-sub">{s.sub}</p></div>
-            </div>
-          ))}
-        </motion.div>
-
-        {/* ── Badges + Leaderboard ── */}
-        <div className="pp-badges-lb-grid">
-          <motion.div className="pp-card" {...fade(0.18)}>
-            <div className="pp-card-hd">
-              <p className="pp-section-label">Badges</p>
-              <span style={{ fontSize:12, color:'#22C55E', fontWeight:600 }}>{earned.size} / {Object.keys(BADGE_META).length} earned</span>
-            </div>
-            <div className="pp-badges">
-              {Object.entries(BADGE_META).map(([type, meta]) => {
-                const isEarned = earned.has(type)
-                return (
-                  <div key={type} className={`pp-badge ${isEarned?'pp-badge-on':'pp-badge-off'}`} title={isEarned?meta.desc:`🔒 ${meta.desc}`}>
-                    <div className="pp-badge-icon">{meta.icon}</div>
-                    <div className="pp-badge-name">{meta.label}</div>
-                  </div>
-                )
-              })}
-            </div>
-          </motion.div>
-          <motion.div {...fade(0.2)}><LeaderboardCard/></motion.div>
-        </div>
+        )}
 
         {/* ── Activity ── */}
         {(profile.activity ?? []).length > 0 && (
@@ -734,6 +670,68 @@ const CSS = `
   .pp-empty { text-align: center; padding: 80px 20px; }
   .pp-empty-icon { font-size: 40px; margin-bottom: 10px; }
   .pp-empty-text { color: #9CA3AF; font-size: 14px; }
+
+  /* ── Figma settings sections ── */
+  .ps-hero-email { font-size: 12px; color: #6B7280; margin: -2px 0 2px; }
+  .ps-hero-err { font-size: 11px; color: #DC2626; margin-top: 2px; }
+  .ps-badge { font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #15803D; background: #DCFCE7; padding: 4px 8px; border-radius: 6px; }
+  .ps-form { display: flex; flex-direction: column; gap: 16px; }
+  .ps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .ps-grid { grid-template-columns: 1fr; } }
+  .ps-h { font-size: 13px; font-weight: 700; color: #111827; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #F3F4F6; }
+  .ps-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ps-wide { grid-column: 1 / -1; }
+  .ps-field label { display: block; font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9CA3AF; margin-bottom: 5px; }
+  .ps-input { display: flex; align-items: center; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 0 10px; transition: border-color .15s, box-shadow .15s; }
+  .ps-input:focus-within { border-color: #22C55E; background: #fff; box-shadow: 0 0 0 3px rgba(34,197,94,.1); }
+  .ps-input input { flex: 1; min-width: 0; height: 38px; border: none; background: transparent; outline: none; font-family: inherit; font-size: 12px; color: #111827; }
+  .ps-locked input { color: #6B7280; }
+  .ps-pen { border: none; background: none; color: #9CA3AF; cursor: pointer; padding: 4px; display: flex; }
+  .ps-pen:hover, .ps-pen:focus-visible { color: #16A34A; }
+  .ps-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 12px; }
+  .ps-row-line { border-top: 1px solid #F3F4F6; padding-top: 12px; }
+  .ps-row-title { font-size: 12px; font-weight: 600; }
+  .ps-tiny { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+  .ps-switch { width: 38px; height: 22px; border-radius: 99px; border: none; background: #D1D5DB; padding: 2px; cursor: pointer; transition: background .2s; flex-shrink: 0; }
+  .ps-switch span { display: block; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }
+  .ps-switch.on { background: #16A34A; }
+  .ps-switch.on span { transform: translateX(16px); }
+  .ps-switch:focus-visible { outline: 2px solid #16A34A; outline-offset: 2px; }
+  .ps-ghost { font-family: inherit; font-size: 11px; font-weight: 600; color: #166534; background: #fff; border: 1px solid #D1D5DB; border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+  .ps-ghost:hover { background: #F9FAFB; }
+  .ps-login { font-size: 10px; color: #6B7280; margin-top: 12px; padding-top: 12px; border-top: 1px solid #F3F4F6; }
+  .ps-bank { display: flex; align-items: center; gap: 12px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px; }
+  .ps-bank-ic { width: 34px; height: 34px; border-radius: 8px; background: #fff; border: 1px solid #E5E7EB; display: flex; align-items: center; justify-content: center; color: #6B7280; }
+  .ps-bank-info { flex: 1; font-size: 12px; font-weight: 600; }
+  .ps-default { font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #15803D; background: #DCFCE7; padding: 3px 8px; border-radius: 6px; }
+  .ps-nobank { padding: 12px 0; }
+  .ps-link { width: 100%; margin-top: 12px; padding: 14px; background: none; border: 1px dashed #D1D5DB; border-radius: 10px; font-family: inherit; font-size: 11px; font-weight: 600; color: #166534; cursor: pointer; }
+  .ps-link:hover { background: #F0FDF4; border-color: #86EFAC; }
+  .ps-save-row { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
+  .ps-save { font-family: inherit; font-size: 12px; font-weight: 600; color: #fff; background: #0B3D2A; border: none; border-radius: 8px; padding: 11px 20px; cursor: pointer; }
+  .ps-save:hover:not(:disabled) { background: #0F5138; }
+  .ps-save:disabled { opacity: .45; cursor: not-allowed; }
+  .ps-status { font-size: 12px; font-weight: 600; }
+  .ps-status.ok { color: #15803D; }
+  .ps-status.err { color: #DC2626; }
+  .kyc-hd { display: flex; align-items: center; justify-content: space-between; }
+  .kyc-pill { font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; }
+  .kyc-pill.ok { color: #15803D; background: #DCFCE7; }
+  .kyc-pill.warn { color: #B45309; background: #FEF3C7; }
+  .kyc-pill.err { color: #B91C1C; background: #FEE2E2; }
+  .kyc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 760px) { .kyc-grid { grid-template-columns: 1fr; } }
+  .kyc-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px; }
+  .kyc-label { font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9CA3AF; margin-bottom: 3px; }
+  .kyc-value { font-size: 12px; font-weight: 600; color: #111827; font-family: 'DM Mono', monospace; }
+  .kyc-value.muted { color: #9CA3AF; font-family: inherit; font-weight: 500; }
+  .kyc-tick { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid #D1D5DB; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
+  .kyc-tick.ok { background: #16A34A; border-color: #16A34A; }
+  .kyc-note { font-size: 11px; font-weight: 500; margin-top: 12px; padding: 10px 12px; border-radius: 8px; }
+  .kyc-note.ok { color: #15803D; background: #F0FDF4; }
+  .kyc-note.warn { color: #B45309; background: #FFFBEB; }
+  .kyc-note.err { color: #B91C1C; background: #FEF2F2; }
+  @media (prefers-reduced-motion: reduce) { .ps-switch, .ps-switch span { transition: none; } }
 `
 
 export default ProfilePage

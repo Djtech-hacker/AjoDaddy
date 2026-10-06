@@ -5,8 +5,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'monospace'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
+        mono: ['"DM Mono"', '"JetBrains Mono"', 'monospace'],
       },
       colors: {
         void:  '#0B0A08',
@@ -41,6 +41,7 @@ export default {
         'card':    '0 1px 3px rgba(0,0,0,0.06),0 4px 16px rgba(0,0,0,0.04)',
         'card-md': '0 2px 8px rgba(0,0,0,0.08),0 12px 40px rgba(0,0,0,0.06)',
         'dark-sm': '0 2px 8px rgba(0,0,0,0.4),0 8px 24px rgba(0,0,0,0.25)',
+        'dark-md': '0 4px 16px rgba(0,0,0,0.45),0 16px 48px rgba(0,0,0,0.3)',
       },
     },
   },

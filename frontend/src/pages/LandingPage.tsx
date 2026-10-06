@@ -1,7 +1,7 @@
 // ============================================================
-// LandingPage.tsx — all sections in one file, fully responsive
+// LandingPage.tsx — brand colors (green / lime / warm), fully responsive
 // ============================================================
-import { useRef, useState, useEffect, useCallback } from 'react'
+import React, { useRef, useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion'
 
@@ -34,7 +34,9 @@ function useInView(threshold = 0.15): [(node: Element | null) => void, boolean] 
   return [setRef, inView]
 }
 
-// ── Static data ───────────────────────────────────────────────
+// ── Static data (sample data for illustration only) ───────────
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+
 const payoutRotation = [
   { pos: 1, name: 'Adaeze Kalu',  initials: 'AK', date: 'Jan 6',  done: true,  current: false },
   { pos: 2, name: 'Emeka Obi',    initials: 'EO', date: 'Jan 13', done: true,  current: false },
@@ -55,32 +57,15 @@ const weeklyData = [
   { week: 'Wk 6', collected: 600000, target: 600000 },
 ]
 
-const testimonials = [
-  { name: 'Chioma Okafor', role: 'Entrepreneur, Lagos',      initials: 'CO', text: "PayPaddy transformed how our group saves. Transparent, fast, and trustworthy. We've run 3 complete cycles without a single issue.", amount: '₦2.4M', label: 'Saved this year' },
-  { name: 'David Mensah',  role: 'Software Engineer, Accra', initials: 'DM', text: "Finally an Ajo platform that feels like it was built by people who actually use it. The payout tracking alone is worth it.",           amount: '₦850K', label: 'Last payout received' },
-  { name: 'Ngozi Eze',     role: 'Teacher, Abuja',           initials: 'NE', text: "I was sceptical at first, but PayPaddy's transparency won me over. Every member can see every transaction in real time.",               amount: '20+',   label: 'Members in her group' },
-]
-
 const faqs = [
-  { q: 'What is Ajo and how does PayPaddy work?',            a: 'Ajo (also called Esusu or Susu) is a traditional rotating savings model where each member contributes a fixed amount regularly. PayPaddy digitises this — automating collections, tracking contributions, and scheduling payouts with full transparency.' },
-  { q: 'How are payouts disbursed?',                         a: "Payouts go directly to the designated member's bank account or mobile wallet on the agreed date. No manual handling — fully automated and auditable." },
-  { q: 'What happens if a member misses a contribution?',    a: "The system sends automated reminders 48h before due dates. If missed, admins are notified and the group's penalty rules are applied automatically." },
-  { q: 'Is my money safe?',                                  a: 'Funds are held in regulated escrow accounts. PayPaddy is compliant with CBN guidelines and uses 256-bit encryption with bank-grade security infrastructure.' },
-  { q: 'Can I create my own group or join an existing one?', a: 'Both. Create a private group and invite members, or join via a group invite link. Group admins control membership and contribution rules.' },
+  { q: 'What is Ajo and how does AjoDaddy work?', a: 'Ajo (also called Esusu or Susu) is a traditional rotating savings model where each member contributes a fixed amount regularly and members take turns receiving the pool. AjoDaddy helps groups track contributions, schedule payouts, and keep a clear record of every payment.' },
+  { q: 'How are payouts made?', a: "Payouts are sent to the bank account the member has added to their profile, on the agreed date. Every payout is recorded in the group's history." },
+  { q: 'What happens if a member misses a contribution?', a: 'Group admins are notified, and the rules the group has set for late or missed contributions apply.' },
+  { q: 'Is my money safe?', a: 'Payments are processed by Paystack and Flutterwave, and your data is sent over encrypted (HTTPS) connections. Every contribution and payout is recorded in your group history. Only join groups with people you know and trust, because AjoDaddy is not responsible for losses caused by other members. Please read our Terms of Service and Privacy Policy for details.' },
+  { q: 'Can I create my own group or join an existing one?', a: 'Both. Create a private group and invite members, or join with an invite link. Group admins control membership and contribution rules. We recommend private groups with people you personally know.' },
 ]
 
-// ── Logo SVG (reused) ─────────────────────────────────────────
-function Logo({ size = 8 }: { size?: number }) {
-  const px = size * 4
-  return (
-    <div className={`w-${size} h-${size} bg-brand rounded-lg flex items-center justify-center flex-shrink-0`} style={{ width: px, height: px }}>
-      <svg width={px * 0.55} height={px * 0.55} viewBox="0 0 16 16" fill="none">
-        <path d="M8 2C8 2 3 5 3 9C3 11.76 5.24 14 8 14C10.76 14 13 11.76 13 9C13 5 8 2 8 2Z" fill="#A8E03A"/>
-        <circle cx="8" cy="9" r="2" fill="#1B5C3C"/>
-      </svg>
-    </div>
-  )
-}
+const navLinks = [['How it works','#how-it-works'],['Features','#features'],['Security','#security'],['FAQ','#faq']]
 
 // ── Nav ───────────────────────────────────────────────────────
 function Nav() {
@@ -95,25 +80,26 @@ function Nav() {
 
   return (
     <motion.header
-      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${scrolled ? 'bg-warm/90 backdrop-blur-md border-b border-black/[0.06]' : ''}`}
+      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${scrolled || menuOpen ? 'bg-warm/90 backdrop-blur-md border-b border-black/[0.06]' : ''}`}
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
       <div className="max-w-6xl mx-auto px-5 sm:px-6 h-16 flex items-center justify-between">
-        {/* Brand */}
-       <Link to="/">
-  <img
-    src="https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png"
-    alt="AjoDaddy"
-    style={{ height: 'clamp(4cm, 2vw, 2cm)', marginTop: '1cm' }}
-    className="w-auto object-contain flex-shrink-0"
-  />
-</Link> 
+        {/* spacer keeps the logo centered on mobile (same width as the hamburger) */}
+        <div className="w-9 h-9 md:hidden" aria-hidden />
 
-        {/* Desktop links */}
+        <Link to="/" className="flex items-center justify-center">
+          <img
+            src={LOGO_URL}
+            alt="AjoDaddy"
+            style={{ height: '4cm', marginTop: '1cm', position: 'relative', top: '2cm' }}
+            className="w-auto object-contain flex-shrink-0"
+          />
+        </Link>
+
         <nav className="hidden md:flex items-center gap-7">
-          {[['How it works','#how-it-works'],['Features','#features'],['Security','#security'],['FAQ','#faq']].map(([label, href]) => (
+          {navLinks.map(([label, href]) => (
             <a key={label} href={href}
               className="text-[13px] font-medium text-dim hover:text-ink transition-colors duration-150">
               {label}
@@ -121,18 +107,16 @@ function Nav() {
           ))}
         </nav>
 
-        {/* Desktop CTAs */}
         <div className="hidden md:flex items-center gap-3">
           <Link to="/login" className="text-[13px] font-semibold text-dim hover:text-ink transition-colors px-4 py-2">
             Log in
           </Link>
           <Link to="/register"
             className="text-[13px] font-bold text-warm bg-ink px-4 py-2.5 rounded-xl hover:bg-pitch transition-all hover:shadow-dark-sm">
-            Get started free
+            Get started
           </Link>
         </div>
 
-        {/* Hamburger */}
         <button
           className="md:hidden w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-sand transition-colors"
           onClick={() => setMenuOpen(v => !v)}
@@ -144,7 +128,6 @@ function Nav() {
         </button>
       </div>
 
-      {/* Mobile menu */}
       <AnimatePresence>
         {menuOpen && (
           <motion.div
@@ -155,7 +138,7 @@ function Nav() {
             className="md:hidden overflow-hidden bg-warm border-b border-black/[0.06]"
           >
             <div className="px-5 py-5 flex flex-col gap-4">
-              {[['How it works','#how-it-works'],['Features','#features'],['Security','#security'],['FAQ','#faq']].map(([label, href]) => (
+              {navLinks.map(([label, href]) => (
                 <a key={label} href={href}
                   className="text-[14px] font-medium text-ink py-1"
                   onClick={() => setMenuOpen(false)}>
@@ -171,7 +154,7 @@ function Nav() {
                 <Link to="/register"
                   className="text-[14px] font-bold text-warm bg-ink text-center py-3 rounded-xl hover:bg-pitch transition-colors"
                   onClick={() => setMenuOpen(false)}>
-                  Get started free
+                  Get started
                 </Link>
               </div>
             </div>
@@ -182,7 +165,7 @@ function Nav() {
   )
 }
 
-// ── Hero floating UI cards ────────────────────────────────────
+// ── Hero floating UI cards (sample illustrations) ─────────────
 function FloatingCard({ name, initials, amount, time, delay, x, y }: {
   name: string; initials: string; amount: string; time: string; delay: number; x: string; y: string
 }) {
@@ -232,7 +215,7 @@ function PayoutBadge({ delay }: { delay: number }) {
             transition={{ delay: delay + 0.4, duration: 1, ease: [0.16, 1, 0.3, 1] }}
           />
         </div>
-        <p className="text-[9px] text-white/40 mt-1">9 / 12 collected</p>
+        <p className="text-[9px] text-white/40 mt-1">9 / 12 collected · sample</p>
       </motion.div>
     </motion.div>
   )
@@ -266,9 +249,64 @@ function ProgressRing({ delay }: { delay: number }) {
             <span className="text-[13px] font-bold text-ink">92%</span>
           </div>
         </div>
-        <p className="text-center text-[10px] text-mist mt-1.5">Collection rate</p>
+        <p className="text-center text-[10px] text-mist mt-1.5">Collection rate · sample</p>
       </motion.div>
     </motion.div>
+  )
+}
+
+// ── Tech text animation ───────────────────────────────────────
+const GLYPHS = '01<>/\\{}[]#$%&*+=?'
+const scramble = (t: string) =>
+  t.split('').map(c => (c === ' ' ? ' ' : GLYPHS[Math.floor(Math.random() * GLYPHS.length)])).join('')
+
+function ScrambleText({ text, delay = 0, duration = 1300, shimmer = false }: {
+  text: string; delay?: number; duration?: number; shimmer?: boolean
+}) {
+  const reduce = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const [out, setOut] = useState(() => (reduce ? text : scramble(text)))
+
+  useEffect(() => {
+    if (reduce) { setOut(text); return }
+    let raf = 0
+    let last = 0
+    const begin = performance.now() + delay
+    const tick = (now: number) => {
+      if (now - last > 45) {
+        last = now
+        const p = Math.min(Math.max((now - begin) / duration, 0), 1)
+        const reveal = Math.floor(p * text.length)
+        setOut(text.split('').map((c, i) => (c === ' ' ? ' ' : i < reveal ? c : GLYPHS[Math.floor(Math.random() * GLYPHS.length)])).join(''))
+        if (p >= 1) { setOut(text); return }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [text, delay, duration, reduce])
+
+  // Brand green text with a lime glint sweeping across on a loop
+  const shimmerStyle = shimmer ? {
+    backgroundImage: 'linear-gradient(100deg, #1B5C3C 0%, #1B5C3C 42%, #A8E03A 50%, #1B5C3C 58%, #1B5C3C 100%)',
+    backgroundSize: '250% 100%',
+    WebkitBackgroundClip: 'text',
+    backgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+  } as React.CSSProperties : undefined
+
+  return (
+    <span className="relative inline-block whitespace-nowrap" aria-label={text}>
+      <span className="invisible" aria-hidden>{text}</span>
+      <motion.span
+        aria-hidden
+        className="absolute left-0 top-0 whitespace-nowrap"
+        style={shimmerStyle}
+        animate={shimmer ? { backgroundPosition: ['120% 0', '-120% 0'] } : undefined}
+        transition={shimmer ? { duration: 3.2, repeat: Infinity, ease: 'linear', delay: 2.4 } : undefined}
+      >
+        {out}
+      </motion.span>
+    </span>
   )
 }
 
@@ -280,53 +318,44 @@ function Hero() {
   const heroY  = useTransform(scrollYProgress, [0, 1], [0, 80])
   const heroO  = useTransform(scrollYProgress, [0, 0.6], [1, 0])
 
-  const stats = [['₦4.2B', 'Total saved'], ['98.6%', 'Payout success'], ['12K+', 'Active groups']]
-
   return (
     <section ref={ref} className="relative min-h-screen bg-warm flex flex-col items-center justify-center overflow-hidden">
-      {/* Grid BG */}
       <div className="absolute inset-0 opacity-[0.015]"
         style={{ backgroundImage: 'linear-gradient(#111009 1px,transparent 1px),linear-gradient(90deg,#111009 1px,transparent 1px)', backgroundSize: '64px 64px' }}
       />
-      {/* Warm glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-brand-pale/40 blur-[100px] pointer-events-none"/>
 
-      {/* Main content */}
       <motion.div
-        className="relative z-10 text-center px-5 sm:px-6 max-w-4xl mx-auto w-full"
+        className="relative z-10 text-center px-5 sm:px-6 max-w-4xl mx-auto w-full pt-20"
         style={{ y: heroY, opacity: heroO }}
       >
-        {/* Eyebrow */}
         <motion.div
           className="inline-flex items-center gap-2 bg-white border border-black/[0.07] rounded-full px-4 py-1.5 mb-7 sm:mb-8 shadow-card"
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft"/>
-          <span className="text-[11px] sm:text-[12px] font-semibold text-dim">Now live across West Africa</span>
+          <span className="text-[11px] sm:text-[12px] font-semibold text-dim">Digital Ajo &amp; Esusu savings groups</span>
         </motion.div>
 
-        {/* Headline */}
         <motion.h1
-          className="text-[40px] sm:text-[56px] md:text-[72px] font-extrabold tracking-[-0.04em] text-ink leading-[1.0] mb-5 sm:mb-6"
+          className="text-[40px] sm:text-[56px] md:text-[72px] font-extrabold tracking-[-0.04em] text-ink leading-[1.05] mb-5 sm:mb-6"
           initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
         >
-          Save Together.<br/>
-          <span className="text-brand">Grow Together.</span>
+          <ScrambleText text="Save Together." delay={200} /><br/>
+          <ScrambleText text="Grow Together." delay={900} shimmer />
         </motion.h1>
 
-        {/* Sub */}
         <motion.p
           className="text-[15px] sm:text-[17px] md:text-[19px] text-dim leading-relaxed max-w-xl mx-auto mb-9 sm:mb-10 font-normal"
           initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         >
-          The modern digital platform for Ajo, Esusu &amp; Susu —
-          automating your community savings with full transparency.
+          The digital platform for Ajo, Esusu &amp; Susu —
+          helping your group track contributions and payouts with full transparency.
         </motion.p>
 
-        {/* CTAs */}
         <motion.div
           className="flex flex-col sm:flex-row items-center justify-center gap-3 flex-wrap"
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
@@ -334,7 +363,7 @@ function Hero() {
         >
           <Link to="/register"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-ink text-warm text-[14px] font-bold px-7 py-4 rounded-xl hover:bg-pitch transition-all hover:shadow-dark-sm active:scale-[0.98]">
-            Start saving free
+            Get started
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -344,39 +373,8 @@ function Hero() {
             See how it works
           </a>
         </motion.div>
-
-        {/* Social proof */}
-        <motion.div
-          className="flex items-center justify-center gap-4 mt-8 sm:mt-10 flex-wrap"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-        >
-          <div className="flex -space-x-2">
-            {['AK','EO','ND','KM','FA'].map(i => (
-              <div key={i} className="w-7 h-7 rounded-full border-2 border-warm flex items-center justify-center text-[8px] font-bold text-brand bg-brand-pale">
-                {i}
-              </div>
-            ))}
-          </div>
-          <p className="text-[12px] text-dim"><strong className="text-ink font-bold">12,000+</strong> members saving with PayPaddy</p>
-        </motion.div>
-
-        {/* Mobile stats strip */}
-        <motion.div
-          className="flex md:hidden items-center justify-center gap-4 xs:gap-6 mt-8 bg-white border border-black/[0.06] rounded-2xl shadow-card px-4 sm:px-6 py-3 mx-auto max-w-xs sm:max-w-none"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.9, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {stats.map(([val, lab]) => (
-            <div key={lab} className="text-center">
-              <p className="text-[14px] sm:text-[16px] font-extrabold tracking-tight text-ink">{val}</p>
-              <p className="text-[9px] sm:text-[10px] text-mist font-medium">{lab}</p>
-            </div>
-          ))}
-        </motion.div>
       </motion.div>
 
-      {/* Desktop floating cards — parallax layer */}
       <motion.div
         className="absolute inset-0 pointer-events-none hidden md:block"
         style={{ x: mouse.x * -1, y: mouse.y * -1 }}
@@ -385,23 +383,8 @@ function Hero() {
         <FloatingCard name="Emeka Obi"   initials="EO" amount="₦50,000" time="14 min ago" delay={0.75} x="4%" y="52%"/>
         <PayoutBadge delay={0.65}/>
         <ProgressRing delay={0.8}/>
-
-        {/* Desktop stats strip */}
-        <motion.div
-          className="absolute bottom-[14%] left-1/2 -translate-x-1/2 bg-white border border-black/[0.06] rounded-2xl shadow-card px-6 py-3 flex items-center gap-6 whitespace-nowrap"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.9, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {stats.map(([val, lab]) => (
-            <div key={lab} className="text-center">
-              <p className="text-[16px] font-extrabold tracking-tight text-ink">{val}</p>
-              <p className="text-[10px] text-mist font-medium">{lab}</p>
-            </div>
-          ))}
-        </motion.div>
       </motion.div>
 
-      {/* Scroll indicator */}
       <motion.div
         className="absolute bottom-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -414,8 +397,8 @@ function Hero() {
   )
 }
 
-// ── Trusted By ────────────────────────────────────────────────
-const logos = ['GTBank', 'Paystack', 'Flutterwave', 'Access Bank', 'Moniepoint', 'OPay']
+// ── Payment partners ──────────────────────────────────────────
+const logos = ['Paystack', 'Flutterwave']
 
 function TrustedBy() {
   const [ref, inView] = useInView()
@@ -427,12 +410,12 @@ function TrustedBy() {
           initial={{ opacity: 0 }} animate={inView ? { opacity: 1 } : {}}
           transition={{ duration: 0.5 }}
         >
-          Integrated with Africa's leading financial rails
+          Payments processed by
         </motion.p>
-        <div className="flex flex-wrap items-center justify-center gap-5 sm:gap-8 md:gap-12">
+        <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10 md:gap-14">
           {logos.map((l, i) => (
             <motion.div key={l}
-              className="text-[12px] sm:text-[13px] font-bold text-stone tracking-tight hover:text-dim transition-colors cursor-default"
+              className="text-[15px] sm:text-[17px] font-bold text-stone tracking-tight hover:text-dim transition-colors cursor-default"
               initial={{ opacity: 0 }} animate={inView ? { opacity: 1 } : {}}
               transition={{ delay: i * 0.06, duration: 0.4 }}
             >{l}</motion.div>
@@ -448,8 +431,8 @@ function HowItWorks() {
   const [ref, inView] = useInView(0.1)
   const steps = [
     { num: '01', title: 'Create or join a group', body: 'Start a new Ajo circle with custom rules, or join an existing one with an invite link. Set contribution amounts, frequency, and payout order.' },
-    { num: '02', title: 'Contribute on schedule', body: 'Automatic reminders keep everyone on track. Pay via bank transfer, card, or USSD. Every payment is logged and visible to all members.' },
-    { num: '03', title: 'Receive your payout',    body: "When it's your turn, the full pool is automatically sent to your bank account. No waiting. No chasing. No drama." },
+    { num: '02', title: 'Contribute on schedule', body: 'Pay by card or bank transfer through our payment partners. Every payment is logged and visible to group members.' },
+    { num: '03', title: 'Receive your payout',    body: "When it's your turn, the payout is sent to your bank account on the agreed date." },
   ]
   return (
     <section id="how-it-works" ref={ref} className="py-20 sm:py-24 bg-warm">
@@ -460,7 +443,7 @@ function HowItWorks() {
         >
           <p className="text-[11px] font-bold text-brand uppercase tracking-widest mb-3">How it works</p>
           <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink leading-tight">
-            Three steps to community wealth
+            Three steps to community savings
           </h2>
         </motion.div>
         <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-5">
@@ -503,13 +486,13 @@ function TrackingSection() {
               Know exactly where every naira stands
             </h2>
             <p className="text-[14px] sm:text-[15px] text-dim leading-relaxed mb-7">
-              Real-time contribution status for every member. Automated reminders. Instant receipts. Complete audit trail.
+              Contribution status for every member, payment reminders, receipts and a complete record of group activity.
             </p>
             <div className="space-y-4">
               {[
-                ['Automated payment reminders', '48h and 2h before due dates'],
-                ['Instant receipts',             'Sent via SMS and email on payment'],
-                ['Live collection dashboard',    'See who has paid at a glance'],
+                ['Payment reminders',         'Before contributions are due'],
+                ['Receipts',                  'Sent by email or SMS when you pay'],
+                ['Live collection dashboard', 'See who has paid at a glance'],
               ].map(([title, sub]) => (
                 <div key={title} className="flex items-start gap-3">
                   <div className="w-5 h-5 rounded-full bg-brand-pale flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -532,7 +515,7 @@ function TrackingSection() {
             className="bg-warm rounded-2xl border border-black/[0.06] p-4 sm:p-5 shadow-card"
           >
             <div className="flex items-center justify-between mb-4">
-              <p className="text-[12px] sm:text-[13px] font-bold text-ink">Week 5 — Lagos Tech Circle</p>
+              <p className="text-[12px] sm:text-[13px] font-bold text-ink">Sample group — Week 5</p>
               <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">In progress</span>
             </div>
             <div className="mb-4">
@@ -566,9 +549,9 @@ function TrackingSection() {
                   <span className="flex-1 min-w-0 text-[12px] font-medium text-ink truncate">{m.name}</span>
                   {m.time && <span className="text-[10px] text-mist font-mono hidden sm:block">{m.time}</span>}
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                    m.status === 'paid' ? 'text-green-700 bg-green-50' :
+                    m.status === 'paid'    ? 'text-green-700 bg-green-50' :
                     m.status === 'overdue' ? 'text-red-600 bg-red-50' :
-                    'text-amber-600 bg-amber-50'
+                                             'text-amber-600 bg-amber-50'
                   }`}>{m.status}</span>
                 </motion.div>
               ))}
@@ -591,7 +574,7 @@ function PayoutRotationSection() {
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         >
           <p className="text-[11px] font-bold text-brand uppercase tracking-widest mb-3">Payout rotation</p>
-          <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink">Your turn, fully automated</h2>
+          <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink">Know when it's your turn</h2>
           <p className="text-[14px] sm:text-[15px] text-dim mt-4 max-w-md mx-auto">Every member sees exactly when they receive their payout. No surprises.</p>
         </motion.div>
 
@@ -623,10 +606,10 @@ function PayoutRotationSection() {
                   {p.current && <div className="w-1.5 h-1.5 rounded-full bg-lime mt-0.5 animate-pulse-soft"/>}
                 </div>
                 <div className="text-center">
-                  <p className={`text-[8px] sm:text-[9px] font-bold leading-tight ${p.current ? 'text-brand' : 'text-dim'}`}>
+                  <p className={`text-[9px] sm:text-[10px] font-bold leading-tight ${p.current ? 'text-brand' : 'text-dim'}`}>
                     {p.name.split(' ')[0]}
                   </p>
-                  <p className={`text-[7px] sm:text-[8px] font-mono ${p.current ? 'text-brand' : 'text-mist'}`}>{p.date}</p>
+                  <p className={`text-[8px] sm:text-[9px] font-mono ${p.current ? 'text-brand' : 'text-mist'}`}>{p.date}</p>
                 </div>
                 {p.current && <span className="text-[8px] font-bold text-white bg-brand px-1.5 py-0.5 rounded-full">Next</span>}
               </motion.div>
@@ -640,9 +623,9 @@ function PayoutRotationSection() {
           transition={{ delay: 0.6, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         >
           <div>
-            <p className="text-[12px] text-mist font-semibold mb-1">Next payout — May 19, 2025</p>
+            <p className="text-[12px] text-mist font-semibold mb-1">Sample payout — May 19</p>
             <p className="text-[28px] sm:text-[32px] font-extrabold tracking-tight text-ink">₦600,000</p>
-            <p className="text-[12px] text-dim mt-1">To Amara Osei · GTBank ****4521</p>
+            <p className="text-[12px] text-dim mt-1">To Amara Osei · Bank account ****4521</p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             {[
@@ -678,7 +661,7 @@ function AnalyticsPreview() {
             Total visibility.<br/>Zero guesswork.
           </h2>
           <p className="text-[14px] sm:text-[15px] text-white/40 mt-4 max-w-md mx-auto">
-            Every contribution, payout, and trend — beautifully displayed and always up to date.
+            Every contribution, payout, and trend for your group, in one place.
           </p>
         </motion.div>
 
@@ -693,8 +676,8 @@ function AnalyticsPreview() {
             </div>
             <div className="flex items-center gap-2 text-[10px] sm:text-[11px] text-white/30 font-mono">
               <div className="w-1.5 h-1.5 rounded-full bg-lime animate-pulse-soft"/>
-              <span className="hidden sm:inline">paypaddy.io/dashboard</span>
-              <span className="sm:hidden">paypaddy.io</span>
+              <span className="hidden sm:inline">Sample dashboard preview</span>
+              <span className="sm:hidden">Sample preview</span>
             </div>
             <div className="w-16"/>
           </div>
@@ -702,9 +685,9 @@ function AnalyticsPreview() {
           <div className="p-4 sm:p-6">
             <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-5 sm:mb-6">
               {[
-                { label: 'Total Saved',    value: '₦4.2B',  delta: '+18.4%'        },
-                { label: 'Active Groups',  value: '12,480', delta: '+340 this month'},
-                { label: 'Payout Success', value: '98.6%',  delta: 'Excellent'     },
+                { label: 'Collected',       value: '₦540K',  delta: 'this cycle'  },
+                { label: 'Members paid',    value: '9 / 12', delta: 'on schedule' },
+                { label: 'Collection rate', value: '92%',    delta: 'sample group'},
               ].map((m, i) => (
                 <motion.div key={m.label}
                   className="bg-white/[0.04] rounded-xl p-2.5 sm:p-4 border border-white/[0.06]"
@@ -715,7 +698,7 @@ function AnalyticsPreview() {
                     {m.label}
                   </p>
                   <p className="text-[14px] sm:text-[22px] font-extrabold text-white tracking-tight">{m.value}</p>
-                  <p className="text-[8px] sm:text-[10px] text-lime font-semibold mt-0.5 sm:mt-1">↑ {m.delta}</p>
+                  <p className="text-[8px] sm:text-[10px] text-lime font-semibold mt-0.5 sm:mt-1">{m.delta}</p>
                 </motion.div>
               ))}
             </div>
@@ -723,7 +706,7 @@ function AnalyticsPreview() {
             <div className="bg-white/[0.03] rounded-xl sm:rounded-2xl border border-white/[0.05] p-3 sm:p-5">
               <div className="flex items-center justify-between mb-3 sm:mb-5">
                 <p className="text-[11px] sm:text-[13px] font-bold text-white">
-                  Weekly collection — Lagos Tech Circle
+                  Weekly collection — sample group
                 </p>
                 <span className="text-[9px] sm:text-[10px] text-white/30 font-mono">Last 6 weeks</span>
               </div>
@@ -754,63 +737,14 @@ function AnalyticsPreview() {
   )
 }
 
-// ── Testimonials ──────────────────────────────────────────────
-function Testimonials() {
-  const [ref, inView] = useInView(0.1)
-  return (
-    <section ref={ref} className="py-20 sm:py-24 bg-warm">
-      <div className="max-w-5xl mx-auto px-5 sm:px-6">
-        <motion.div className="text-center mb-12 sm:mb-14"
-          initial={{ opacity: 0, y: 20 }} animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <p className="text-[11px] font-bold text-brand uppercase tracking-widest mb-3">Testimonials</p>
-          <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink">Trusted by real savers</h2>
-        </motion.div>
-        <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5">
-          {testimonials.map((t, i) => (
-            <motion.div key={t.name}
-              className="bg-white rounded-2xl border border-black/[0.06] p-5 sm:p-7 flex flex-col gap-4 sm:gap-5 hover:shadow-card-md transition-all duration-300 hover:-translate-y-1"
-              initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}
-              transition={{ delay: i * 0.1, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <div className="flex gap-0.5">
-                {[...Array(5)].map((_, j) => (
-                  <svg key={j} width="11" height="11" viewBox="0 0 12 12" fill="#1B5C3C">
-                    <path d="M6 1L7.39 4.26L11 4.73L8.5 7.16L9.18 11L6 9.27L2.82 11L3.5 7.16L1 4.73L4.61 4.26L6 1Z"/>
-                  </svg>
-                ))}
-              </div>
-              <p className="text-[13px] sm:text-[14px] text-ink/80 leading-relaxed flex-1">"{t.text}"</p>
-              <div className="bg-brand-pale rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between">
-                <p className="text-[11px] text-dim font-medium">{t.label}</p>
-                <p className="text-[13px] sm:text-[14px] font-extrabold text-brand tracking-tight">{t.amount}</p>
-              </div>
-              <div className="flex items-center gap-3 pt-1 border-t border-black/[0.04]">
-                <div className="w-8 sm:w-9 h-8 sm:h-9 rounded-full bg-brand flex items-center justify-center text-lime text-[10px] sm:text-[11px] font-bold flex-shrink-0">
-                  {t.initials}
-                </div>
-                <div>
-                  <p className="text-[12px] sm:text-[13px] font-bold text-ink">{t.name}</p>
-                  <p className="text-[10px] sm:text-[11px] text-mist">{t.role}</p>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
 // ── Security ──────────────────────────────────────────────────
 function Security() {
   const [ref, inView] = useInView(0.1)
   const pillars = [
-    { title: '256-bit encryption',    body: 'Bank-grade TLS encryption on all data, in transit and at rest.' },
-    { title: 'CBN Compliant',         body: 'Regulated escrow accounts under CBN guidelines. Funds are always protected.' },
-    { title: 'Real-time audit trail', body: 'Every action is timestamped and logged. Full transparency for all group members.' },
-    { title: '2FA Authentication',    body: 'Two-factor auth required for payouts and admin actions. No exceptions.' },
+    { title: 'Encrypted connections',    body: 'Data is sent over HTTPS/TLS between your device and our servers.' },
+    { title: 'Trusted payment partners', body: 'Card and bank payments are processed by Paystack and Flutterwave.' },
+    { title: 'Full audit trail',         body: 'Contributions and payouts are timestamped and recorded for group members.' },
+    { title: 'Verified accounts',        body: 'Members verify their identity and set a transaction PIN before moving money.' },
   ]
   return (
     <section id="security" ref={ref} className="py-20 sm:py-24 bg-white">
@@ -820,8 +754,8 @@ function Security() {
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         >
           <p className="text-[11px] font-bold text-brand uppercase tracking-widest mb-3">Security</p>
-          <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink">Built to be trusted</h2>
-          <p className="text-[14px] sm:text-[15px] text-dim mt-4 max-w-sm mx-auto">Enterprise-grade security infrastructure. Your money is never at risk.</p>
+          <h2 className="text-[34px] sm:text-[38px] md:text-[46px] font-extrabold tracking-[-0.04em] text-ink">Built with care</h2>
+          <p className="text-[14px] sm:text-[15px] text-dim mt-4 max-w-sm mx-auto">Your data and payments are handled with care.</p>
         </motion.div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-5">
           {pillars.map((p, i) => (
@@ -836,7 +770,7 @@ function Security() {
                   <path d="M7.5 10L9 11.5L12.5 8" stroke="#1B5C3C" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <h3 className="text-[12px] sm:text-[14px] font-bold text-ink mb-1 sm:mb-1.5 leading-tight">{p.title}</h3>
+              <h3 className="text-[13px] sm:text-[14px] font-bold text-ink mb-1 sm:mb-1.5 leading-tight">{p.title}</h3>
               <p className="text-[11px] sm:text-[12px] text-dim leading-relaxed">{p.body}</p>
             </motion.div>
           ))}
@@ -916,17 +850,17 @@ function CTABanner() {
           initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
         >
-          <p className="text-[11px] font-bold text-lime uppercase tracking-widest mb-4">Join PayPaddy</p>
+          <p className="text-[11px] font-bold text-lime uppercase tracking-widest mb-4">Join AjoDaddy</p>
           <h2 className="text-[40px] sm:text-[48px] md:text-[60px] font-extrabold tracking-[-0.05em] text-white leading-tight mb-5 sm:mb-6">
             Start saving<br/>with your people.
           </h2>
           <p className="text-[14px] sm:text-[16px] text-white/40 mb-8 sm:mb-10 max-w-md mx-auto">
-            Free to start. No credit card required. Set up your first group in under 3 minutes.
+            Set up your first group in minutes and invite people you know and trust.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 flex-wrap">
             <Link to="/register"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-lime text-ink text-[14px] font-bold px-7 py-4 rounded-xl hover:bg-lime/90 transition-all active:scale-[0.98]">
-              Create your group free
+              Create your group
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
@@ -945,50 +879,45 @@ function CTABanner() {
 // ── Footer ────────────────────────────────────────────────────
 function Footer() {
   return (
-    <footer className="bg-pitch border-t border-white/[0.05] py-12 sm:py-16">
+    <footer className="bg-pitch border-t border-white/[0.05] pt-12 pb-8">
       <div className="max-w-5xl mx-auto px-5 sm:px-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 sm:gap-10 mb-10 sm:mb-12">
-          {/* Brand */}
-          <div className="col-span-2 md:col-span-1">
-            <div className="mb-4">
-              <img
-                src="https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png"
-                alt="AjoDaddy"
-                className="h-12 md:h-20 w-auto object-contain flex-shrink-0"
-              />
-            </div>
-            <p className="text-[12px] text-white/30 leading-relaxed max-w-[200px]">
-              Africa's modern digital platform for community savings. Built with trust.
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-10 mb-10">
+          <div className="col-span-2">
+            <img src={LOGO_URL} alt="AjoDaddy" className="h-12 md:h-20 w-auto object-contain mb-4" />
+            <p className="text-[13px] text-white/40 leading-relaxed max-w-sm">
+              AjoDaddy is a product of <strong className="text-white/70 font-semibold">Banji Digital Technologies</strong>{' '}
+              (Business Name Registration No. 9693887), registered with the Corporate Affairs Commission of Nigeria.
             </p>
-          </div>   {/* ← this closes col-span div, NOT the inner mb-4 div */}
-          
-          {[
-            { heading: 'Product', links: ['How it works','Features','Pricing','Security'] },
-            { heading: 'Company', links: ['About','Blog','Careers','Contact'] },
-            { heading: 'Legal',   links: ['Privacy Policy','Terms of Service','Cookie Policy'] },
-          ].map(col => (
-            <div key={col.heading}>
-              <p className="text-[10px] sm:text-[11px] font-bold text-white/40 uppercase tracking-widest mb-3 sm:mb-4">
-                {col.heading}
-              </p>
-              <ul className="space-y-2 sm:space-y-3">
-                {col.links.map(l => (
-                  <li key={l}>
-                    <a href="#" className="text-[12px] sm:text-[13px] text-white/40 hover:text-white/70 transition-colors font-medium">
-                      {l}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+            <p className="text-[13px] text-white/40 leading-relaxed max-w-sm mt-3">
+              [FULL STREET ADDRESS], Ikeja, Lagos State, Nigeria
+              <br />
+              <a href="mailto:[SUPPORT EMAIL]" className="text-lime font-medium underline">[SUPPORT EMAIL]</a>
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] sm:text-[11px] font-bold text-white/40 uppercase tracking-widest mb-4">Product</p>
+            <ul className="space-y-3">
+              {navLinks.map(([label, href]) => (
+                <li key={label}><a href={href} className="text-[13px] text-white/40 hover:text-white/70 transition-colors font-medium">{label}</a></li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <p className="text-[10px] sm:text-[11px] font-bold text-white/40 uppercase tracking-widest mb-4">Legal</p>
+            <ul className="space-y-3">
+              <li><Link to="/privacy" className="text-[13px] text-white/40 hover:text-white/70 transition-colors font-medium">Privacy Policy</Link></li>
+              <li><Link to="/terms" className="text-[13px] text-white/40 hover:text-white/70 transition-colors font-medium">Terms of Service</Link></li>
+            </ul>
+          </div>
         </div>
 
-        <div className="border-t border-white/[0.05] pt-6 sm:pt-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p className="text-[11px] sm:text-[12px] text-white/25 text-center sm:text-left">
-            © 2025 PayPaddy Technologies Ltd. All rights reserved.
+        <div className="border-t border-white/[0.05] pt-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
+          <p className="text-[11px] sm:text-[12px] text-white/25">
+            © {new Date().getFullYear()} Banji Digital Technologies. All rights reserved.
           </p>
-          <p className="text-[11px] sm:text-[12px] text-white/25 font-mono">Lagos · Africa · Global</p>
+          <p className="text-[11px] sm:text-[12px] text-white/25 font-mono">Lagos, Nigeria</p>
         </div>
       </div>
     </footer>
@@ -1011,7 +940,6 @@ export default function LandingPage() {
       <TrackingSection />
       <PayoutRotationSection />
       <AnalyticsPreview />
-      <Testimonials />
       <Security />
       <FAQ />
       <CTABanner />

@@ -233,8 +233,9 @@ model User {
   identityRecord      IdentityRecord?
   kycAttempts         KycAttempt[]
   debts               Debt[]
-  gracePeriods        GracePeriod[]
-  groupAgreements     GroupAgreement[]
+   gracePeriods        GracePeriod[]
+   groupAgreements     GroupAgreement[]
+  bankAccounts        BankAccount[]
 
   @@index([email])
   @@index([username])
@@ -453,6 +454,7 @@ model Group {
   inviteLinks    InviteLink[]
   reputationLogs ReputationLog[]
   groupAgreements GroupAgreement[]
+  
 
   @@index([slug])
   @@index([ownerId])
@@ -1009,4 +1011,24 @@ model GroupAgreement {
   @@index([userId])
   @@index([groupId])
   @@map("group_agreements")
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  userId        String
+  bankName      String
+  bankCode      String
+  accountName   String
+  accountLast4  String
+  accountHash   String
+  recipientCode String
+  isDefault     Boolean  @default(false)
+  usableAfter   DateTime
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, accountHash])
+  @@index([userId])
+  @@map("bank_accounts")
 }

@@ -25,6 +25,9 @@ export function validate(config: Record<string, unknown>) {
     MAILJET_SECRET_KEY: Joi.string().optional(),
   }).unknown(true);
 
+  Joi.string().optional()
+  Joi.number().optional()
+
   const { error, value } = schema.validate(config, { abortEarly: false });
   if (error) {
     throw new Error(`❌ Environment validation failed:\n${error.message}`);

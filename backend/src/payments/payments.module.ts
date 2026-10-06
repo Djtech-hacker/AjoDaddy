@@ -4,50 +4,55 @@
 // FIX: removed the `processScheduledPayouts` cron and its helper
 // `creditPayoutToWallet`. GroupsService (_executePayoutUnderLock, in
 // groups.module.ts) is the single, correct owner of payout processing.
-// ============================================================
 //
 // FIX #2: platform fee is read live from the PlatformSetting table on
 // every request (falls back to 1% only if the row is missing).
-// ============================================================
 //
 // FIX #3: verifyBankAccount() logs and surfaces the real Paystack error.
-// ============================================================
 //
 // FIX #4 (withdrawals):
-//  - Paystack balance is checked BEFORE the user's wallet is debited,
-//    so a low Paystack balance never causes a debit-then-refund cycle.
+//  - Paystack balance is checked BEFORE the user's wallet is debited.
 //  - A user is only refunded when Paystack CLEARLY rejected the transfer
 //    (4xx). Timeouts / network errors / 5xx leave the withdrawal PENDING
-//    and the webhook or reconciliation cron settles it. This prevents
-//    paying the user AND refunding them.
-//  - All refunds go through refundFailedWithdrawal(), which only acts on
-//    PENDING/PROCESSING withdrawals, so duplicate webhooks, the cron and
-//    the request handler can never refund the same withdrawal twice.
-//  - Post-transfer steps (status update, platform fee, notification) can
-//    never trigger a refund.
+//    and the webhook or reconciliation cron settles it.
+//  - All refunds go through refundFailedWithdrawal() (idempotent).
+//  - Post-transfer steps can never trigger a refund.
 //  - checkStuckWithdrawals verifies with Paystack instead of blindly
-//    marking withdrawals FAILED (which used to make user money vanish).
+//    marking withdrawals FAILED.
+//
+// FIX #5 (security):
+//  - Withdrawals REQUIRE the user's 4-digit transaction PIN, verified
+//    against transactionPinHash BEFORE anything else happens.
+//  - Withdrawals can ONLY go to a bank account the user saved in
+//    BankAccountsService (name-matched to their verified identity, with
+//    a security hold on new accounts). Raw bank details typed into the
+//    request are no longer accepted.
+//  - The withdraw endpoint is throttled to slow PIN guessing.
 // ============================================================
 
 import {
   Module, Controller, Post, Get, Body, Req,
   UseGuards, HttpCode, HttpStatus, Injectable,
-  BadRequestException, Logger, RawBodyRequest,
+  BadRequestException, ForbiddenException, Logger, RawBodyRequest,
   Headers,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, Min, IsString, IsEnum, IsOptional } from 'class-validator';
+import { IsNumber, Min, IsString, IsEnum, IsOptional, Matches } from 'class-validator';
 import { Request } from 'express';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { Throttle } from '@nestjs/throttler';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';              // use the same package your auth service imports ('bcrypt' or 'bcryptjs')
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.module';
 import { JwtAuthGuard } from '../auth/auth.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WalletModule } from '../wallet/wallet.module';
+import { BankAccountsModule } from '../bank-accounts/bank-accounts.module';
+import { BankAccountsService } from '../bank-accounts/bank-accounts.service';
 
 // ── Constants ─────────────────────────────────────────────────
 const DEFAULT_PLATFORM_FEE_PERCENT = 1
@@ -99,17 +104,15 @@ export class WithdrawDto {
   @IsNumber() @Min(MIN_WITHDRAWAL_NAIRA)
   amount: number
 
-  @IsString() accountNumber: string
-  @IsString() bankCode: string
-  @IsString() accountName: string
-
-  // Frontend sends the bank's display name alongside bankCode so
-  // receipts/transaction rows can show a human-readable bank name.
+  // Which saved bank account to pay out to. If omitted, the user's
+  // default saved account is used.
   @IsOptional() @IsString()
-  bankName?: string
+  accountId?: string
 
-  @IsOptional() @IsString()
-  transactionPin?: string
+  // Required: the user's 4-digit transaction PIN.
+  @IsString()
+  @Matches(/^\d{4}$/, { message: 'Enter your 4-digit transaction PIN' })
+  transactionPin: string
 }
 
 // ── Payment Service ───────────────────────────────────────────
@@ -123,7 +126,24 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly walletService: WalletService,
     private readonly notificationsService: NotificationsService,
+    private readonly bankAccounts: BankAccountsService,
   ) {}
+
+  // ── Transaction PIN check ─────────────────────────────────
+  private async assertTransactionPin(userId: string, pin: string) {
+    const user = await this.prisma.user.findUnique({
+      where:  { id: userId },
+      select: { transactionPinHash: true },
+    })
+    if (!user?.transactionPinHash)
+      throw new BadRequestException('Set your transaction PIN before withdrawing')
+
+    const ok = await bcrypt.compare(pin || '', user.transactionPinHash)
+    if (!ok) {
+      this.logger.warn(`Wrong transaction PIN on withdrawal attempt (user ${userId})`)
+      throw new ForbiddenException('Incorrect transaction PIN')
+    }
+  }
 
   // ── Live platform fee lookup ──────────────────────────────
   private async getPlatformFeePercent(): Promise<number> {
@@ -389,10 +409,16 @@ export class PaymentsService {
     })
   }
 
-  // ── WITHDRAWAL: wallet → bank account ────────────────────
+  // ── WITHDRAWAL: wallet → SAVED bank account ──────────────
+  // 1. Transaction PIN must be correct.
+  // 2. Money can only go to a bank account the user saved (name-matched
+  //    to their verified identity, past its security hold).
   // Platform fee (live from PlatformSetting) + Paystack transfer fee
-  // deducted from amount. User requests ₦X, receives ₦X minus fees.
+  // are deducted from the amount. User requests ₦X, receives ₦X minus fees.
   async initiateWithdrawal(userId: string, dto: WithdrawDto) {
+    // ── Security gate #1: PIN ──
+    await this.assertTransactionPin(userId, dto.transactionPin)
+
     const amountNaira = dto.amount
     const amountKobo  = BigInt(Math.round(amountNaira * 100))
 
@@ -400,6 +426,13 @@ export class PaymentsService {
       throw new BadRequestException(`Minimum withdrawal is ₦${MIN_WITHDRAWAL_NAIRA}`)
     if (amountNaira > MAX_WITHDRAWAL_NAIRA)
       throw new BadRequestException(`Maximum withdrawal is ₦${MAX_WITHDRAWAL_NAIRA.toLocaleString()} per transaction`)
+
+    // ── Security gate #2: saved account only (throws if none / still on hold) ──
+    const recipient = await this.bankAccounts.getWithdrawableRecipient(userId, dto.accountId)
+    const savedRow  = await this.prisma.bankAccount.findFirst({
+      where:  { userId, recipientCode: recipient.recipientCode },
+      select: { bankName: true, bankCode: true },
+    })
 
     const platformFeePercent = await this.getPlatformFeePercent()
     const fees            = calcWithdrawalFees(amountNaira, platformFeePercent)
@@ -428,24 +461,6 @@ export class PaymentsService {
     }
 
     const secretKey = this.configService.get('paystack.secretKey')
-
-    // Verify bank account first (before touching wallet)
-    try {
-      const res = await axios.get(
-        `https://api.paystack.co/bank/resolve?account_number=${dto.accountNumber}&bank_code=${dto.bankCode}`,
-        { headers: { Authorization: `Bearer ${secretKey}` } },
-      )
-      if (!res.data.status) throw new Error('Paystack returned status: false')
-    } catch (err) {
-      this.logger.error(
-        'Bank resolve failed during withdrawal',
-        err.response?.data || err.message,
-      )
-      throw new BadRequestException(
-        err.response?.data?.message || 'Could not verify bank account. Please check your details.',
-      )
-    }
-
     const reference = `WD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 
     // Deduct from wallet atomically
@@ -461,11 +476,13 @@ export class PaymentsService {
           userId, walletId: fresh.id, type: 'WITHDRAWAL', status: 'PENDING',
           amount: amountKobo, fee: totalFeesKobo,
           balanceBefore: fresh.balance, balanceAfter: fresh.balance - amountKobo,
-          reference, description: `Withdrawal to ${dto.accountName} (${dto.accountNumber})`,
+          reference, description: `Withdrawal to ${recipient.accountName} (••••${recipient.last4})`,
           metadata: {
-            accountNumber:   dto.accountNumber, bankCode: dto.bankCode,
-            accountName:     dto.accountName,   bankName: dto.bankName,
-            platformFee: fees.platformFee,
+            accountLast4:    recipient.last4,
+            bankCode:        savedRow?.bankCode,
+            bankName:        savedRow?.bankName,
+            accountName:     recipient.accountName,
+            platformFee:     fees.platformFee,
             platformFeePercent, paystackFee: fees.paystackFee,
             amountAfterFees: fees.amountAfterFees,
           },
@@ -473,30 +490,14 @@ export class PaymentsService {
       })
     })
 
-    // ── STEP 1: create transfer recipient ──────────────────────
-    // Nothing has been sent yet, so ANY failure here is safe to refund.
-    let recipientCode: string
-    try {
-      const recipientRes = await axios.post(
-        'https://api.paystack.co/transferrecipient',
-        { type: 'nuban', name: dto.accountName, account_number: dto.accountNumber, bank_code: dto.bankCode, currency: 'NGN' },
-        { headers: { Authorization: `Bearer ${secretKey}` } },
-      )
-      recipientCode = recipientRes.data.data.recipient_code
-    } catch (err) {
-      this.logger.error('Paystack recipient creation failed — refunding', err.response?.data || err.message)
-      await this.refundFailedWithdrawal(userId, amountKobo, reference, 'recipient_creation_failed')
-      throw new BadRequestException('Withdrawal failed. Your funds have been returned to your wallet.')
-    }
-
-    // ── STEP 2: send the transfer ──────────────────────────────
+    // ── Send the transfer to the saved Paystack recipient ──────
     // Only refund when Paystack CLEARLY rejected it (4xx). A timeout,
     // network error or 5xx means the money may have gone out, so we must
     // NOT refund; the webhook or reconciliation cron will settle it.
     try {
       const transferRes = await axios.post(
         'https://api.paystack.co/transfer',
-        { source: 'balance', amount: Number(amountAfterKobo), recipient: recipientCode, reason: 'PayPaddy withdrawal', reference },
+        { source: 'balance', amount: Number(amountAfterKobo), recipient: recipient.recipientCode, reason: 'PayPaddy withdrawal', reference },
         { headers: { Authorization: `Bearer ${secretKey}` }, timeout: 30000 },
       )
 
@@ -526,7 +527,7 @@ export class PaymentsService {
       )
     }
 
-    // ── STEP 3: post-processing ────────────────────────────────
+    // ── Post-processing ────────────────────────────────────────
     // Paystack accepted the transfer. Nothing below may EVER trigger a
     // refund, so each step is isolated and only logs on failure.
     try {
@@ -544,7 +545,7 @@ export class PaymentsService {
       data: { amount: fees.amountAfterFees, reference },
     }).catch((e) => this.logger.error('Withdrawal notification failed', e))
 
-    this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ${dto.accountNumber} (${reference}) [platform fee ${platformFeePercent}%]`)
+    this.logger.log(`Withdrawal: ₦${amountNaira} → ₦${fees.amountAfterFees} sent to ••••${recipient.last4} (${reference}) [platform fee ${platformFeePercent}%]`)
 
     return {
       success: true, reference,
@@ -752,9 +753,11 @@ export class PaymentsController {
     return this.paymentsService.verifyPayment(req.user.id, dto)
   }
 
+  // Throttled: slows down anyone trying to guess the 4-digit PIN.
   @Post('withdraw')
   @UseGuards(JwtAuthGuard) @ApiBearerAuth()
-  @ApiOperation({ summary: 'Withdraw wallet balance to bank account' })
+  @Throttle({ long: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Withdraw wallet balance to a saved bank account (PIN required)' })
   withdraw(@Req() req: any, @Body() dto: WithdrawDto) {
     return this.paymentsService.initiateWithdrawal(req.user.id, dto)
   }
@@ -796,7 +799,7 @@ export class PaymentsController {
 }
 
 @Module({
-  imports:     [WalletModule, NotificationsModule],
+  imports:     [WalletModule, NotificationsModule, BankAccountsModule],
   controllers: [PaymentsController],
   providers:   [PaymentsService],
   exports:     [PaymentsService],

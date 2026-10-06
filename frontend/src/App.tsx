@@ -30,6 +30,9 @@ import CustomerServiceDashboardPage from '@/pages/support/CustomerServiceDashboa
 import LandingPage     from '@/pages/LandingPage'
 import NotFoundPage    from '@/pages/NotFoundPage'
 import KycVerificationPage from '@/pages/Kyc/KycVerificationPage'
+import PrivacyPage from '@/pages/Privacy'
+import TermsPage   from '@/pages/Terms'
+
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
@@ -115,7 +118,7 @@ export default function App() {
   const isExemptFromMaintenance = user && ['ADMIN', 'SUPER_ADMIN'].includes(user.role)
   const showMaintenanceScreen = appReady && isMaintenanceMode && !isExemptFromMaintenance
 
-  return (
+    return (
     <>
       {!appReady && <CinematicLoader onComplete={() => setAppReady(true)} duration={3200} />}
       {appReady && (
@@ -146,7 +149,9 @@ export default function App() {
                   <Route path="/customer-service" element={<RequireAuth><RequireCustomerService><CustomerServiceDashboardPage /></RequireCustomerService></RequireAuth>} />
                   <Route path="/admin"           element={<RequireAuth><RequireAdmin><AdminPage /></RequireAdmin></RequireAuth>} />
                   <Route path="/super-admin"     element={<RequireAuth><RequireSuperAdmin><SuperAdminPage /></RequireSuperAdmin></RequireAuth>} />
-                  <Route path="*"               element={<NotFoundPage />} />
+                  <Route path="/privacy"         element={<PrivacyPage />} />
+                  <Route path="/terms"           element={<TermsPage />} />
+                  <Route path="*"                element={<NotFoundPage />} />
                 </Routes>
               </AnimatePresence>
             </PageTransition>

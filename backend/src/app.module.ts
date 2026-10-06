@@ -22,11 +22,12 @@ import appConfig from './config/app.config';
 import { validate } from './config/env.validation';
 import { KycModule } from './kyc/kyc.module';
 import { GraceModule } from './grace/grace.module';
+import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 
 @Module({
   imports: [
     KycModule,
-GraceModule,
+    GraceModule,
 
     ConfigModule.forRoot({ isGlobal: true, load: [appConfig], validate, expandVariables: true }),
 
@@ -54,6 +55,7 @@ GraceModule,
     SettingsModule,
     SupportModule,
     DisputesModule,
+    BankAccountsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

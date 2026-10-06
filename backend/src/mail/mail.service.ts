@@ -230,4 +230,33 @@ export class MailService {
 
     return this.send(to, `Your ${this.appName} PIN change code`, html);
   }
+
+  // Security alert when a bank account is added, removed, or set as default.
+  async sendBankAccountAlert(
+    to: string,
+    firstName: string,
+    action: 'added' | 'removed' | 'default',
+    bankName: string,
+    last4: string,
+  ): Promise<boolean> {
+    const what =
+      action === 'added'   ? `A new bank account (${bankName} ••••${last4}) was added to your ${this.appName} account.` :
+      action === 'removed' ? `The bank account ${bankName} ••••${last4} was removed from your ${this.appName} account.` :
+                             `${bankName} ••••${last4} was set as your default withdrawal account.`;
+
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">Bank account update</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${firstName || 'there'},<br><br>
+        ${what}
+        ${action === 'added' ? '<br><br>For your security, new accounts can receive withdrawals after a short waiting period.' : ''}
+      </p>
+
+      <p style="color: #b91c1c; font-size: 13px; line-height: 1.6; background: #FEF2F2; padding: 12px 14px; border-radius: 8px;">
+        Wasn't you? Change your password right away and contact ${this.appName} support.
+      </p>
+    `);
+
+    return this.send(to, `${this.appName}: bank account ${action === 'default' ? 'default changed' : action}`, html);
+  }
 }

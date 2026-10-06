@@ -6,6 +6,7 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   html {
+    -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -13,11 +14,11 @@
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: #F8F6F1;
     color: #111009;
     line-height: 1.6;
-    letter-spacing: -0.01em;
+    letter-spacing: normal;
     overflow-x: hidden;
   }
 
@@ -60,4 +61,9 @@
   .badge-danger  { @apply text-red-600   bg-red-50    border border-red-100; }
   .badge-info    { @apply text-blue-600  bg-blue-50   border border-blue-100; }
   .badge-neutral { @apply text-dim       bg-sand      border border-stone; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

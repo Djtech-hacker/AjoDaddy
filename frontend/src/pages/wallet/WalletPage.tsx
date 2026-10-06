@@ -9,6 +9,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button, Skeleton, Modal, Input, Select } from '@/components/ui'
 import { useWallet, useWalletTransactions, useInitiatePayment } from '@/hooks/useApi'
 import { paymentsApi, authApi, kycApi, walletApi, supportApi } from '@/api/services'
+import api from '@/lib/api'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types'
@@ -16,14 +17,6 @@ import dayjs from 'dayjs'
 
 const fundSchema = z.object({ amount: z.coerce.number().min(100, 'Minimum ₦100'), provider: z.enum(['paystack']) })
 type FundData = z.infer<typeof fundSchema>
-
-const withdrawSchema = z.object({
-  amount:        z.coerce.number().min(500, 'Minimum ₦500'),
-  accountNumber: z.string().length(10, 'Must be exactly 10 digits'),
-  bankCode:      z.string().min(1, 'Please select a bank'),
-  accountName:   z.string().min(1, 'Account name is required'),
-})
-type WithdrawData = z.infer<typeof withdrawSchema>
 
 const setPinSchema = z.object({
   pin:        z.string().length(4, 'PIN must be 4 digits').regex(/^\d{4}$/, 'Digits only'),
@@ -71,6 +64,7 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
   const isCredit = TX_CREDIT.has(tx.type)
   const meta = (tx as any).metadata || {}
   const maskAcc = (a: string) => a ? a.slice(0,3) + '****' + a.slice(-3) : '—'
+  const accountDisplay = meta.accountLast4 ? `••••${meta.accountLast4}` : meta.accountNumber ? maskAcc(meta.accountNumber) : '—'
   const feeVal = tx.fee ? Number(tx.fee) : 0
   const rows = [
     { label: 'Transaction ID', val: tx.id },
@@ -81,7 +75,7 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
     { label: 'Date & time',    val: dayjs(tx.createdAt).format('MMM D, YYYY h:mm A') },
     ...(tx.type === 'WITHDRAWAL' ? [
       { label: 'Bank',           val: meta.bankName || '—' },
-      { label: 'Account number', val: meta.accountNumber ? maskAcc(meta.accountNumber) : '—' },
+      { label: 'Account number', val: accountDisplay },
       { label: 'Recipient',      val: meta.accountName || '—' },
       { label: 'Fee',            val: feeVal ? `₦${feeVal.toLocaleString()}` : '₦0' },
     ] : []),
@@ -272,50 +266,53 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
   )
 }
 
-// ── Withdraw modal ─────────────────────────────────────────────
+// ── Withdraw modal (saved bank accounts + transaction PIN) ─────
+interface SavedAccount {
+  id: string; bankName: string; accountName: string; last4: string
+  isDefault: boolean; usableAfter: string
+}
+const hoursLeft = (iso: string) => Math.ceil((new Date(iso).getTime() - Date.now()) / 3600_000)
+
 function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: () => void }) {
   const { showToast } = useUIStore()
-  const [banks, setBanks]               = useState<{ name: string; code: string }[]>([])
-  const [verifying, setVerifying]       = useState(false)
-  const [verifiedName, setVerifiedName] = useState('')
-  const [fees, setFees]                 = useState<any>(null)
-  const [submitting, setSubmitting]     = useState(false)
-  const [step, setStep]                 = useState<'form' | 'confirm'>('form')
-  const { register, handleSubmit, watch, setValue, formState: { errors }, reset } = useForm<WithdrawData>({ resolver: zodResolver(withdrawSchema) })
-  const accountNumber = watch('accountNumber')
-  const bankCode      = watch('bankCode')
-  const amount        = watch('amount')
+  const navigate = useNavigate()
+  const { user } = useAuthStore()
 
+  const [accounts, setAccounts]       = useState<SavedAccount[]>([])
+  const [loadingAcc, setLoadingAcc]   = useState(false)
+  const [accountId, setAccountId]     = useState('')
+  const [amount, setAmount]           = useState('')
+  const [amountError, setAmountError] = useState('')
+  const [pin, setPin]                 = useState('')
+  const [pinError, setPinError]       = useState('')
+  const [fees, setFees]               = useState<any>(null)
+  const [submitting, setSubmitting]   = useState(false)
+  const [step, setStep]               = useState<'form' | 'confirm'>('form')
+  const amountNum = Number(amount)
+
+  // Load the user's saved bank accounts each time the modal opens.
   useEffect(() => {
     if (!open) return
-    paymentsApi.getBanks()
+    setLoadingAcc(true)
+    api.get('/bank-accounts')
       .then(res => {
-        const data = (res as any).data
-        const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
-        setBanks(list.map((b: any) => ({ name: b.name, code: String(b.code) })))
+        const body: any = res.data
+        const list: SavedAccount[] = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : []
+        setAccounts(list)
+        const ready = list.find(a => a.isDefault && hoursLeft(a.usableAfter) <= 0) ?? list.find(a => hoursLeft(a.usableAfter) <= 0)
+        setAccountId(ready?.id ?? list[0]?.id ?? '')
       })
-      .catch(() => showToast('Could not load banks', 'error'))
+      .catch(() => showToast('Could not load your bank accounts', 'error'))
+      .finally(() => setLoadingAcc(false))
   }, [open])
-
-  useEffect(() => {
-    if (accountNumber?.length !== 10 || !bankCode) { setVerifiedName(''); return }
-    setVerifying(true); setVerifiedName('')
-    paymentsApi.verifyAccount(accountNumber, bankCode)
-      .then(res => {
-        const name = (res as any).data?.accountName ?? (res as any).data?.data?.accountName ?? ''
-        if (name) { setVerifiedName(name); setValue('accountName', name) }
-      })
-      .catch(() => {})
-      .finally(() => setVerifying(false))
-  }, [accountNumber, bankCode])
 
   // Debounced fee lookup; token discards stale responses.
   const feesTokenRef = useRef(0)
   useEffect(() => {
-    if (!amount || amount < 500) { setFees(null); return }
+    if (!amountNum || amountNum < 500) { setFees(null); return }
     const token = ++feesTokenRef.current
     const handle = setTimeout(() => {
-      paymentsApi.getWithdrawalFees(amount)
+      paymentsApi.getWithdrawalFees(amountNum)
         .then(res => {
           if (feesTokenRef.current !== token) return
           const d = (res as any).data
@@ -324,49 +321,144 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
         .catch(() => { if (feesTokenRef.current === token) setFees(null) })
     }, 350)
     return () => clearTimeout(handle)
-  }, [amount])
+  }, [amountNum])
 
-  const handleClose = () => { reset(); setVerifiedName(''); setFees(null); setStep('form'); onClose() }
-  const onSubmit = async (data: WithdrawData) => {
-    if (step === 'form') { setStep('confirm'); return }
-    setSubmitting(true)
+  const selected       = accounts.find(a => a.id === accountId)
+  const selectedLocked = !!selected && hoursLeft(selected.usableAfter) > 0
+  const hasPin         = !!user?.hasTransactionPin
+
+  const handleClose = () => {
+    setAmount(''); setAmountError(''); setPin(''); setPinError(''); setFees(null); setStep('form'); onClose()
+  }
+
+  const goConfirm = () => {
+    if (!amountNum || amountNum < 500) { setAmountError('Minimum ₦500'); return }
+    if (!selected) return
+    if (selectedLocked) return
+    setAmountError(''); setStep('confirm')
+  }
+
+  const submit = async () => {
+    if (!/^\d{4}$/.test(pin)) { setPinError('Enter your 4-digit PIN'); return }
+    setPinError(''); setSubmitting(true)
     try {
-      const bankName = banks.find(b => b.code === data.bankCode)?.name
-      await paymentsApi.withdraw({ ...data, bankName })
+      // 60s timeout: the backend can take 15–20s while it talks to Paystack.
+      await api.post('/payments/withdraw', { amount: amountNum, accountId, transactionPin: pin }, { timeout: 60000 })
       showToast('Withdrawal initiated — funds on the way', 'success')
       handleClose(); onSuccess()
     } catch (e: any) {
-      showToast(e?.response?.data?.message || 'Withdrawal failed', 'error')
-      setStep('form')
+      if (e?.code === 'ECONNABORTED') {
+        // The request may still have gone through. Don't claim failure.
+        showToast('This is taking longer than usual. Check your transaction history before trying again.', 'error')
+        handleClose(); onSuccess()
+        return
+      }
+      const msg = e?.response?.data?.message || 'Withdrawal failed'
+      showToast(Array.isArray(msg) ? msg[0] : msg, 'error')
+      setPin('')
+      if (e?.response?.status === 403) setPinError('Incorrect PIN')
+      else setStep('form')
     } finally { setSubmitting(false) }
   }
+
+  const noAccounts = !loadingAcc && accounts.length === 0
+
   return (
     <Modal open={open} onClose={handleClose} title={step === 'confirm' ? 'Confirm withdrawal' : 'Withdraw funds'} size="sm"
-      footer={<><Button variant="secondary" onClick={step === 'confirm' ? () => setStep('form') : handleClose}>{step === 'confirm' ? 'Back' : 'Cancel'}</Button><Button onClick={handleSubmit(onSubmit)} loading={submitting} disabled={verifying}>{step === 'confirm' ? 'Confirm withdrawal' : 'Continue'}</Button></>}>
+      footer={
+        <>
+          <Button variant="secondary" onClick={step === 'confirm' ? () => { setStep('form'); setPin(''); setPinError('') } : handleClose}>
+            {step === 'confirm' ? 'Back' : 'Cancel'}
+          </Button>
+          {step === 'form'
+            ? <Button onClick={goConfirm} disabled={noAccounts || loadingAcc || !selected || selectedLocked}>Continue</Button>
+            : <Button onClick={submit} loading={submitting} disabled={!hasPin || pin.length !== 4}>Confirm withdrawal</Button>}
+        </>
+      }>
       {step === 'form' ? (
         <div className="space-y-4">
-          <Input label="Amount (₦)" type="number" placeholder="5000" error={errors.amount?.message} {...register('amount')}/>
-          {fees && <div className="bg-gray-50 rounded-xl p-3.5 space-y-1.5">{fees.breakdown?.map((b: any) => <div key={b.label} className="flex justify-between text-[12px]"><span className="text-gray-400">{b.label}</span><span className={`font-medium tabular-nums ${b.amount < 0 ? 'text-red-500' : 'text-gray-900'}`}>{b.amount < 0 ? '-' : ''}₦{Math.abs(b.amount).toLocaleString()}</span></div>)}</div>}
-          <Select label="Bank" placeholder="Select a bank…" options={banks.map(b => ({ value: String(b.code), label: b.name }))} error={errors.bankCode?.message} {...register('bankCode')}/>
+          <Input label="Amount (₦)" type="number" placeholder="5000" value={amount}
+            onChange={e => { setAmount(e.target.value); setAmountError('') }} error={amountError}/>
+
+          {fees && (
+            <div className="bg-gray-50 rounded-xl p-3.5 space-y-1.5">
+              {fees.breakdown?.map((b: any) => (
+                <div key={b.label} className="flex justify-between text-[12px]">
+                  <span className="text-gray-400">{b.label}</span>
+                  <span className={`font-medium tabular-nums ${b.amount < 0 ? 'text-red-500' : 'text-gray-900'}`}>
+                    {b.amount < 0 ? '-' : ''}₦{Math.abs(b.amount).toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div>
-            <Input label="Account number" type="text" maxLength={10} placeholder="0123456789" error={errors.accountNumber?.message} {...register('accountNumber')}/>
-            {verifying && <p className="text-[12px] text-gray-400 mt-1 flex items-center gap-1.5"><span className="w-3 h-3 rounded-full border border-gray-300 border-t-transparent animate-spin inline-block"/>Verifying…</p>}
-            {verifiedName && !verifying && <p className="text-[12px] text-emerald-600 font-semibold mt-1">✓ {verifiedName}</p>}
+            <p className="text-[12px] font-semibold text-gray-700 mb-2">Withdraw to</p>
+            {loadingAcc ? (
+              <Skeleton className="h-14 w-full rounded-xl"/>
+            ) : noAccounts ? (
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+                <p className="text-[13px] font-semibold text-amber-800">No bank account saved yet</p>
+                <p className="text-[12px] text-amber-600 mt-1">For your security, you can only withdraw to a bank account you've added to your profile, in your own name.</p>
+                <button type="button" onClick={() => { handleClose(); navigate('/profile') }}
+                  className="mt-3 h-8 px-4 rounded-lg bg-amber-600 text-white text-[12px] font-semibold hover:bg-amber-700">
+                  Add bank account
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {accounts.map(a => {
+                  const hold = hoursLeft(a.usableAfter)
+                  const isSel = a.id === accountId
+                  return (
+                    <button key={a.id} type="button" onClick={() => setAccountId(a.id)}
+                      className={`w-full text-left rounded-xl border p-3 flex items-center gap-3 transition-colors ${isSel ? 'border-emerald-500 bg-emerald-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                      <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isSel ? 'border-emerald-500 bg-emerald-500' : 'border-gray-300'}`}/>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-semibold text-gray-900 truncate">{a.bankName} ••••{a.last4}</span>
+                        <span className="block text-[11px] text-gray-400 truncate">{a.accountName}</span>
+                      </span>
+                      {hold > 0 && <span className="text-[9px] font-bold uppercase text-amber-700 bg-amber-100 px-2 py-1 rounded-md whitespace-nowrap">Ready in {hold}h</span>}
+                      {a.isDefault && hold <= 0 && <span className="text-[9px] font-bold uppercase text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">Default</span>}
+                    </button>
+                  )
+                })}
+                {selectedLocked && (
+                  <p className="text-[11px] text-amber-700">This account was added recently and can receive withdrawals in about {hoursLeft(selected!.usableAfter)}h. Pick another account or try again later.</p>
+                )}
+              </div>
+            )}
           </div>
-          <Input label="Account name" placeholder="e.g. John Doe" error={errors.accountName?.message} {...register('accountName')}/>
         </div>
       ) : (
         <div className="space-y-4">
           <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
             {[
-              { label:'Account name',   val: verifiedName || watch('accountName') },
-              { label:'Account number', val: watch('accountNumber') },
-              { label:'Bank',           val: banks.find(b => b.code === watch('bankCode'))?.name || '—' },
-              { label:'Amount',         val:`₦${Number(watch('amount')).toLocaleString()}` },
-              { label:'You receive',    val: fees ? `₦${fees.youWillReceive?.toLocaleString()}` : '—' },
-              { label:'Fee',            val: fees?.fee ? `₦${Number(fees.fee).toLocaleString()}` : '₦0' },
-            ].map(r => <div key={r.label} className="flex justify-between text-[13px]"><span className="text-gray-400">{r.label}</span><span className="font-semibold text-gray-900">{r.val}</span></div>)}
+              { label: 'Account name', val: selected?.accountName || '—' },
+              { label: 'Bank',         val: selected ? `${selected.bankName} ••••${selected.last4}` : '—' },
+              { label: 'Amount',       val: `₦${amountNum.toLocaleString()}` },
+              { label: 'You receive',  val: fees ? `₦${fees.youWillReceive?.toLocaleString()}` : '—' },
+              { label: 'Fees',         val: fees?.totalFees ? `₦${Number(fees.totalFees).toLocaleString()}` : '₦0' },
+            ].map(r => (
+              <div key={r.label} className="flex justify-between text-[13px]">
+                <span className="text-gray-400">{r.label}</span>
+                <span className="font-semibold text-gray-900">{r.val}</span>
+              </div>
+            ))}
           </div>
+
+          {hasPin ? (
+            <Input label="Transaction PIN" type="password" maxLength={4} placeholder="••••" value={pin}
+              onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setPinError('') }} error={pinError}
+              onKeyDown={e => { if (e.key === 'Enter' && pin.length === 4) submit() }}/>
+          ) : (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+              <p className="text-[13px] font-semibold text-amber-800">Set your transaction PIN first</p>
+              <p className="text-[12px] text-amber-600 mt-1">You need a PIN to confirm withdrawals. Close this and tap "Set PIN" on the wallet page.</p>
+            </div>
+          )}
+
           <p className="text-[12px] text-gray-400">Funds typically arrive within 5 minutes. This cannot be undone.</p>
         </div>
       )}
@@ -556,7 +648,7 @@ export default function WalletPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={() => setFundOpen(true)}
                 icon={ico('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}/>
-              <OpCard title="Withdraw to Bank" sub="Settle money directly into your verified account" onClick={() => setWithdrawOpen(true)}
+              <OpCard title="Withdraw to Bank" sub="Send money to your saved bank account" onClick={() => setWithdrawOpen(true)}
                 icon={ico('M12 19l9 2-9-18-9 18 9-2zm0 0v-8')}/>
               <OpCard title="Circle Escrow Settle" sub="Check pending locks and releases" onClick={() => navigate('/groups')}
                 icon={ico('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}/>

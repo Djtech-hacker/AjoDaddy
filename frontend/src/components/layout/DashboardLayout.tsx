@@ -46,48 +46,74 @@ const ROLE_NAV = [
     icon: I(<path d="M8 1l2 4 4.5.5-3.25 3.25.75 4.5L8 11l-4 2.25.75-4.5L1.5 5.5 6 5z" {...S} strokeLinejoin="round"/>) },
 ]
 
-const navCls = ({ isActive }: { isActive: boolean }) =>
-  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-    isActive ? 'bg-emerald-50 text-brand font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`
+const linkCls = ({ isActive }: { isActive: boolean }) =>
+  `relative flex items-center gap-3 px-3 h-9 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
+    isActive ? 'bg-white/[0.07] text-white' : 'text-white/50 hover:text-white hover:bg-white/[0.04]'}`
+
+type NavItemData = { to: string; label: string; icon: React.ReactNode }
+
+function NavItem({ item, onClose }: { item: NavItemData; onClose?: () => void }) {
+  return (
+    <NavLink to={item.to} onClick={onClose} className={linkCls}>
+      {({ isActive }) => (
+        <>
+          {isActive && <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-lime" />}
+          <span className={`w-5 flex items-center justify-center flex-shrink-0 ${isActive ? 'text-lime' : ''}`}>{item.icon}</span>
+          {item.label}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
+const SECTION = 'px-3 pt-4 pb-2 text-[10px] font-semibold tracking-[0.14em] uppercase text-white/30'
 
 function Sidebar({ onClose, mobile }: { onClose?: () => void; mobile?: boolean }) {
   const { user } = useAuthStore()
   const logout   = useLogout()
-  const links = [...NAV, ...ROLE_NAV.filter(r => user?.role && r.roles.includes(user.role))]
+  const roleLinks = ROLE_NAV.filter(r => user?.role && r.roles.includes(user.role))
 
   return (
-    <aside className="flex-shrink-0 bg-white border-r border-black/[0.06] flex flex-col h-screen" style={{ width: 220 }}>
-      <div className="px-4 py-4 flex items-center justify-between">
-        {/* Dark chip keeps the logo legible on the light sidebar */}
-        <Link to="/" className="bg-void rounded-xl px-3 py-2 inline-flex">
-          <img src={LOGO_URL} alt="AjoDaddy" className="h-9 w-auto object-contain" />
+    <aside className="relative flex-shrink-0 bg-void border-r border-white/[0.06] flex flex-col h-screen overflow-hidden" style={{ width: 232 }}>
+      <div className="absolute -bottom-28 -left-28 w-[360px] h-[360px] pointer-events-none"
+        style={{ background: 'radial-gradient(closest-side, rgba(27,92,60,0.4), transparent)' }} />
+
+      <div className="relative px-5 pt-5 pb-3 flex items-center justify-between">
+        <Link to="/" className="inline-flex">
+          <img src={LOGO_URL} alt="AjoDaddy" className="h-14 w-auto object-contain" />
         </Link>
         {mobile && (
           <button onClick={onClose} aria-label="Close menu"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
           </button>
         )}
       </div>
 
-      <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-        {links.map(item => (
-          <NavLink key={item.to} to={item.to} onClick={onClose} className={navCls}>
-            <span className="w-5 flex items-center justify-center flex-shrink-0">{item.icon}</span>
-            {item.label}
-          </NavLink>
-        ))}
+      <nav className="relative flex-1 px-3 pb-2 overflow-y-auto">
+        <p className={SECTION}>Menu</p>
+        <div className="space-y-0.5">
+          {NAV.map(item => <NavItem key={item.to} item={item} onClose={onClose} />)}
+        </div>
+        {roleLinks.length > 0 && (
+          <>
+            <p className={SECTION}>Administration</p>
+            <div className="space-y-0.5">
+              {roleLinks.map(item => <NavItem key={item.to} item={item} onClose={onClose} />)}
+            </div>
+          </>
+        )}
       </nav>
 
-      <div className="p-3">
-        <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-warm">
+      <div className="relative px-3 pb-3 pt-3 border-t border-white/[0.06]">
+        <div className="flex items-center gap-3 px-2 py-1.5">
           <Avatar src={user?.avatarUrl} name={`${user?.firstName} ${user?.lastName}`} size="sm" />
           <div className="flex-1 min-w-0">
-            <p className="text-[12px] font-semibold text-gray-900 truncate">{user?.firstName} {user?.lastName}</p>
-            <p className="text-[10px] text-gray-400 font-mono truncate">@{user?.username}</p>
+            <p className="text-[12.5px] font-medium text-white truncate">{user?.firstName} {user?.lastName}</p>
+            <p className="text-[10.5px] text-white/40 font-mono truncate">@{user?.username}</p>
           </div>
           <button onClick={() => logout.mutate()} title="Log out"
-            className="w-7 h-7 rounded-lg hover:bg-black/[0.06] flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors">
+            className="w-7 h-7 rounded-md hover:bg-white/10 flex items-center justify-center text-white/45 hover:text-white transition-colors">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M5 7H11M11 7L8.5 4.5M11 7L8.5 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M8 2H3C2.45 2 2 2.45 2 3V11C2 11.55 2.45 12 3 12H8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
@@ -170,23 +196,23 @@ export function DashboardTopbar({ title, subtitle, onMenuClick, isMobile }: {
   }, [accessToken, queryClient])
 
   return (
-    <header className="h-16 bg-white border-b border-black/[0.06] flex items-center justify-between px-4 md:px-6 flex-shrink-0 sticky top-0 z-20">
+    <header className="h-16 bg-warm/90 backdrop-blur-md border-b border-black/[0.06] flex items-center justify-between px-4 md:px-6 flex-shrink-0 sticky top-0 z-20">
       <div className="flex items-center gap-3 min-w-0">
         {isMobile && (
           <button onClick={onMenuClick} aria-label="Open menu"
-            className="w-9 h-9 rounded-lg border border-black/[0.06] bg-warm flex items-center justify-center flex-shrink-0">
+            className="w-9 h-9 rounded-lg border border-black/[0.07] bg-white flex items-center justify-center flex-shrink-0">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4H14M2 8H14M2 12H10" stroke="#6B6760" strokeWidth="1.5" strokeLinecap="round"/></svg>
           </button>
         )}
         <div className="min-w-0">
-          <h1 className="text-[16px] font-bold text-ink tracking-tight truncate">{title}</h1>
+          <h1 className="text-[16px] font-semibold text-ink tracking-tight truncate">{title}</h1>
           {subtitle && <p className="text-[11px] text-mist mt-0.5 truncate">{subtitle}</p>}
         </div>
       </div>
       <div className="flex items-center gap-3 flex-shrink-0">
         <div className="relative">
           <button onClick={() => setNotifOpen(v => !v)}
-            className="w-9 h-9 rounded-lg border border-black/[0.06] bg-warm flex items-center justify-center hover:bg-sand transition-colors relative">
+            className="w-9 h-9 rounded-lg border border-black/[0.07] bg-white flex items-center justify-center hover:bg-sand transition-colors relative">
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
               <path d="M7.5 1.5C5.01 1.5 3 3.51 3 6V9L1.5 11H13.5L12 9V6C12 3.51 9.99 1.5 7.5 1.5Z" stroke="#6B6760" strokeWidth="1.3"/>
               <path d="M6 12C6 12.83 6.67 13.5 7.5 13.5C8.33 13.5 9 12.83 9 12" stroke="#6B6760" strokeWidth="1.3"/>
@@ -228,7 +254,7 @@ export default function DashboardLayout({ children, title, subtitle }: {
         {isMobile && mobileOpen && (
           <motion.div className="fixed inset-0 z-40 flex" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
-            <motion.div className="relative z-50 h-full" initial={{ x: -220 }} animate={{ x: 0 }} exit={{ x: -220 }}
+            <motion.div className="relative z-50 h-full" initial={{ x: -232 }} animate={{ x: 0 }} exit={{ x: -232 }}
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>
               <Sidebar mobile onClose={() => setMobileOpen(false)} />
             </motion.div>

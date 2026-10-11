@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import RibbonPanel from '@/components/ui/RibbonPanel'
+import { CARD, LABEL, FIELD, BTN_LIME, BTN_ON_DARK, BTN_PRIMARY, Pill, rise } from '@/lib/ui'
 import { Button, Skeleton, Modal, Input, Select } from '@/components/ui'
 import { useWallet, useWalletTransactions, useInitiatePayment } from '@/hooks/useApi'
 import { paymentsApi, authApi, kycApi, walletApi, supportApi } from '@/api/services'
@@ -38,6 +40,10 @@ const TX_LABEL: Record<string, string> = {
   CONTRIBUTION: 'Group contribution', WITHDRAWAL: 'Withdrawal to bank', PENALTY: 'Penalty',
 }
 
+function naira(n: number) {
+  return n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 function describe(tx: Transaction) {
   const meta = (tx as any).metadata || {}
   if (tx.type === 'WITHDRAWAL' && meta.bankName) return `Withdrawal to ${meta.bankName}`
@@ -46,8 +52,8 @@ function describe(tx: Transaction) {
 }
 
 function StatusPill({ status }: { status: string }) {
-  const cls = status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : status === 'FAILED' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
-  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cls}`}>{status === 'COMPLETED' ? 'Successful' : status.charAt(0) + status.slice(1).toLowerCase()}</span>
+  const tone = status === 'COMPLETED' ? 'success' : status === 'FAILED' ? 'danger' : 'warn'
+  return <Pill tone={tone}>{status === 'COMPLETED' ? 'Successful' : status.charAt(0) + status.slice(1).toLowerCase()}</Pill>
 }
 
 // ── Receipt modal ──────────────────────────────────────────────
@@ -107,31 +113,30 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
       }>
       <div className="space-y-3">
         <div className="text-center py-4">
-          <div className={`w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-[20px] mb-3 ${tx.status === 'COMPLETED' ? 'bg-emerald-50' : tx.status === 'FAILED' ? 'bg-red-50' : 'bg-amber-50'}`}>
-            {tx.status === 'COMPLETED' ? '✓' : tx.status === 'FAILED' ? '✕' : '⏳'}
-          </div>
-          <p className="text-[24px] font-semibold text-gray-900 tabular-nums">{isCredit ? '+' : '-'}₦{tx.amount.toLocaleString()}</p>
+          <p className={LABEL}>{isCredit ? 'Money in' : 'Money out'}</p>
+          <p className="text-[30px] font-semibold text-ink tabular-nums tracking-tight mt-1">{isCredit ? '+' : '-'}₦{tx.amount.toLocaleString()}</p>
+          <div className="mt-2.5"><StatusPill status={tx.status} /></div>
         </div>
-        <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
+        <div className="bg-warm rounded-lg p-4 space-y-2.5">
           {rows.map(r => (
             <div key={r.label} className="flex justify-between gap-4">
-              <span className="text-[12px] text-gray-400 flex-shrink-0">{r.label}</span>
-              <span className="text-[12px] font-medium text-gray-900 text-right break-all">{r.val}</span>
+              <span className="text-[12px] text-mist flex-shrink-0">{r.label}</span>
+              <span className="text-[12px] font-medium text-ink text-right break-all">{r.val}</span>
             </div>
           ))}
         </div>
         {sent ? (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-center">
-            <p className="text-[13px] font-semibold text-emerald-700">✓ Report sent</p>
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4 text-center">
+            <p className="text-[13px] font-semibold text-emerald-700">Report sent</p>
             <p className="text-[11px] text-emerald-600 mt-1">Customer care has this transaction's details and will follow up by email.</p>
           </div>
         ) : reporting ? (
           <div className="space-y-2">
-            <label className="text-[12px] font-semibold text-gray-700">What happened?</label>
+            <label className="text-[12px] font-semibold text-dim">What happened?</label>
             <textarea autoFocus rows={4} value={issueText} onChange={e => setIssueText(e.target.value)}
               placeholder="e.g. Money was deducted but my wallet wasn't credited…"
-              className="w-full rounded-xl border border-gray-200 p-3 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 resize-none"/>
-            <p className="text-[11px] text-gray-400">The transaction details above are sent along with your message automatically.</p>
+              className={`${FIELD} resize-none`}/>
+            <p className="text-[11px] text-mist">The transaction details above are sent along with your message automatically.</p>
           </div>
         ) : null}
       </div>
@@ -175,7 +180,7 @@ function SetPinModal({ open, onClose, onSuccess }: { open: boolean; onClose: () 
     <Modal open={open} onClose={onClose} title="Set transaction PIN" size="sm"
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={handleSubmit(onSubmit)} loading={loading}>Set PIN</Button></>}>
       <div className="space-y-4">
-        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+        <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
           <p className="text-[13px] font-semibold text-amber-800">Required for all payments</p>
           <p className="text-[12px] text-amber-600 mt-1">You'll enter this 4-digit PIN every time you make a contribution or withdrawal.</p>
         </div>
@@ -238,9 +243,9 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
       <div className="space-y-4">
         {step === 'password' ? (
           <>
-            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
-              <p className="text-[13px] font-semibold text-gray-900">Security check required</p>
-              <p className="text-[12px] text-gray-500 mt-1">Enter your account password. We'll then email you a one-time code to confirm the change.</p>
+            <div className="bg-warm border border-black/[0.06] rounded-lg p-4">
+              <p className="text-[13px] font-semibold text-ink">Security check required</p>
+              <p className="text-[12px] text-dim mt-1">Enter your account password. We'll then email you a one-time code to confirm the change.</p>
             </div>
             <Input label="Password" type="password" placeholder="••••••••" value={password}
               onChange={e => setPassword(e.target.value)} error={passwordError}
@@ -248,10 +253,10 @@ function ChangePinModal({ open, onClose }: { open: boolean; onClose: () => void 
           </>
         ) : (
           <>
-            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
-              <p className="text-[13px] font-semibold text-gray-900">Enter the code we emailed you</p>
-              <p className="text-[12px] text-gray-500 mt-1">Sent to <strong>{user?.email}</strong>. Didn't get it?{' '}
-                <button type="button" onClick={resendOtp} disabled={resending} className="font-semibold text-gray-900 hover:text-gray-600 disabled:opacity-50">
+            <div className="bg-warm border border-black/[0.06] rounded-lg p-4">
+              <p className="text-[13px] font-semibold text-ink">Enter the code we emailed you</p>
+              <p className="text-[12px] text-dim mt-1">Sent to <strong>{user?.email}</strong>. Didn't get it?{' '}
+                <button type="button" onClick={resendOtp} disabled={resending} className="font-semibold text-ink hover:text-brand disabled:opacity-50">
                   {resending ? 'Resending…' : 'Resend'}
                 </button>
               </p>
@@ -381,11 +386,11 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
             onChange={e => { setAmount(e.target.value); setAmountError('') }} error={amountError}/>
 
           {fees && (
-            <div className="bg-gray-50 rounded-xl p-3.5 space-y-1.5">
+            <div className="bg-warm rounded-lg p-3.5 space-y-1.5">
               {fees.breakdown?.map((b: any) => (
                 <div key={b.label} className="flex justify-between text-[12px]">
-                  <span className="text-gray-400">{b.label}</span>
-                  <span className={`font-medium tabular-nums ${b.amount < 0 ? 'text-red-500' : 'text-gray-900'}`}>
+                  <span className="text-mist">{b.label}</span>
+                  <span className={`font-medium tabular-nums ${b.amount < 0 ? 'text-red-500' : 'text-ink'}`}>
                     {b.amount < 0 ? '-' : ''}₦{Math.abs(b.amount).toLocaleString()}
                   </span>
                 </div>
@@ -394,11 +399,11 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
           )}
 
           <div>
-            <p className="text-[12px] font-semibold text-gray-700 mb-2">Withdraw to</p>
+            <p className="text-[12px] font-semibold text-dim mb-2">Withdraw to</p>
             {loadingAcc ? (
-              <Skeleton className="h-14 w-full rounded-xl"/>
+              <Skeleton className="h-14 w-full rounded-lg"/>
             ) : noAccounts ? (
-              <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+              <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
                 <p className="text-[13px] font-semibold text-amber-800">No bank account saved yet</p>
                 <p className="text-[12px] text-amber-600 mt-1">For your security, you can only withdraw to a bank account you've added to your profile, in your own name.</p>
                 <button type="button" onClick={() => { handleClose(); navigate('/profile') }}
@@ -413,11 +418,11 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
                   const isSel = a.id === accountId
                   return (
                     <button key={a.id} type="button" onClick={() => setAccountId(a.id)}
-                      className={`w-full text-left rounded-xl border p-3 flex items-center gap-3 transition-colors ${isSel ? 'border-emerald-500 bg-emerald-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                      <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isSel ? 'border-emerald-500 bg-emerald-500' : 'border-gray-300'}`}/>
+                      className={`w-full text-left rounded-lg border p-3 flex items-center gap-3 transition-colors ${isSel ? 'border-brand bg-brand-pale/40' : 'border-black/[0.09] hover:bg-warm'}`}>
+                      <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isSel ? 'border-brand bg-brand' : 'border-stone'}`}/>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[13px] font-semibold text-gray-900 truncate">{a.bankName} ••••{a.last4}</span>
-                        <span className="block text-[11px] text-gray-400 truncate">{a.accountName}</span>
+                        <span className="block text-[13px] font-semibold text-ink truncate">{a.bankName} ••••{a.last4}</span>
+                        <span className="block text-[11px] text-mist truncate">{a.accountName}</span>
                       </span>
                       {hold > 0 && <span className="text-[9px] font-bold uppercase text-amber-700 bg-amber-100 px-2 py-1 rounded-md whitespace-nowrap">Ready in {hold}h</span>}
                       {a.isDefault && hold <= 0 && <span className="text-[9px] font-bold uppercase text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">Default</span>}
@@ -433,7 +438,7 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
+          <div className="bg-warm rounded-lg p-4 space-y-2.5">
             {[
               { label: 'Account name', val: selected?.accountName || '—' },
               { label: 'Bank',         val: selected ? `${selected.bankName} ••••${selected.last4}` : '—' },
@@ -442,8 +447,8 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
               { label: 'Fees',         val: fees?.totalFees ? `₦${Number(fees.totalFees).toLocaleString()}` : '₦0' },
             ].map(r => (
               <div key={r.label} className="flex justify-between text-[13px]">
-                <span className="text-gray-400">{r.label}</span>
-                <span className="font-semibold text-gray-900">{r.val}</span>
+                <span className="text-mist">{r.label}</span>
+                <span className="font-semibold text-ink">{r.val}</span>
               </div>
             ))}
           </div>
@@ -453,13 +458,13 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
               onChange={e => { setPin(e.target.value.replace(/\D/g, '')); setPinError('') }} error={pinError}
               onKeyDown={e => { if (e.key === 'Enter' && pin.length === 4) submit() }}/>
           ) : (
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
+            <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
               <p className="text-[13px] font-semibold text-amber-800">Set your transaction PIN first</p>
               <p className="text-[12px] text-amber-600 mt-1">You need a PIN to confirm withdrawals. Close this and tap "Set PIN" on the wallet page.</p>
             </div>
           )}
 
-          <p className="text-[12px] text-gray-400">Funds typically arrive within 5 minutes. This cannot be undone.</p>
+          <p className="text-[12px] text-mist">Funds typically arrive within 5 minutes. This cannot be undone.</p>
         </div>
       )}
     </Modal>
@@ -485,7 +490,7 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
   const outstanding = (debts || []).filter(d => d.status === 'OUTSTANDING')
   const handleSettle = async (debtId: string) => {
     setSettlingId(debtId)
-    try { await kycApi.settleDebt(debtId); showToast('Debt settled ✅', 'success'); loadDebts(); onSettled() }
+    try { await kycApi.settleDebt(debtId); showToast('Debt settled', 'success'); loadDebts(); onSettled() }
     catch (err: any) { showToast(err?.response?.data?.message || 'Could not settle this debt', 'error') }
     finally { setSettlingId(null) }
   }
@@ -493,9 +498,9 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
   const totalOwed = outstanding.reduce((s, d) => s + Number(d.totalOwed), 0)
 
   return (
-    <motion.div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+    <motion.div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
       <div className="px-4 sm:px-5 py-4">
-        <p className="text-[13px] sm:text-[14px] font-bold text-red-800">You have an outstanding debt — ₦{totalOwed.toLocaleString()}</p>
+        <p className="text-[13px] sm:text-[14px] font-semibold text-red-800">You have an outstanding debt of ₦{totalOwed.toLocaleString()}</p>
         <p className="text-[12px] text-red-600 mt-0.5">This must be settled before you can join or create another group.</p>
       </div>
       <div className="border-t border-red-100 divide-y divide-red-100">
@@ -506,7 +511,7 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
               <p className="text-[11px] text-red-500 mt-0.5">₦{Number(d.amount).toLocaleString()} owed + ₦{Number(d.lateFee).toLocaleString()} late fee{d.createdAt ? ` · ${dayjs(d.createdAt).format('MMM D, YYYY')}` : ''}</p>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
-              <p className="text-[14px] font-bold text-red-800 tabular-nums">₦{Number(d.totalOwed).toLocaleString()}</p>
+              <p className="text-[14px] font-semibold text-red-800 tabular-nums">₦{Number(d.totalOwed).toLocaleString()}</p>
               <button onClick={() => handleSettle(d.id)} disabled={settlingId === d.id}
                 className="h-8 px-3.5 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 disabled:opacity-60 transition-colors">
                 {settlingId === d.id ? 'Paying…' : 'Pay from wallet'}
@@ -522,10 +527,10 @@ function DebtsSection({ onSettled }: { onSettled: () => void }) {
 // ── Quick operation card ───────────────────────────────────────
 function OpCard({ title, sub, icon, onClick }: { title: string; sub: string; icon: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="text-left bg-warm hover:bg-emerald-50 rounded-xl p-4 transition-colors">
-      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-brand mb-3">{icon}</div>
-      <p className="text-[13px] font-bold text-gray-900">{title}</p>
-      <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{sub}</p>
+    <button onClick={onClick} className={`${CARD} text-left p-4 hover:border-brand/40 hover:bg-brand-pale/20 transition-colors`}>
+      <div className="w-8 h-8 rounded-lg bg-warm flex items-center justify-center text-brand mb-3">{icon}</div>
+      <p className="text-[13px] font-semibold text-ink">{title}</p>
+      <p className="text-[11.5px] text-mist mt-0.5 leading-snug">{sub}</p>
     </button>
   )
 }
@@ -585,150 +590,173 @@ export default function WalletPage() {
   const locked  = w?.lockedBalance ?? 0
 
   const TX_TYPE_LABELS: Record<string, string> = {
-    '': 'All Transactions', WALLET_FUNDING: 'Funding', CONTRIBUTION: 'Contributions', PAYOUT: 'Payouts', WITHDRAWAL: 'Withdrawals',
+    '': 'All transactions', WALLET_FUNDING: 'Funding', CONTRIBUTION: 'Contributions', PAYOUT: 'Payouts', WITHDRAWAL: 'Withdrawals',
   }
 
   return (
     <DashboardLayout title="Wallet" subtitle="Manage your funds securely">
-      <div className="bg-[#F8F9FB] min-h-screen">
-        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8 space-y-4">
+      <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
 
-          <DebtsSection onSettled={() => refetchWallet()}/>
+        <DebtsSection onSettled={() => refetchWallet()}/>
 
-          <AnimatePresence>
-            {verifying && (
-              <motion.div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center gap-3 shadow-sm"
-                initial={{ opacity:0, y:-8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-8 }}>
-                <div className="w-5 h-5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin flex-shrink-0"/>
-                <p className="text-[13px] font-medium text-gray-900">Verifying your payment…</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {!hasPin && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <p className="text-[13px] font-semibold text-amber-800">Set your transaction PIN</p>
-                <p className="text-[12px] text-amber-600 mt-0.5">Required for contributions and withdrawals.</p>
-              </div>
-              <button onClick={() => setSetPinOpen(true)} className="h-8 px-4 rounded-lg bg-amber-600 text-white text-[12px] font-semibold hover:bg-amber-700">Set PIN</button>
-            </div>
+        <AnimatePresence>
+          {verifying && (
+            <motion.div className={`${CARD} p-4 flex items-center gap-3`}
+              initial={{ opacity:0, y:-8 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-8 }}>
+              <div className="w-5 h-5 rounded-full border-2 border-brand border-t-transparent animate-spin flex-shrink-0"/>
+              <p className="text-[13px] font-medium text-ink">Verifying your payment…</p>
+            </motion.div>
           )}
+        </AnimatePresence>
 
-          {/* Balance card */}
-          {walletLoading ? <Skeleton className="h-40 w-full rounded-2xl"/> : (
-            <div className="rounded-2xl bg-brand p-5 sm:p-7 flex items-start justify-between gap-4 flex-wrap">
-              <div className="min-w-0">
-                <p className="text-[12px] text-white/60 font-medium">Total Wallet Balance</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-[34px] sm:text-[44px] font-extrabold text-white tracking-tight leading-none tabular-nums">{mask(`₦${balance.toLocaleString()}`)}</p>
-                  <button onClick={toggleBalance} aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        {!hasPin && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[13px] font-semibold text-amber-800">Set your transaction PIN</p>
+              <p className="text-[12px] text-amber-600 mt-0.5">Required for contributions and withdrawals.</p>
+            </div>
+            <button onClick={() => setSetPinOpen(true)} className="h-8 px-4 rounded-md bg-void text-white text-[12px] font-semibold hover:opacity-90">Set PIN</button>
+          </div>
+        )}
+
+        {/* Balance panel */}
+        {walletLoading ? <Skeleton className="h-44 w-full rounded-xl"/> : (
+          <motion.div {...rise(0)}>
+            <RibbonPanel className="px-6 sm:px-8 py-7 sm:py-8">
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/40">Total wallet balance</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <p className="text-[40px] sm:text-[48px] leading-none font-semibold tracking-tight text-white tabular-nums">
                       {balanceHidden
-                        ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
-                        : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>}
-                    </svg>
-                  </button>
+                        ? '••••••'
+                        : <><span className="text-white/45 font-normal mr-1">₦</span>{naira(balance)}</>}
+                    </p>
+                    <button onClick={toggleBalance} aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        {balanceHidden
+                          ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                          : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>}
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[11px] text-lime mt-3">
-                  Available: {mask(`₦${Math.max(balance - locked, 0).toLocaleString()}`)} • Pending lock: {mask(`₦${locked.toLocaleString()}`)} • Total funded: {mask(`₦${totalFunded.toLocaleString()}`)}
-                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => setFundOpen(true)} className={`${BTN_LIME} !h-10 !px-5`}>Fund wallet</button>
+                  <button onClick={() => setWithdrawOpen(true)} className={`${BTN_ON_DARK} !h-10 !px-5`}>Withdraw</button>
+                </div>
               </div>
-              <button onClick={() => setFundOpen(true)}
-                className="h-10 px-5 rounded-lg bg-lime text-black text-[13px] font-bold hover:opacity-90 active:scale-95 transition-all">
-                Fund Wallet
-              </button>
+            </RibbonPanel>
+          </motion.div>
+        )}
+
+        {/* Balance breakdown */}
+        {!walletLoading && (
+          <motion.section {...rise(1)} className={`${CARD} grid grid-cols-3 divide-x divide-black/[0.06]`}>
+            {[
+              { label: 'Available',    val: mask(`₦${Math.max(balance - locked, 0).toLocaleString()}`), sub: 'Ready to use' },
+              { label: 'Pending lock', val: mask(`₦${locked.toLocaleString()}`), sub: 'Held for group cycles' },
+              { label: 'Total funded', val: mask(`₦${totalFunded.toLocaleString()}`), sub: 'Deposited to date' },
+            ].map(m => (
+              <div key={m.label} className="p-4 sm:p-5">
+                <p className={LABEL}>{m.label}</p>
+                <p className="text-[18px] sm:text-[22px] font-semibold tracking-tight text-ink tabular-nums mt-2 leading-none">{m.val}</p>
+                <p className="text-[11px] text-mist mt-2 hidden sm:block">{m.sub}</p>
+              </div>
+            ))}
+          </motion.section>
+        )}
+
+        {/* Quick operations */}
+        <motion.div {...rise(2)}>
+          <p className={`${LABEL} mb-2.5`}>Quick operations</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={() => setFundOpen(true)}
+              icon={ico('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}/>
+            <OpCard title="Withdraw to bank" sub="Send money to your saved bank account" onClick={() => setWithdrawOpen(true)}
+              icon={ico('M12 19l9 2-9-18-9 18 9-2zm0 0v-8')}/>
+            <OpCard title="Circle escrow" sub="Check pending locks and releases" onClick={() => navigate('/groups')}
+              icon={ico('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}/>
+            <OpCard title="Transaction PIN" sub={hasPin ? 'Change your secure verification PIN' : 'Set up your secure verification PIN'}
+              onClick={() => hasPin ? setChangePinOpen(true) : setSetPinOpen(true)}
+              icon={ico('M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z')}/>
+          </div>
+        </motion.div>
+
+        {/* Ledger */}
+        <motion.section {...rise(3)} className={`${CARD} overflow-hidden`}>
+          <div className="px-5 py-4 flex items-center justify-between gap-3 border-b border-black/[0.06]">
+            <p className="text-[14px] font-semibold text-ink">Transaction ledger</p>
+            <select value={txType} onChange={e => { setTxType(e.target.value); setPage(1); setShowAll(false) }}
+              className="h-8 rounded-lg border border-black/[0.1] bg-white px-2 text-[12px] font-medium text-dim outline-none focus:border-brand cursor-pointer">
+              {Object.entries(TX_TYPE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+            </select>
+          </div>
+
+          {txLoading ? (
+            <div className="space-y-3 p-4">{[...Array(5)].map((_,i) => <Skeleton key={i} className="h-10 w-full rounded-md"/>)}</div>
+          ) : transactions.length === 0 ? (
+            <div className="py-14 text-center">
+              <p className="text-[13px] text-dim">No transactions yet</p>
+              <p className="text-[11.5px] text-mist mt-1">Fund your wallet to get started.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px]">
+                <thead className="bg-warm/60">
+                  <tr>{['Type', 'Description', 'Date', 'Status', 'Amount'].map((h, i) => (
+                    <th key={h} className={`px-5 py-2.5 ${LABEL} ${i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {transactions.map(tx => {
+                    const credit = TX_CREDIT.has(tx.type)
+                    return (
+                      <tr key={tx.id} onClick={() => setReceiptTx(tx)} className="border-t border-black/[0.05] hover:bg-warm/50 cursor-pointer transition-colors">
+                        <td className="px-5 py-3 text-[12px] font-medium whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1.5 ${credit ? 'text-emerald-700' : 'text-dim'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${credit ? 'bg-emerald-500' : 'bg-stone'}`} />
+                            {credit ? 'Credit' : 'Debit'}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-[12.5px] text-ink">{describe(tx)}</td>
+                        <td className="px-5 py-3 text-[11.5px] text-mist font-mono whitespace-nowrap">{dayjs(tx.createdAt).format('MMM D, YYYY · h:mm A')}</td>
+                        <td className="px-5 py-3"><StatusPill status={tx.status}/></td>
+                        <td className={`px-5 py-3 text-[13px] font-semibold text-right tabular-nums whitespace-nowrap ${credit ? 'text-emerald-700' : 'text-ink'}`}>
+                          {credit ? '+' : '-'}₦{tx.amount.toLocaleString()}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
-          {/* Quick operations */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5">
-            <p className="text-[14px] font-bold text-gray-900 mb-3">Quick Operations</p>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={() => setFundOpen(true)}
-                icon={ico('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}/>
-              <OpCard title="Withdraw to Bank" sub="Send money to your saved bank account" onClick={() => setWithdrawOpen(true)}
-                icon={ico('M12 19l9 2-9-18-9 18 9-2zm0 0v-8')}/>
-              <OpCard title="Circle Escrow Settle" sub="Check pending locks and releases" onClick={() => navigate('/groups')}
-                icon={ico('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}/>
-              <OpCard title="Transaction PIN" sub={hasPin ? 'Change your secure verification PIN' : 'Set up your secure verification PIN'}
-                onClick={() => hasPin ? setChangePinOpen(true) : setSetPinOpen(true)}
-                icon={ico('M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z')}/>
+          {!showAll && pagination && pagination.totalPages > 1 && (
+            <div className="px-5 py-3 border-t border-black/[0.05] flex items-center justify-between flex-wrap gap-2">
+              <p className="text-[11px] text-mist">Page {pagination.page} of {pagination.totalPages}</p>
+              <div className="flex gap-2">
+                <button disabled={page === 1} onClick={() => setPage(p => p-1)} className="h-8 px-3 rounded-lg border border-black/[0.1] text-[12px] font-medium text-dim hover:bg-warm disabled:opacity-40">Prev</button>
+                <button disabled={page >= pagination.totalPages} onClick={() => setPage(p => p+1)} className="h-8 px-3 rounded-lg border border-black/[0.1] text-[12px] font-medium text-dim hover:bg-warm disabled:opacity-40">Next</button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Ledger */}
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-4 sm:px-5 py-4 flex items-center justify-between gap-3">
-              <p className="text-[14px] font-bold text-gray-900">Transaction Ledger</p>
-              <select value={txType} onChange={e => { setTxType(e.target.value); setPage(1); setShowAll(false) }}
-                className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-[12px] font-medium text-gray-700 outline-none focus:border-brand cursor-pointer">
-                {Object.entries(TX_TYPE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-              </select>
+          {transactions.length > 0 && !txLoading && (
+            <div className="px-5 py-3 border-t border-black/[0.05] text-center">
+              {showAll
+                ? <button onClick={() => { setShowAll(false); setPage(1) }} className="text-[12px] font-medium text-mist hover:text-ink">Show less</button>
+                : <button onClick={() => setShowAll(true)} className="text-[12px] font-medium text-brand hover:underline">View all transactions</button>}
             </div>
-
-            {txLoading ? (
-              <div className="space-y-3 p-4">{[...Array(5)].map((_,i) => <Skeleton key={i} className="h-10 w-full rounded-lg"/>)}</div>
-            ) : transactions.length === 0 ? (
-              <div className="py-14 text-center">
-                <p className="text-[14px] font-semibold text-gray-800">No transactions yet</p>
-                <p className="text-[12px] text-gray-400 mt-1">Fund your wallet to get started</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px]">
-                  <thead className="bg-warm">
-                    <tr>{['Type', 'Description', 'Date', 'Status', 'Amount'].map((h, i) => (
-                      <th key={h} className={`px-4 py-2.5 text-[11px] font-semibold text-gray-400 ${i === 4 ? 'text-right' : 'text-left'}`}>{h}</th>
-                    ))}</tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map(tx => {
-                      const credit = TX_CREDIT.has(tx.type)
-                      return (
-                        <tr key={tx.id} onClick={() => setReceiptTx(tx)} className="border-t border-gray-50 hover:bg-gray-50/70 cursor-pointer transition-colors">
-                          <td className="px-4 py-3 text-[12px] font-semibold whitespace-nowrap">
-                            <span className={credit ? 'text-emerald-600' : 'text-red-500'}>{credit ? '↓ Credit' : '↑ Debit'}</span>
-                          </td>
-                          <td className="px-4 py-3 text-[12px] text-gray-800">{describe(tx)}</td>
-                          <td className="px-4 py-3 text-[11px] text-gray-400 whitespace-nowrap">{dayjs(tx.createdAt).format('MMM D, YYYY • h:mm A')}</td>
-                          <td className="px-4 py-3"><StatusPill status={tx.status}/></td>
-                          <td className={`px-4 py-3 text-[12px] font-bold text-right tabular-nums whitespace-nowrap ${credit ? 'text-emerald-600' : 'text-gray-900'}`}>
-                            {credit ? '+' : '-'}₦{tx.amount.toLocaleString()}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {!showAll && pagination && pagination.totalPages > 1 && (
-              <div className="px-4 py-3 border-t border-gray-50 flex items-center justify-between flex-wrap gap-2">
-                <p className="text-[11px] text-gray-400">Page {pagination.page} of {pagination.totalPages}</p>
-                <div className="flex gap-2">
-                  <button disabled={page === 1} onClick={() => setPage(p => p-1)} className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">Prev</button>
-                  <button disabled={page >= pagination.totalPages} onClick={() => setPage(p => p+1)} className="h-8 px-3 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">Next</button>
-                </div>
-              </div>
-            )}
-
-            {transactions.length > 0 && !txLoading && (
-              <div className="px-4 py-3 border-t border-gray-50 text-center">
-                {showAll
-                  ? <button onClick={() => { setShowAll(false); setPage(1) }} className="text-[12px] font-semibold text-gray-500 hover:text-gray-700">Show less</button>
-                  : <button onClick={() => setShowAll(true)} className="text-[12px] font-semibold text-brand hover:opacity-80">View all transactions</button>}
-              </div>
-            )}
-          </div>
-        </div>
+          )}
+        </motion.section>
       </div>
 
       <Modal open={fundOpen} onClose={() => setFundOpen(false)} title="Fund your wallet" size="sm"
         footer={<><Button variant="secondary" onClick={() => setFundOpen(false)}>Cancel</Button><Button onClick={handleSubmit(onFund)} loading={initPayment.isPending}>Continue to payment</Button></>}>
-        <p className="text-[13px] text-gray-500 mb-5">You'll be redirected to Paystack to complete payment. Funds reflect instantly.</p>
+        <p className="text-[13px] text-dim mb-5">You'll be redirected to Paystack to complete payment. Funds reflect instantly.</p>
         <div className="space-y-4">
           <Input label="Amount (₦)" type="number" placeholder="10000" error={errors.amount?.message} {...register('amount')}/>
           <Select label="Payment provider" options={[{ value: 'paystack', label: 'Paystack — Cards, bank transfer, USSD' }]} error={errors.provider?.message} {...register('provider')}/>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Modal } from '@/components/ui'
 import { useAuthStore } from '@/stores/authStore'
+import clsx from 'clsx'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -231,3 +232,5 @@ export default function BankAccountsCard() {
     </section>
   )
 }
+
+

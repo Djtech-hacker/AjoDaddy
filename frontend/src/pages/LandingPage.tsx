@@ -1,25 +1,11 @@
 // ============================================================
-// LandingPage.tsx — brand colors (green / lime / warm), fully responsive
+// LandingPage.tsx — dark hero (flowing ribbon + popup cards), brand colors, fully responsive
 // ============================================================
-import React, { useRef, useState, useEffect, useCallback } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 
 // ── Hooks ────────────────────────────────────────────────────
-function useMouseParallax(strength = 0.02) {
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    const cx = window.innerWidth / 2
-    const cy = window.innerHeight / 2
-    setOffset({ x: (e.clientX - cx) * strength, y: (e.clientY - cy) * strength })
-  }, [strength])
-  useEffect(() => {
-    window.addEventListener('mousemove', handleMouseMove)
-    return () => window.removeEventListener('mousemove', handleMouseMove)
-  }, [handleMouseMove])
-  return offset
-}
-
 function useInView(threshold = 0.15): [(node: Element | null) => void, boolean] {
   const [ref, setRef] = useState<Element | null>(null)
   const [inView, setInView] = useState(false)
@@ -32,6 +18,18 @@ function useInView(threshold = 0.15): [(node: Element | null) => void, boolean] 
     return () => obs.disconnect()
   }, [ref, threshold])
   return [setRef, inView]
+}
+
+function usePrefersReducedMotion() {
+  const [reduce, setReduce] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReduce(mq.matches)
+    const fn = () => setReduce(mq.matches)
+    mq.addEventListener('change', fn)
+    return () => mq.removeEventListener('change', fn)
+  }, [])
+  return reduce
 }
 
 // ── Static data (sample data for illustration only) ───────────
@@ -67,7 +65,7 @@ const faqs = [
 
 const navLinks = [['How it works','#how-it-works'],['Features','#features'],['Security','#security'],['FAQ','#faq']]
 
-// ── Nav ───────────────────────────────────────────────────────
+// ── Nav (dark) ────────────────────────────────────────────────
 function Nav() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -80,12 +78,12 @@ function Nav() {
 
   return (
     <motion.header
-      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${scrolled || menuOpen ? 'bg-warm/90 backdrop-blur-md border-b border-black/[0.06]' : ''}`}
+      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${scrolled || menuOpen ? 'bg-void/80 backdrop-blur-md border-b border-white/[0.07]' : ''}`}
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
     >
-      <div className="max-w-6xl mx-auto px-5 sm:px-6 h-16 flex items-center justify-between">
+      <div className="max-w-6xl mx-auto px-5 sm:px-6 h-20 flex items-center justify-between">
         {/* spacer keeps the logo centered on mobile (same width as the hamburger) */}
         <div className="w-9 h-9 md:hidden" aria-hidden />
 
@@ -93,38 +91,37 @@ function Nav() {
           <img
             src={LOGO_URL}
             alt="AjoDaddy"
-            style={{ height: '4cm', marginTop: '1cm', position: 'relative', top: '2cm' }}
-            className="w-auto object-contain flex-shrink-0"
+            className="h-14 sm:h-16 w-auto object-contain flex-shrink-0"
           />
         </Link>
 
         <nav className="hidden md:flex items-center gap-7">
           {navLinks.map(([label, href]) => (
             <a key={label} href={href}
-              className="text-[13px] font-medium text-dim hover:text-ink transition-colors duration-150">
+              className="text-[13px] font-medium text-white/60 hover:text-white transition-colors duration-150">
               {label}
             </a>
           ))}
         </nav>
 
         <div className="hidden md:flex items-center gap-3">
-          <Link to="/login" className="text-[13px] font-semibold text-dim hover:text-ink transition-colors px-4 py-2">
+          <Link to="/login" className="text-[13px] font-semibold text-white/70 hover:text-white transition-colors px-4 py-2">
             Log in
           </Link>
           <Link to="/register"
-            className="text-[13px] font-bold text-warm bg-ink px-4 py-2.5 rounded-xl hover:bg-pitch transition-all hover:shadow-dark-sm">
+            className="text-[13px] font-bold text-ink bg-lime px-4 py-2.5 rounded-xl hover:bg-lime/90 transition-all active:scale-[0.98]">
             Get started
           </Link>
         </div>
 
         <button
-          className="md:hidden w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-sand transition-colors"
+          className="md:hidden w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-white/10 transition-colors"
           onClick={() => setMenuOpen(v => !v)}
           aria-label="Toggle menu"
         >
-          <span className={`block w-5 h-0.5 bg-ink rounded transition-all duration-200 origin-center ${menuOpen ? 'rotate-45 translate-y-[7px]' : ''}`}/>
-          <span className={`block w-5 h-0.5 bg-ink rounded transition-all duration-200 ${menuOpen ? 'opacity-0 scale-x-0' : ''}`}/>
-          <span className={`block w-5 h-0.5 bg-ink rounded transition-all duration-200 origin-center ${menuOpen ? '-rotate-45 -translate-y-[7px]' : ''}`}/>
+          <span className={`block w-5 h-0.5 bg-white rounded transition-all duration-200 origin-center ${menuOpen ? 'rotate-45 translate-y-[7px]' : ''}`}/>
+          <span className={`block w-5 h-0.5 bg-white rounded transition-all duration-200 ${menuOpen ? 'opacity-0 scale-x-0' : ''}`}/>
+          <span className={`block w-5 h-0.5 bg-white rounded transition-all duration-200 origin-center ${menuOpen ? '-rotate-45 -translate-y-[7px]' : ''}`}/>
         </button>
       </div>
 
@@ -135,24 +132,24 @@ function Nav() {
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="md:hidden overflow-hidden bg-warm border-b border-black/[0.06]"
+            className="md:hidden overflow-hidden bg-void border-b border-white/[0.07]"
           >
             <div className="px-5 py-5 flex flex-col gap-4">
               {navLinks.map(([label, href]) => (
                 <a key={label} href={href}
-                  className="text-[14px] font-medium text-ink py-1"
+                  className="text-[14px] font-medium text-white/80 py-1"
                   onClick={() => setMenuOpen(false)}>
                   {label}
                 </a>
               ))}
-              <div className="pt-2 border-t border-black/[0.06] flex flex-col gap-2">
+              <div className="pt-2 border-t border-white/[0.07] flex flex-col gap-2">
                 <Link to="/login"
-                  className="text-[14px] font-semibold text-ink text-center py-3 rounded-xl border border-black/[0.09] hover:bg-sand transition-colors"
+                  className="text-[14px] font-semibold text-white text-center py-3 rounded-xl border border-white/15 hover:bg-white/5 transition-colors"
                   onClick={() => setMenuOpen(false)}>
                   Log in
                 </Link>
                 <Link to="/register"
-                  className="text-[14px] font-bold text-warm bg-ink text-center py-3 rounded-xl hover:bg-pitch transition-colors"
+                  className="text-[14px] font-bold text-ink bg-lime text-center py-3 rounded-xl hover:bg-lime/90 transition-colors"
                   onClick={() => setMenuOpen(false)}>
                   Get started
                 </Link>
@@ -165,93 +162,192 @@ function Nav() {
   )
 }
 
-// ── Hero floating UI cards (sample illustrations) ─────────────
-function FloatingCard({ name, initials, amount, time, delay, x, y }: {
-  name: string; initials: string; amount: string; time: string; delay: number; x: string; y: string
-}) {
-  return (
-    <motion.div
-      className="absolute bg-white rounded-2xl shadow-card-md border border-black/[0.06] p-3.5 flex items-center gap-3 w-52"
-      style={{ left: x, top: y }}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <motion.div animate={{ y: [0, -4, 0] }} transition={{ duration: 4 + delay, repeat: Infinity, ease: 'easeInOut' }}>
-        <div className="w-9 h-9 rounded-full bg-brand-pale flex items-center justify-center text-brand text-xs font-bold flex-shrink-0">
-          {initials}
-        </div>
-      </motion.div>
-      <div className="min-w-0">
-        <p className="text-[11px] font-semibold text-ink truncate">{name}</p>
-        <p className="text-[10px] text-mist">{time}</p>
-      </div>
-      <div className="ml-auto text-right flex-shrink-0">
-        <p className="text-[12px] font-bold text-brand">{amount}</p>
-        <div className="flex items-center gap-1 justify-end mt-0.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"/>
-          <span className="text-[9px] text-mist">paid</span>
-        </div>
-      </div>
-    </motion.div>
-  )
+// ── Flowing ribbon of lines (canvas) ──────────────────────────
+const RIBBON_LIME: [number, number, number] = [168, 224, 58]
+const RIBBON_GREEN: [number, number, number] = [46, 150, 90]
+
+// y position of one line (k = -0.5..0.5 across the bundle) at x-fraction u, time t
+function ribbonY(u: number, k: number, t: number, h: number) {
+  const rise = 1 / (1 + Math.exp(-(u - 0.6) * 7))                 // S-curve: low on the left, high on the right
+  const base = h * (0.88 - 0.6 * rise)
+  const spread = h * (0.03 + 0.2 * Math.pow(Math.sin(Math.PI * u), 1.4)) // bundle pinches at both ends
+  const wave = Math.sin(u * 6 - t * 0.9 + k * 4) * 10 * Math.sin(Math.PI * u)
+  return base + k * spread * 2 + wave
 }
 
-function PayoutBadge({ delay }: { delay: number }) {
-  return (
-    <motion.div
-      className="absolute right-[5%] top-[38%] bg-brand text-warm rounded-2xl shadow-dark-md p-4 w-44"
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <motion.div animate={{ y: [0, -6, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
-        <p className="text-[10px] font-semibold text-lime uppercase tracking-wider mb-1">Next Payout</p>
-        <p className="text-[18px] font-bold text-white tracking-tight">₦600,000</p>
-        <p className="text-[11px] text-white/50 mt-1">Amara Osei · May 19</p>
-        <div className="mt-3 h-1 bg-white/10 rounded-full overflow-hidden">
-          <motion.div className="h-full bg-lime rounded-full"
-            initial={{ width: 0 }} animate={{ width: '82%' }}
-            transition={{ delay: delay + 0.4, duration: 1, ease: [0.16, 1, 0.3, 1] }}
-          />
-        </div>
-        <p className="text-[9px] text-white/40 mt-1">9 / 12 collected · sample</p>
-      </motion.div>
-    </motion.div>
-  )
+function FlowRibbon() {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const reduce = usePrefersReducedMotion()
+
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let w = 0, h = 0, raf = 0
+    const BUCKETS = 6
+    // one colour per bucket, so each bucket is stroked once instead of once per line
+    const colors = Array.from({ length: BUCKETS }, (_, b) => {
+      const mix = b / (BUCKETS - 1)
+      const m = mix * mix
+      const r = Math.round(RIBBON_GREEN[0] + (RIBBON_LIME[0] - RIBBON_GREEN[0]) * m)
+      const g = Math.round(RIBBON_GREEN[1] + (RIBBON_LIME[1] - RIBBON_GREEN[1]) * m)
+      const bl = Math.round(RIBBON_GREEN[2] + (RIBBON_LIME[2] - RIBBON_GREEN[2]) * m)
+      return `rgba(${r},${g},${bl},${0.16 + 0.5 * mix})`
+    })
+
+    const draw = (ms: number) => {
+      const t = ms / 1000
+      const small = w < 640
+      const lines = small ? 24 : 42
+      const steps = small ? 40 : 64
+      ctx.clearRect(0, 0, w, h)
+      ctx.lineWidth = 1
+
+      for (let b = 0; b < BUCKETS; b++) {
+        ctx.strokeStyle = colors[b]
+        ctx.beginPath()
+        for (let i = 0; i < lines; i++) {
+          const k = i / (lines - 1) - 0.5
+          const mix = 1 - Math.abs(k) * 2                          // 1 in the centre, 0 at the edges
+          if (Math.min(BUCKETS - 1, Math.floor(mix * BUCKETS)) !== b) continue
+          for (let s = 0; s <= steps; s++) {
+            const u = s / steps
+            const x = u * w
+            const y = ribbonY(u, k, t, h)
+            if (s === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+          }
+        }
+        ctx.stroke()
+      }
+
+      // glints travelling along three centre lines (no shadowBlur, which is slow)
+      ;[-0.1, 0.05, 0.2].forEach((k, j) => {
+        const u = (t * 0.09 + j * 0.37) % 1
+        const x = u * w
+        const y = ribbonY(u, k, t, h)
+        ctx.fillStyle = 'rgba(168,224,58,0.22)'
+        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill()
+        ctx.fillStyle = '#E6FF9A'
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill()
+      })
+    }
+
+    const loop = (ms: number) => { draw(ms); raf = requestAnimationFrame(loop) }
+    const start = () => { if (!raf && !reduce) raf = requestAnimationFrame(loop) }
+    const stop = () => { cancelAnimationFrame(raf); raf = 0 }
+
+    const resize = () => {
+      const r = canvas.getBoundingClientRect()
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+      w = r.width
+      h = r.height
+      canvas.width = w * dpr
+      canvas.height = h * dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      if (reduce) draw(0)                                            // static frame
+    }
+
+    resize()
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
+    // only animate while the hero is on screen
+    const io = new IntersectionObserver(([e]) => (e.isIntersecting ? start() : stop()))
+    io.observe(canvas)
+
+    return () => { stop(); ro.disconnect(); io.disconnect() }
+  }, [reduce])
+
+  return <canvas ref={ref} aria-hidden className="absolute inset-0 w-full h-full pointer-events-none" />
 }
 
-function ProgressRing({ delay }: { delay: number }) {
-  const r = 22
-  const circ = 2 * Math.PI * r
+// ── Popup cards that appear one after another, then loop ──────
+const STATUS_CHIPS = ['Verified', 'Recorded', 'Paid', 'Confirmed']
+const STEP_TIMES = [500, 1500, 2600, 3300, 4000, 4700, 5400, 6400] // ms after each loop starts
+const LOOP_MS = 11000
+
+function ActivityStack() {
+  const reduce = usePrefersReducedMotion()
+  const [step, setStep] = useState(0)
+  const [cycle, setCycle] = useState(0)
+
+  useEffect(() => {
+    if (reduce) { setStep(STEP_TIMES.length); return }
+    const ids = STEP_TIMES.map((ms, i) => window.setTimeout(() => setStep(i + 1), ms))
+    ids.push(window.setTimeout(() => { setStep(0); setCycle(c => c + 1) }, LOOP_MS))
+    return () => ids.forEach(clearTimeout)
+  }, [cycle, reduce])
+
+  const enter = {
+    initial: { opacity: 0, y: 14, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: -8 },
+    transition: { duration: 0.45, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] },
+  }
+  const card = 'rounded-2xl border border-white/10 bg-[#0c1411]/90'
+
   return (
-    <motion.div
-      className="absolute left-[3%] bottom-[25%] bg-white rounded-2xl shadow-card-md border border-black/[0.06] p-4 w-40"
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}>
-        <p className="text-[10px] font-semibold text-mist uppercase tracking-wider mb-2.5">Group health</p>
-        <div className="relative w-14 h-14 mx-auto">
-          <svg width="56" height="56" viewBox="0 0 56 56">
-            <circle cx="28" cy="28" r={r} fill="none" stroke="#EDE9E1" strokeWidth="5"/>
-            <motion.circle
-              cx="28" cy="28" r={r} fill="none" stroke="#1B5C3C" strokeWidth="5"
-              strokeDasharray={circ} strokeLinecap="round"
-              transform="rotate(-90 28 28)"
-              initial={{ strokeDashoffset: circ }}
-              animate={{ strokeDashoffset: circ * 0.08 }}
-              transition={{ delay: delay + 0.3, duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
-            />
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[13px] font-bold text-ink">92%</span>
-          </div>
-        </div>
-        <p className="text-center text-[10px] text-mist mt-1.5">Collection rate · sample</p>
-      </motion.div>
-    </motion.div>
+    <div className="absolute right-[4%] top-[22%] w-[340px] hidden lg:block" aria-hidden>
+      <div className="flex flex-col gap-3 min-h-[430px]">
+        <AnimatePresence>
+          {step >= 1 && (
+            <motion.div key="ask" {...enter} className={`${card} px-5 py-4 text-[15px] text-white`}>
+              Has everyone paid for Week 5?
+            </motion.div>
+          )}
+
+          {step >= 2 && (
+            <motion.div key="summary" {...enter} className={`${card} px-5 py-4`}>
+              <div className="flex items-center gap-2 mb-2">
+                <img src={LOGO_URL} alt="" className="h-5 w-auto object-contain" />
+                <span className="text-[12px] text-white/50">AjoDaddy summary</span>
+              </div>
+              <p className="text-[15px] text-white leading-snug">9 of 12 members have paid. Reminders went out to the other 3.</p>
+            </motion.div>
+          )}
+
+          {step >= 3 && (
+            <motion.div key="txn" {...enter} className={`${card} px-5 py-4`}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[13px] text-white/50 font-mono">CONTRIB-4821</span>
+                <span className="text-[17px] font-bold text-white">₦50,000</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {STATUS_CHIPS.map((label, i) => {
+                  const on = step >= 4 + i
+                  const highlight = on && label === 'Paid'
+                  return (
+                    <span
+                      key={label}
+                      className={`text-[12px] px-3 py-1.5 rounded-full border transition-all duration-500 ${
+                        highlight ? 'bg-lime text-ink border-lime font-bold' :
+                        on        ? 'text-white/85 border-white/20' :
+                                    'text-white/20 border-white/[0.07]'
+                      }`}
+                    >
+                      {label}{on && label === 'Confirmed' ? ' ✓' : ''}
+                    </span>
+                  )
+                })}
+              </div>
+            </motion.div>
+          )}
+
+          {step >= 8 && (
+            <motion.div key="toast" {...enter} className={`${card} px-5 py-4 flex items-center justify-between`}>
+              <div>
+                <p className="text-[15px] text-white">Payout scheduled</p>
+                <p className="text-[12px] text-white/40 mt-0.5">Amara Osei · May 19</p>
+              </div>
+              <span className="w-2.5 h-2.5 rounded-full bg-lime shadow-[0_0_12px_rgba(168,224,58,0.9)] animate-pulse-soft" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      <p className="text-[10px] text-white/25 mt-2 pl-1">Sample activity for illustration</p>
+    </div>
   )
 }
 
@@ -285,9 +381,9 @@ function ScrambleText({ text, delay = 0, duration = 1300, shimmer = false }: {
     return () => cancelAnimationFrame(raf)
   }, [text, delay, duration, reduce])
 
-  // Brand green text with a lime glint sweeping across on a loop
+  // Light green text with a bright lime glint sweeping across on a loop (readable on the dark hero)
   const shimmerStyle = shimmer ? {
-    backgroundImage: 'linear-gradient(100deg, #1B5C3C 0%, #1B5C3C 42%, #A8E03A 50%, #1B5C3C 58%, #1B5C3C 100%)',
+    backgroundImage: 'linear-gradient(100deg, #7FD16A 0%, #7FD16A 42%, #E6FF9A 50%, #7FD16A 58%, #7FD16A 100%)',
     backgroundSize: '250% 100%',
     WebkitBackgroundClip: 'text',
     backgroundClip: 'text',
@@ -310,88 +406,69 @@ function ScrambleText({ text, delay = 0, duration = 1300, shimmer = false }: {
   )
 }
 
-// ── Hero ──────────────────────────────────────────────────────
+// ── Hero (dark, flowing ribbon + popup cards) ─────────────────
 function Hero() {
-  const mouse  = useMouseParallax(0.018)
-  const ref    = useRef(null)
-  const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end start'] })
-  const heroY  = useTransform(scrollYProgress, [0, 1], [0, 80])
-  const heroO  = useTransform(scrollYProgress, [0, 0.6], [1, 0])
-
   return (
-    <section ref={ref} className="relative min-h-screen bg-warm flex flex-col items-center justify-center overflow-hidden">
-      <div className="absolute inset-0 opacity-[0.015]"
-        style={{ backgroundImage: 'linear-gradient(#111009 1px,transparent 1px),linear-gradient(90deg,#111009 1px,transparent 1px)', backgroundSize: '64px 64px' }}
-      />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-brand-pale/40 blur-[100px] pointer-events-none"/>
+    <section className="relative min-h-screen bg-void flex items-center overflow-hidden">
+      <div className="absolute -bottom-40 -left-40 w-[620px] h-[620px] pointer-events-none" style={{ background: 'radial-gradient(closest-side, rgba(27,92,60,0.35), transparent)' }} />
+      <FlowRibbon />
+      <ActivityStack />
 
-      <motion.div
-        className="relative z-10 text-center px-5 sm:px-6 max-w-4xl mx-auto w-full pt-20"
-        style={{ y: heroY, opacity: heroO }}
-      >
-        <motion.div
-          className="inline-flex items-center gap-2 bg-white border border-black/[0.07] rounded-full px-4 py-1.5 mb-7 sm:mb-8 shadow-card"
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-soft"/>
-          <span className="text-[11px] sm:text-[12px] font-semibold text-dim">Digital Ajo &amp; Esusu savings groups</span>
-        </motion.div>
+      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-6 w-full pt-32 pb-28">
+        <div className="max-w-xl text-center md:text-left mx-auto md:mx-0">
+          <motion.div
+            className="inline-flex items-center gap-2 bg-white/[0.05] border border-white/10 rounded-full px-4 py-1.5 mb-7"
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-lime animate-pulse-soft" />
+            <span className="text-[12px] font-semibold text-white/70">Digital Ajo &amp; Esusu savings groups</span>
+          </motion.div>
 
-        <motion.h1
-          className="text-[40px] sm:text-[56px] md:text-[72px] font-extrabold tracking-[-0.04em] text-ink leading-[1.05] mb-5 sm:mb-6"
-          initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <ScrambleText text="Save Together." delay={200} /><br/>
-          <ScrambleText text="Grow Together." delay={900} shimmer />
-        </motion.h1>
+          <motion.h1
+            className="text-[38px] sm:text-[56px] md:text-[76px] font-extrabold tracking-[-0.04em] text-white leading-[1.05] mb-6"
+            initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <ScrambleText text="Save Together." delay={200} /><br />
+            <ScrambleText text="Grow Together." delay={900} shimmer />
+          </motion.h1>
 
-        <motion.p
-          className="text-[15px] sm:text-[17px] md:text-[19px] text-dim leading-relaxed max-w-xl mx-auto mb-9 sm:mb-10 font-normal"
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        >
-          The digital platform for Ajo, Esusu &amp; Susu —
-          helping your group track contributions and payouts with full transparency.
-        </motion.p>
+          <motion.p
+            className="text-[15px] sm:text-[17px] text-white/55 leading-relaxed mb-9 max-w-md mx-auto md:mx-0"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+          >
+            The digital platform for Ajo, Esusu &amp; Susu. Track every contribution and payout with full transparency.
+          </motion.p>
 
-        <motion.div
-          className="flex flex-col sm:flex-row items-center justify-center gap-3 flex-wrap"
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, duration: 0.5 }}
-        >
-          <Link to="/register"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-ink text-warm text-[14px] font-bold px-7 py-4 rounded-xl hover:bg-pitch transition-all hover:shadow-dark-sm active:scale-[0.98]">
-            Get started
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </Link>
-          <a href="#how-it-works"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white border border-black/[0.08] text-ink text-[14px] font-semibold px-7 py-4 rounded-xl hover:border-black/20 transition-all hover:shadow-card active:scale-[0.98]">
-            See how it works
-          </a>
-        </motion.div>
-      </motion.div>
-
-      <motion.div
-        className="absolute inset-0 pointer-events-none hidden md:block"
-        style={{ x: mouse.x * -1, y: mouse.y * -1 }}
-      >
-        <FloatingCard name="Adaeze Kalu" initials="AK" amount="₦50,000" time="2 min ago"  delay={0.6}  x="6%" y="28%"/>
-        <FloatingCard name="Emeka Obi"   initials="EO" amount="₦50,000" time="14 min ago" delay={0.75} x="4%" y="52%"/>
-        <PayoutBadge delay={0.65}/>
-        <ProgressRing delay={0.8}/>
-      </motion.div>
+          <motion.div
+            className="flex flex-col sm:flex-row items-center justify-center md:justify-start gap-3"
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, duration: 0.5 }}
+          >
+            <Link to="/register"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-lime text-ink text-[14px] font-bold px-7 py-4 rounded-xl hover:bg-lime/90 transition-all active:scale-[0.98]">
+              Get started
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 7H11M11 7L7.5 3.5M11 7L7.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
+            <a href="#how-it-works"
+              className="w-full sm:w-auto inline-flex items-center justify-center bg-white/[0.04] border border-white/15 text-white text-[14px] font-semibold px-7 py-4 rounded-xl hover:bg-white/[0.08] transition-all active:scale-[0.98]">
+              See how it works
+            </a>
+          </motion.div>
+        </div>
+      </div>
 
       <motion.div
         className="absolute bottom-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }}
         transition={{ delay: 1.2 }}
       >
-        <div className="w-[1px] h-8 bg-gradient-to-b from-transparent to-stone"/>
-        <p className="text-[10px] font-semibold text-mist uppercase tracking-widest">Scroll</p>
+        <div className="w-[1px] h-8 bg-gradient-to-b from-transparent to-white/25" />
+        <p className="text-[10px] font-semibold text-white/30 uppercase tracking-widest">Scroll</p>
       </motion.div>
     </section>
   )

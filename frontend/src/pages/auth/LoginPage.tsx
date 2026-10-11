@@ -9,6 +9,7 @@ import { authApi } from '@/api/services'
 import { useUIStore } from '@/stores/uiStore'
 import { Button, Input } from '@/components/ui'
 import AuthShell from '@/components/auth/AuthShell'
+import { LoginPanel } from '@/components/auth/AuthPanels'
 
 const schema = z.object({
   email:    z.string().email('Enter a valid email'),
@@ -21,37 +22,6 @@ const pinSchema = z.object({
   confirmPin: z.string().length(4, 'PIN must be 4 digits'),
 }).refine(d => d.pin === d.confirmPin, { message: 'PINs do not match', path: ['confirmPin'] })
 type PinData = z.infer<typeof pinSchema>
-
-function LoginPanel() {
-  return (
-    <>
-      <div>
-        <p className="text-[11px] font-bold text-lime tracking-wide">DIGITIZED ROTATIONAL COMMUNES</p>
-        <h2 className="text-[38px] font-extrabold tracking-tight leading-[1.1] mt-4 max-w-md">Securing Ajo for millions of households.</h2>
-      </div>
-      <div className="bg-white/[0.06] border border-white/10 rounded-2xl p-6 max-w-md">
-        <p className="text-[13px] text-white/70 leading-relaxed">
-          "PayPaddy removed the doubt. Our monthly trade collections happen on autopilot. I got my payout turn exactly at Week 4 with no single participant delay."
-        </p>
-        <div className="flex items-center gap-3 mt-4">
-          <div className="w-8 h-8 rounded-full bg-brand flex items-center justify-center text-lime text-[10px] font-bold">CO</div>
-          <div>
-            <p className="text-[12px] font-bold text-white/85">Chioma Okafor</p>
-            <p className="text-[11px] text-white/40">Entrepreneur, Lagos</p>
-          </div>
-        </div>
-      </div>
-      <div className="flex justify-between max-w-md">
-        {[['₦4.2B+', 'Transacted'], ['98.6%', 'Success turn'], ['12K+', 'Groups']].map(([v, l]) => (
-          <div key={l}>
-            <p className="text-[18px] font-extrabold text-lime">{v}</p>
-            <p className="text-[10px] text-white/40">{l}</p>
-          </div>
-        ))}
-      </div>
-    </>
-  )
-}
 
 export default function LoginPage() {
   const navigate    = useNavigate()
@@ -147,7 +117,7 @@ export default function LoginPage() {
       </form>
 
       <p className="text-center text-[12px] text-dim mt-6">
-        New to PayPaddy? <Link to="/register" className="text-brand font-bold">Create your account free</Link>
+        New to AjoDaddy? <Link to="/register" className="text-brand font-bold">Create your account free</Link>
       </p>
     </AuthShell>
   )

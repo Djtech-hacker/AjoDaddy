@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useRegister } from '@/hooks/useApi'
 import { Button, Input } from '@/components/ui'
 import AuthShell from '@/components/auth/AuthShell'
+import { RegisterPanel } from '@/components/auth/AuthPanels'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -47,37 +48,6 @@ function fileToAvatar(file: File, size = 256): Promise<string> {
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')) }
     img.src = url
   })
-}
-
-const FEATURES = [
-  ['Free forever, no hidden transaction fees', 'Rotational savings cycles run free of management tariffs.'],
-  ['Bank-grade identity validation', 'BVN and NIN checks ensure your members are verified.'],
-  ['Community peer accountability', 'Smart locks and automated protection keep circles safe.'],
-]
-
-function RegisterPanel() {
-  return (
-    <>
-      <div>
-        <p className="text-[11px] font-bold text-lime tracking-wide">THE DIGITAL ESUSU REVOLUTION</p>
-        <h2 className="text-[38px] font-extrabold tracking-tight leading-[1.1] mt-4 max-w-md">Unlock your collective power.</h2>
-      </div>
-      <div className="space-y-6 max-w-md">
-        {FEATURES.map(([t, d]) => (
-          <div key={t} className="flex gap-3">
-            <div className="w-5 h-5 rounded-full bg-brand flex items-center justify-center flex-shrink-0 mt-0.5">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5L4.5 7.5L8 3" stroke="#A8E03A" strokeWidth="1.5" strokeLinecap="round"/></svg>
-            </div>
-            <div>
-              <p className="text-[13px] font-semibold text-white">{t}</p>
-              <p className="text-[12px] text-white/45 mt-0.5">{d}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className="text-[12px] text-white/40">Join thousands of verified savers across West Africa</p>
-    </>
-  )
 }
 
 export default function RegisterPage() {

@@ -129,6 +129,17 @@ export class PaymentsService {
     private readonly bankAccounts: BankAccountsService,
   ) {}
 
+    // ── KYC gate ──────────────────────────────────────────────
+  private async assertKycVerified(userId: string) {
+    const rec = await this.prisma.identityRecord.findUnique({
+      where:  { userId },
+      select: { ninVerified: true, bvnVerified: true, identityMatched: true },
+    })
+    if (!rec?.ninVerified || !rec?.bvnVerified || !rec?.identityMatched) {
+      throw new ForbiddenException('KYC_REQUIRED: Complete identity verification before using your wallet.')
+    }
+  }
+
   // ── Transaction PIN check ─────────────────────────────────
   private async assertTransactionPin(userId: string, pin: string) {
     const user = await this.prisma.user.findUnique({
@@ -274,6 +285,7 @@ export class PaymentsService {
 
   // ── Initiate wallet funding ───────────────────────────────
   async initiatePayment(userId: string, dto: InitiatePaymentDto) {
+        await this.assertKycVerified(userId)
     const user = await this.prisma.user.findUnique({
       where:  { id: userId },
       select: { email: true, firstName: true, lastName: true },
@@ -416,6 +428,9 @@ export class PaymentsService {
   // Platform fee (live from PlatformSetting) + Paystack transfer fee
   // are deducted from the amount. User requests ₦X, receives ₦X minus fees.
   async initiateWithdrawal(userId: string, dto: WithdrawDto) {
+
+    await this.assertKycVerified(userId)
+
     // ── Security gate #1: PIN ──
     await this.assertTransactionPin(userId, dto.transactionPin)
 

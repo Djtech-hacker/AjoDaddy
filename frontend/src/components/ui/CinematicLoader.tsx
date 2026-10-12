@@ -25,7 +25,7 @@ const rings = Array.from({ length: RING_COUNT }, (_, i) => ({
   nodes:    i % 2 === 0 ? 2 : 3,
 }))
 
-function PayPaddyLogo() {
+function AjoDaddyLogo() {
   return (
     <div
       style={{
@@ -40,7 +40,7 @@ function PayPaddyLogo() {
     >
       <img
         src= "https://res.cloudinary.com/dmjakrnby/image/upload/v1785166848/AjoDaddy_Black_yv047m.png"
-        alt="PayPaddy"
+        alt="AjoDaddy"
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
       />
     </div>
@@ -260,7 +260,7 @@ export function CinematicLoader({ onComplete, duration = 3200 }: CinematicLoader
                   animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
                   transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
                 />
-                <PayPaddyLogo />
+                <AjoDaddyLogo />
               </div>
             </motion.div>
           </motion.div>

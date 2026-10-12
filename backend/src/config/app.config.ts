@@ -3,7 +3,7 @@ export default () => ({
     nodeEnv:     process.env.NODE_ENV || 'development',
     port:        parseInt(process.env.PORT, 10) || 4000,
     frontendUrl: process.env.FRONTEND_URL,
-    name:        process.env.APP_NAME || 'PayPaddy',
+    name:        process.env.APP_NAME || 'AjoDaddy',
   },
   database: {
     url: process.env.DATABASE_URL,

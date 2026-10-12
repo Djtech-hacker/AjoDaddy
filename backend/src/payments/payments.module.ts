@@ -314,7 +314,7 @@ export class PaymentsService {
           tx_ref: reference, amount: amountKobo / 100, currency: 'NGN',
           redirect_url: `${this.configService.get('app.frontendUrl')}/payment/verify`,
           customer:     { email: user.email, name: `${user.firstName} ${user.lastName}` },
-          customizations: { title: 'PayPaddy Wallet Funding', logo: '' },
+          customizations: { title: 'AjoDaddy Wallet Funding', logo: '' },
           meta: { purpose: dto.purpose, groupId: dto.groupId },
         },
         { headers: { Authorization: `Bearer ${secretKey}` } },
@@ -497,7 +497,7 @@ export class PaymentsService {
     try {
       const transferRes = await axios.post(
         'https://api.paystack.co/transfer',
-        { source: 'balance', amount: Number(amountAfterKobo), recipient: recipient.recipientCode, reason: 'PayPaddy withdrawal', reference },
+        { source: 'balance', amount: Number(amountAfterKobo), recipient: recipient.recipientCode, reason: 'AjoDaddy withdrawal', reference },
         { headers: { Authorization: `Bearer ${secretKey}` }, timeout: 30000 },
       )
 

@@ -294,7 +294,7 @@ export class MaintenanceModeGuard implements CanActivate {
 
     const settings = await this.settingsService.getSettings();
     if (settings.maintenanceMode) {
-      throw new ServiceUnavailableException('PayPaddy is temporarily down for maintenance. Please check back shortly.');
+      throw new ServiceUnavailableException('AjoDaddy is temporarily down for maintenance. Please check back shortly.');
     }
     return true;
   }

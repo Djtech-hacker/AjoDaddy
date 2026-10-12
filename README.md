@@ -1,4 +1,4 @@
-# PayPaddy — African Fintech Contribution Platform
+# AjoDaddy — African Fintech Contribution Platform
 
 > A production-grade digital Ajo/Esusu platform. Real backend. Real payments. Real-time.
 
@@ -253,6 +253,6 @@ WS     /ws                          Socket.io real-time
 
 ## License
 
-Private — PayPaddy Technologies Ltd © 2025
+Private — AjoDaddy Technologies Ltd © 2025
 #   A j o D a d d y  
  

@@ -1,4 +1,4 @@
-# Railway configuration for PayPaddy backend
+# Railway configuration for AjoDaddy backend
 [build]
 builder = "nixpacks"
 buildCommand = "npm install && npx prisma generate && npm run build"

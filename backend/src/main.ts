@@ -89,8 +89,8 @@ async function bootstrap() {
   // ── Swagger API docs ───────────────────────────────────────
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
-      .setTitle('PayPaddy API')
-      .setDescription('PayPaddy — African Fintech Contribution Platform')
+      .setTitle('AjoDaddy API')
+      .setDescription('AjoDaddy — African Fintech Contribution Platform')
       .setVersion('1.0')
       .addBearerAuth()
       .addCookieAuth('refresh_token')

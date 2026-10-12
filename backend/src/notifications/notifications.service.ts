@@ -90,20 +90,20 @@ export class NotificationsService {
     return `
       <div style="font-family: 'Plus Jakarta Sans', sans-serif; max-width: 600px; margin: 0 auto; background: #F8F6F1; padding: 40px 24px;">
         <div style="background: #0B0A08; border-radius: 16px; padding: 40px; text-align: center; margin-bottom: 32px;">
-          <h1 style="color: #fff; font-size: 28px; font-weight: 800; margin: 0 0 8px;">Welcome to PayPaddy</h1>
+          <h1 style="color: #fff; font-size: 28px; font-weight: 800; margin: 0 0 8px;">Welcome to AjoDaddy</h1>
           <p style="color: rgba(255,255,255,0.5); font-size: 14px; margin: 0;">Save together. Grow together.</p>
         </div>
         <div style="background: #fff; border-radius: 16px; padding: 32px; margin-bottom: 24px;">
           <h2 style="color: #111009; font-size: 20px; font-weight: 700; margin: 0 0 12px;">Hi ${firstName}! 👋</h2>
           <p style="color: #6B6760; font-size: 14px; line-height: 1.6; margin: 0 0 24px;">
-            Your PayPaddy account has been created. Verify your email to start saving with your community.
+            Your AjoDaddy account has been created. Verify your email to start saving with your community.
           </p>
           <a href="${verifyUrl}" style="display: inline-block; background: #111009; color: #fff; font-size: 14px; font-weight: 700; padding: 14px 28px; border-radius: 12px; text-decoration: none;">
             Verify Email Address →
           </a>
         </div>
         <p style="color: #9B9690; font-size: 12px; text-align: center; margin: 0;">
-          © 2025 PayPaddy Technologies Ltd · Lagos · Accra · London
+          © 2025 AjoDaddy Technologies Ltd · Lagos · Accra · London
         </p>
       </div>
     `;

@@ -168,7 +168,7 @@ export class AdminService {
       await tx.user.update({ where: { id: userId }, data: { status: 'ACTIVE' } });
       await tx.auditLog.create({ data: { actorId: adminId, action: 'UNBAN_USER', entityType: 'User', entityId: userId } });
     });
-    await this.notificationsService.create({ userId, type: 'SYSTEM', title: 'Account reinstated', body: 'Your account ban has been lifted. You can use PayPaddy again.' }).catch(() => {});
+    await this.notificationsService.create({ userId, type: 'SYSTEM', title: 'Account reinstated', body: 'Your account ban has been lifted. You can use AjoDaddy again.' }).catch(() => {});
     return { message: 'User unbanned' };
   }
 
@@ -562,7 +562,7 @@ export class AdminService {
     try {
       await this.paymentsService.sendBankTransfer(
         dto.amount, dto.accountNumber, dto.bankCode, dto.accountName,
-        reference, `PayPaddy company revenue withdrawal by ${admin?.username}`,
+        reference, `AjoDaddy company revenue withdrawal by ${admin?.username}`,
       )
       await this.prisma.transaction.updateMany({ where: { reference }, data: { status: 'PROCESSING' } })
       return { success: true, reference, message: `₦${dto.amount.toLocaleString()} withdrawal initiated — funds are being sent to ${dto.accountName}` }
@@ -606,7 +606,7 @@ export class AdminService {
         },
       },
     });
-    await this.notificationsService.create({ userId, type: 'SYSTEM', title: 'Identity verified! 🎉', body: 'Your identity has been manually reviewed and approved. Your PayPaddy account is now active!', data: { step: 'KYC_APPROVED' } }).catch(() => {});
+    await this.notificationsService.create({ userId, type: 'SYSTEM', title: 'Identity verified! 🎉', body: 'Your identity has been manually reviewed and approved. Your AjoDaddy account is now active!', data: { step: 'KYC_APPROVED' } }).catch(() => {});
     return { message: 'KYC approved' };
   }
 

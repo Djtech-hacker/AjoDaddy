@@ -38,7 +38,7 @@ export default function ForgotPassword() {
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       >
         <Link to="/" className="w-full flex items-center justify-center mb-10">
-          <img src={LOGO_URL} alt="PayPaddy" className="h-48" />
+          <img src={LOGO_URL} alt="AjoDaddy" className="h-48" />
         </Link>
 
         {done ? (

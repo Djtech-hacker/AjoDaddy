@@ -59,7 +59,7 @@ api.interceptors.response.use(
       const data = error.response.data as any
       useMaintenanceStore.getState().setMaintenanceMode(
         true,
-        data?.message || "PayPaddy is temporarily down for maintenance. We'll be back shortly.",
+        data?.message || "AjoDaddy is temporarily down for maintenance. We'll be back shortly.",
       )
       return Promise.reject(error)
     }

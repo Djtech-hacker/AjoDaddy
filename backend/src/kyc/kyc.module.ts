@@ -220,7 +220,7 @@ private dobsMatch(a: string, b: string): boolean {
       const dup = await this.prisma.identityRecord.findFirst({ where: { ninHash, NOT: { userId } } });
       if (dup) {
         await this.prisma.auditLog.create({ data: { actorId: userId, action: 'KYC_DUPLICATE_NIN_ATTEMPT', entityType: 'USER', entityId: userId, metadata: { ipAddress } } });
-        throw new ConflictException('This NIN is already linked to another PayPaddy account.');
+        throw new ConflictException('This NIN is already linked to another AjoDaddy account.');
       }
     }
 
@@ -303,7 +303,7 @@ private dobsMatch(a: string, b: string): boolean {
       const dup = await this.prisma.identityRecord.findFirst({ where: { bvnHash, NOT: { userId } } });
       if (dup) {
         await this.prisma.auditLog.create({ data: { actorId: userId, action: 'KYC_DUPLICATE_BVN_ATTEMPT', entityType: 'USER', entityId: userId, metadata: { ipAddress } } });
-        throw new ConflictException('This BVN is already linked to another PayPaddy account.');
+        throw new ConflictException('This BVN is already linked to another AjoDaddy account.');
       }
     }
 
@@ -479,7 +479,7 @@ private dobsMatch(a: string, b: string): boolean {
       userId, type: 'SYSTEM',
       title: record.identityMatched ? 'Identity fully verified! 🎉' : 'Face scan received',
       body: record.identityMatched
-        ? 'Your identity is fully verified. Your PayPaddy account is now active!'
+        ? 'Your identity is fully verified. Your AjoDaddy account is now active!'
         : 'Your face scan has been received. Your account is under manual review.',
       data: { step: 'FACE_SUBMITTED' },
     }).catch(() => {});

@@ -5,7 +5,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { motion, AnimatePresence } from 'framer-motion'
 import DashboardLayout from '@/components/layout/DashboardLayout'
-import { Button, Input, Select, Modal, Skeleton } from '@/components/ui'
+import { CARD, LABEL, FIELD, BTN_PRIMARY, BTN_SECONDARY, Pill } from '@/lib/ui'
+import { Input, Select, Modal, Skeleton } from '@/components/ui'
 import { useGroups, useCreateGroup, useJoinGroup } from '@/hooks/useApi'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
@@ -59,23 +60,9 @@ const STATUS_FILTER_OPTS = [
 
 const PAGE_SIZE = 12
 
-const DARK_GREEN = '#166534'
-const DARK_GREEN_BG = '#14532d'
-
 function GroupStatusBadge({ status }: { status: string }) {
-  const cfg: any = {
-    ACTIVE:    { label: 'active',    cls: 'bg-emerald-50 text-emerald-700' },
-    PAUSED:    { label: 'paused',    cls: 'bg-amber-50 text-amber-700' },
-    DRAFT:     { label: 'draft',     cls: 'bg-gray-100 text-gray-500' },
-    COMPLETED: { label: 'completed', cls: 'bg-blue-50 text-blue-700' },
-    CANCELLED: { label: 'cancelled', cls: 'bg-red-50 text-red-600' },
-  }
-  const c = cfg[status] || { label: status.toLowerCase(), cls: 'bg-gray-100 text-gray-500' }
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${c.cls}`}>
-      {c.label}
-    </span>
-  )
+  const tone: any = { ACTIVE: 'success', PAUSED: 'warn', DRAFT: 'neutral', COMPLETED: 'info', CANCELLED: 'danger' }[status] || 'neutral'
+  return <Pill tone={tone}>{status.charAt(0) + status.slice(1).toLowerCase()}</Pill>
 }
 
 function GroupCard({
@@ -91,85 +78,66 @@ function GroupCard({
   const isFull = g.memberCount >= g.maxMembers
 
   return (
-    <motion.div
-      className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col gap-3"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
-      <Link to={`/groups/${g.slug}`} className="flex flex-col gap-3">
+    <div className={`${CARD} p-5 flex flex-col gap-4 hover:border-brand/40 transition-colors`}>
+      <Link to={`/groups/${g.slug}`} className="flex flex-col gap-4">
         {/* Name + status */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[18px] font-bold text-gray-900 leading-tight">{g.name}</p>
-            <p className="text-[12px] text-gray-400 mt-0.5">
-              {g.memberCount} / {g.maxMembers} members · {freqLabel[g.frequency] || g.frequency}
+            <p className="text-[15px] font-semibold text-ink leading-tight truncate">{g.name}</p>
+            <p className="text-[11.5px] text-mist mt-1">
+              {freqLabel[g.frequency] || g.frequency} · {visLabel[g.visibility] || g.visibility}
             </p>
           </div>
           <GroupStatusBadge status={g.status}/>
         </div>
 
-        {/* Visibility pill */}
-        <div>
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
-            g.visibility === 'PUBLIC'
-              ? 'bg-gray-50 text-gray-600 border-gray-200'
-              : g.visibility === 'PRIVATE'
-              ? 'bg-amber-50 text-amber-700 border-amber-200'
-              : 'bg-purple-50 text-purple-700 border-purple-200'
-          }`}>
-            {g.visibility === 'PUBLIC'      && <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg>}
-            {g.visibility === 'PRIVATE'     && <span>🔒</span>}
-            {g.visibility === 'INVITE_ONLY' && <span>👥</span>}
-            {visLabel[g.visibility] || g.visibility}
-          </span>
-        </div>
-
         {/* Amount */}
-        <div className="flex items-baseline justify-between">
-          <p className="text-[22px] font-bold text-gray-900 tracking-tight">
-            ₦{g.contributionAmount.toLocaleString()}
-          </p>
-          <p className="text-[12px] text-gray-400">per {(freqLabel[g.frequency] || g.frequency).toLowerCase()}</p>
+        <div className="flex items-baseline gap-2">
+          <p className="text-[26px] font-semibold text-ink tracking-tight tabular-nums leading-none">₦{g.contributionAmount.toLocaleString()}</p>
+          <p className="text-[12px] text-mist">per {(freqLabel[g.frequency] || g.frequency).toLowerCase()}</p>
         </div>
 
-        {/* Member fill bar */}
-        <div className="h-2 rounded-full overflow-hidden" style={{ background: '#e5e7eb' }}>
-          <div className="h-full rounded-full transition-all duration-700"
-            style={{ width: `${pct}%`, background: DARK_GREEN }}/>
+        {/* Progress */}
+        <div className="space-y-3">
+          <div>
+            <div className="flex justify-between text-[11px] mb-1.5">
+              <span className={LABEL}>Members</span>
+              <span className="text-dim tabular-nums">{g.memberCount} / {g.maxMembers}</span>
+            </div>
+            <div className="h-1 rounded-full bg-sand overflow-hidden">
+              <div className="h-full rounded-full bg-brand transition-all duration-700" style={{ width: `${pct}%` }}/>
+            </div>
+          </div>
+          <div>
+            <div className="flex justify-between text-[11px] mb-1.5">
+              <span className={LABEL}>Cycle</span>
+              <span className="text-dim tabular-nums">{g.currentCycle} of {g.totalCycles}</span>
+            </div>
+            <div className="h-1 rounded-full bg-sand overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${cyclePct}%`, background: 'linear-gradient(90deg, #1B5C3C, #A8E03A)' }}/>
+            </div>
+          </div>
         </div>
-
-        {/* Cycle progress bar */}
-        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#e5e7eb' }}>
-          <div className="h-full rounded-full transition-all duration-700"
-            style={{ width: `${cyclePct}%`, background: DARK_GREEN }}/>
-        </div>
-
-        {/* Cycle label */}
-        <p className="text-[11px] font-medium" style={{ color: DARK_GREEN }}>
-          Cycle {g.currentCycle} of {g.totalCycles}
-        </p>
       </Link>
 
       {/* Action buttons */}
       {!isMember && !isFull && g.status === 'ACTIVE' && (
-        <button onClick={() => onJoin(g)} disabled={joinLoading}
-          className="w-full h-9 rounded-xl text-[12px] font-bold text-white transition-colors disabled:opacity-50"
-          style={{ background: DARK_GREEN }}>
-          {joinLoading ? 'Joining…' : g.visibility === 'PRIVATE' ? 'Enter code →' : g.visibility === 'INVITE_ONLY' ? 'Request →' : 'Join →'}
+        <button onClick={() => onJoin(g)} disabled={joinLoading} className={`${BTN_PRIMARY} w-full`}>
+          {joinLoading ? 'Joining…' : g.visibility === 'PRIVATE' ? 'Enter code' : g.visibility === 'INVITE_ONLY' ? 'Request to join' : 'Join group'}
         </button>
       )}
       {!isMember && isFull && (
-        <div className="w-full h-9 rounded-xl bg-gray-100 flex items-center justify-center text-[12px] text-gray-400 font-semibold">
+        <div className="w-full h-9 rounded-lg bg-sand flex items-center justify-center text-[12px] text-mist font-medium">
           Group full
         </div>
       )}
       {isMember && !isAdmin && (
         <button onClick={() => onLeave(g)}
-          className="w-full h-9 rounded-xl border border-gray-200 text-[12px] font-semibold text-gray-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors">
+          className="w-full h-9 rounded-lg border border-black/[0.1] text-[12px] font-medium text-dim hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors">
           Leave group
         </button>
       )}
-    </motion.div>
+    </div>
   )
 }
 
@@ -265,7 +233,7 @@ export default function GroupsPage() {
       if (g._pendingCode) {
         // came from "Join with code" flow
         await joinGroup.mutateAsync({ id: g.id, inviteCode: g._pendingCode })
-        showToast('You joined! 🎉', 'success')
+        showToast('You joined the group', 'success')
         setAgreementGroup(null); refetch()
       } else if (g.visibility === 'PRIVATE') {
         // needs an invite code — open the code modal next
@@ -274,7 +242,7 @@ export default function GroupsPage() {
       } else {
         setCardJoinLoading(g.id)
         await joinGroup.mutateAsync({ id: g.id })
-        showToast(g.visibility === 'INVITE_ONLY' ? 'Request sent — waiting for admin approval' : 'You joined! 🎉', 'success')
+        showToast(g.visibility === 'INVITE_ONLY' ? 'Request sent — waiting for admin approval' : 'You joined the group', 'success')
         setAgreementGroup(null); refetch()
       }
     } catch (err: any) {
@@ -292,7 +260,7 @@ export default function GroupsPage() {
     setCardJoinLoading(joinTarget.id)
     try {
       await joinGroup.mutateAsync({ id: joinTarget.id, inviteCode: cardJoinCode.trim() })
-      showToast('You joined! 🎉', 'success'); setJoinTarget(null); refetch()
+      showToast('You joined the group', 'success'); setJoinTarget(null); refetch()
     } catch (err: any) { setCardJoinError(err?.response?.data?.message || 'Invalid invite code') }
     finally { setCardJoinLoading(null) }
   }
@@ -312,37 +280,30 @@ export default function GroupsPage() {
     } finally { setLeaveLoading(false) }
   }
 
+  const selectCls = 'h-10 pl-3 pr-8 bg-white border border-black/[0.1] rounded-lg text-[13px] text-dim font-medium outline-none cursor-pointer appearance-none focus:border-brand'
+
   return (
     <DashboardLayout title="My Groups" subtitle="Manage your savings circles">
-      <div className="p-6 max-w-7xl space-y-5">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
 
         {/* ── Header row ── */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          {/* Tabs */}
-          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
+          <div className="inline-flex items-center bg-sand/70 rounded-lg p-1">
             {(['mine', 'public'] as const).map(t => (
               <button key={t} onClick={() => { setTab(t); setPage(1); setStatusFilter('all') }}
-                className={`px-5 py-2 rounded-lg text-[13px] font-semibold transition-all ${
-                  tab === t
-                    ? 'text-white'
-                    : 'text-gray-500 hover:text-gray-800 bg-transparent'
-                }`}
-                style={tab === t ? { background: DARK_GREEN_BG } : {}}>
-                {t === 'mine' ? 'My Groups' : 'Discover'}
+                className={`px-4 h-8 rounded-md text-[13px] font-medium transition-all ${
+                  tab === t ? 'bg-white text-ink shadow-sm' : 'text-mist hover:text-ink'
+                }`}>
+                {t === 'mine' ? 'My groups' : 'Discover'}
               </button>
             ))}
           </div>
 
-          {/* Action buttons */}
           <div className="flex items-center gap-2">
-            <button onClick={() => setJoinOpen(true)}
-              className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-[13px] font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-              Join with code
-            </button>
-            <button onClick={() => setCreateOpen(true)}
-              className="h-10 px-4 rounded-xl text-white text-[13px] font-semibold transition-colors flex items-center gap-1.5"
-              style={{ background: DARK_GREEN_BG }}>
-              + New
+            <button onClick={() => setJoinOpen(true)} className={BTN_SECONDARY}>Join with code</button>
+            <button onClick={() => setCreateOpen(true)} className={BTN_PRIMARY}>
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+              New group
             </button>
           </div>
         </div>
@@ -350,23 +311,21 @@ export default function GroupsPage() {
         {/* ── Search + filter row ── */}
         <div className="flex items-center gap-3">
           <div className="flex-1 relative">
-            <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-mist" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
             <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
               placeholder="Search groups…"
-              className="w-full h-11 pl-10 pr-4 bg-white border border-gray-200 rounded-xl text-[13px] text-gray-900 placeholder-gray-400 outline-none focus:border-gray-400 transition-all"/>
+              className="w-full h-10 pl-10 pr-4 bg-white border border-black/[0.1] rounded-lg text-[13px] text-ink placeholder:text-mist outline-none focus:border-brand focus:ring-2 focus:ring-brand/10 transition-all"/>
           </div>
 
           <AnimatePresence>
             {showFilters && (
               <motion.div className="flex items-center gap-2" initial={{ opacity:0, x:8 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:8 }}>
-                <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
-                  className="h-11 pl-3 pr-8 bg-white border border-gray-200 rounded-xl text-[13px] text-gray-700 font-medium outline-none cursor-pointer appearance-none">
+                <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }} className={selectCls}>
                   {STATUS_FILTER_OPTS.map(o => <option key={o.value} value={o.value}>Status: {o.label}</option>)}
                 </select>
-                <select value={sortBy} onChange={e => { setSortBy(e.target.value); setPage(1) }}
-                  className="h-11 pl-3 pr-8 bg-white border border-gray-200 rounded-xl text-[13px] text-gray-700 font-medium outline-none cursor-pointer appearance-none">
+                <select value={sortBy} onChange={e => { setSortBy(e.target.value); setPage(1) }} className={selectCls}>
                   {SORT_OPTS.map(o => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}
                 </select>
               </motion.div>
@@ -374,10 +333,9 @@ export default function GroupsPage() {
           </AnimatePresence>
 
           <button onClick={() => setShowFilters(v => !v)}
-            className={`h-11 px-4 rounded-xl border text-[13px] font-semibold flex items-center gap-2 transition-all ${
-              showFilters ? 'text-white border-transparent' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
-            }`}
-            style={showFilters ? { background: DARK_GREEN_BG } : {}}>
+            className={`h-10 px-4 rounded-lg border text-[13px] font-medium flex items-center gap-2 transition-all ${
+              showFilters ? 'bg-void text-white border-transparent' : 'bg-white border-black/[0.1] text-dim hover:bg-warm'
+            }`}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4h18M7 8h10M10 12h4"/>
             </svg>
@@ -387,42 +345,40 @@ export default function GroupsPage() {
 
         {/* ── Count ── */}
         {!isLoading && sortedGroups.length > 0 && (
-          <p className="text-[12px] text-gray-400">
+          <p className="text-[12px] text-mist">
             Showing {groups.length} of {sortedGroups.length} group{sortedGroups.length !== 1 ? 's' : ''}
           </p>
         )}
 
         {/* ── Grid ── */}
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-56 rounded-2xl"/>)}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-60 rounded-xl"/>)}
           </div>
         ) : groups.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-200 p-16 text-center">
-            <p className="text-3xl mb-4">🏦</p>
-            <p className="text-[15px] font-bold text-gray-900 mb-2">
-              {tab === 'mine' ? "You haven't joined any groups yet" : "No groups found"}
+          <div className={`${CARD} border-dashed py-16 px-6 text-center`}>
+            <div className="w-10 h-10 mx-auto rounded-lg bg-warm text-brand flex items-center justify-center mb-4">
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2.2" stroke="currentColor" strokeWidth="1.3"/><circle cx="10.5" cy="5" r="2.2" stroke="currentColor" strokeWidth="1.3"/><path d="M1 13c0-2.21 2.015-4 4.5-4s4.5 1.79 4.5 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><path d="M10.5 9c2.485 0 4.5 1.79 4.5 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+            </div>
+            <p className="text-[14px] font-semibold text-ink mb-1.5">
+              {tab === 'mine' ? "You haven't joined any groups yet" : 'No groups found'}
             </p>
-            <p className="text-[13px] text-gray-400 mb-6">
-              {tab === 'mine' ? "Create your own Ajo circle or join one with an invite code." : "Try adjusting your search or filters."}
+            <p className="text-[12.5px] text-mist mb-6 max-w-sm mx-auto">
+              {tab === 'mine' ? 'Create your own Ajo circle, or join one with an invite code.' : 'Try adjusting your search or filters.'}
             </p>
             {tab === 'mine' && (
-              <button onClick={() => setCreateOpen(true)}
-                className="h-10 px-6 rounded-xl text-white text-[13px] font-semibold transition-colors"
-                style={{ background: DARK_GREEN_BG }}>
-                Create your first group
-              </button>
+              <button onClick={() => setCreateOpen(true)} className={`${BTN_PRIMARY} !px-6`}>Create your first group</button>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {groups.map((g, i) => {
               const myMembership = (g as any).myMembership
               const isMember = myMembership?.status === 'ACTIVE'
               const isAdmin  = myMembership?.role === 'ADMIN' || myMembership?.role === 'MODERATOR'
               return (
                 <motion.div key={g.id}
-                  initial={{ opacity:0, y:14 }} animate={{ opacity:1, y:0 }}
+                  initial={{ opacity:0, y:12 }} animate={{ opacity:1, y:0 }}
                   transition={{ delay: i*0.04, duration:0.35, ease:[0.16,1,0.3,1] }}>
                   <GroupCard g={g} isMember={isMember} isAdmin={isAdmin}
                     onLeave={g => { setLeaveGroup(g); setPendingWarning(false) }}
@@ -437,20 +393,15 @@ export default function GroupsPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 pt-2">
             <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
-              className="h-9 w-9 rounded-xl border border-gray-200 bg-white text-[13px] text-gray-500 hover:text-gray-900 transition-all disabled:opacity-40 flex items-center justify-center">
-              ←
-            </button>
+              className="h-9 w-9 rounded-lg border border-black/[0.1] bg-white text-[13px] text-dim hover:bg-warm transition-all disabled:opacity-40 flex items-center justify-center">←</button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
               <button key={p} onClick={() => setPage(p)}
-                className="h-9 w-9 rounded-xl text-[12px] font-semibold transition-all"
-                style={page === p ? { background: DARK_GREEN_BG, color: '#fff' } : { border:'1px solid #E5E7EB', background:'#fff', color:'#6B7280' }}>
+                className={`h-9 w-9 rounded-lg text-[12px] font-medium transition-all ${page === p ? 'bg-void text-white' : 'border border-black/[0.1] bg-white text-dim hover:bg-warm'}`}>
                 {p}
               </button>
             ))}
             <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}
-              className="h-9 w-9 rounded-xl border border-gray-200 bg-white text-[13px] text-gray-500 hover:text-gray-900 transition-all disabled:opacity-40 flex items-center justify-center">
-              →
-            </button>
+              className="h-9 w-9 rounded-lg border border-black/[0.1] bg-white text-[13px] text-dim hover:bg-warm transition-all disabled:opacity-40 flex items-center justify-center">→</button>
           </div>
         )}
       </div>
@@ -459,10 +410,8 @@ export default function GroupsPage() {
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create a new group" size="lg"
         footer={
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setCreateOpen(false)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleSubmit(onCreateSubmit)} disabled={createGroup.isPending}
-              className="h-9 px-5 rounded-lg text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
-              style={{ background: DARK_GREEN_BG }}>
+            <button onClick={() => setCreateOpen(false)} className={BTN_SECONDARY}>Cancel</button>
+            <button onClick={handleSubmit(onCreateSubmit)} disabled={createGroup.isPending} className={BTN_PRIMARY}>
               {createGroup.isPending ? 'Creating…' : 'Create group'}
             </button>
           </div>
@@ -470,9 +419,8 @@ export default function GroupsPage() {
         <form className="space-y-4">
           <Input label="Group name" placeholder="e.g. Lagos Tech Circle" error={errors.name?.message} {...register('name')}/>
           <div>
-            <label className="block text-[12px] font-semibold text-gray-500 mb-1.5">Description (optional)</label>
-            <textarea {...register('description')} placeholder="What is this group about?" rows={2}
-              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-[13px] text-gray-900 outline-none focus:border-gray-400 resize-none transition-all"/>
+            <label className="block text-[12px] font-semibold text-dim mb-1.5">Description (optional)</label>
+            <textarea {...register('description')} placeholder="What is this group about?" rows={2} className={`${FIELD} resize-none`}/>
           </div>
           <Input label="Contribution amount (₦)" type="number" placeholder="50000" error={errors.contributionAmount?.message} {...register('contributionAmount')}/>
 
@@ -488,7 +436,7 @@ export default function GroupsPage() {
             <Input label="Number of rotations" type="number" placeholder="1" error={errors.rotations?.message} {...register('rotations')}/>
             <Input label="Late fee (₦)" type="number" placeholder="0" error={errors.penaltyAmount?.message} {...register('penaltyAmount')}/>
           </div>
-          <p className="text-[11px] text-gray-400 -mt-2">
+          <p className="text-[11px] text-mist -mt-2">
             How many times the group loops through every member's payout turn. Leave at 1 for a classic single-round Ajo — e.g. 5 members × 3 rotations means each person is paid 3 times before the group completes.
           </p>
         </form>
@@ -498,15 +446,13 @@ export default function GroupsPage() {
       <Modal open={joinOpen} onClose={() => setJoinOpen(false)} title="Join with invite code" size="sm"
         footer={
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setJoinOpen(false)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={onJoin} disabled={joinGroup.isPending || !joinCode.trim()}
-              className="h-9 px-5 rounded-lg text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
-              style={{ background: DARK_GREEN_BG }}>
+            <button onClick={() => setJoinOpen(false)} className={BTN_SECONDARY}>Cancel</button>
+            <button onClick={onJoin} disabled={joinGroup.isPending || !joinCode.trim()} className={BTN_PRIMARY}>
               {joinGroup.isPending ? 'Checking…' : 'Continue'}
             </button>
           </div>
         }>
-        <p className="text-[13px] text-gray-500 mb-4">Got an invite code? Paste it below to join a savings group.</p>
+        <p className="text-[13px] text-dim mb-4">Got an invite code? Paste it below to join a savings group.</p>
         <Input label="Invite code" placeholder="e.g. clxyz123abc" value={joinCode} onChange={e => setJoinCode(e.target.value)}/>
       </Modal>
 
@@ -515,15 +461,13 @@ export default function GroupsPage() {
         title="Enter invite code" size="sm"
         footer={
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setJoinTarget(null)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleCardJoinWithCode} disabled={!!cardJoinLoading || !cardJoinCode.trim()}
-              className="h-9 px-5 rounded-lg text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
-              style={{ background: DARK_GREEN_BG }}>
+            <button onClick={() => setJoinTarget(null)} className={BTN_SECONDARY}>Cancel</button>
+            <button onClick={handleCardJoinWithCode} disabled={!!cardJoinLoading || !cardJoinCode.trim()} className={BTN_PRIMARY}>
               {cardJoinLoading ? 'Joining…' : 'Join'}
             </button>
           </div>
         }>
-        <p className="text-[13px] text-gray-500 mb-4"><strong className="text-gray-900">{joinTarget?.name}</strong> is private. Ask the group admin for the invite code.</p>
+        <p className="text-[13px] text-dim mb-4"><strong className="text-ink">{joinTarget?.name}</strong> is private. Ask the group admin for the invite code.</p>
         <Input label="Invite code" placeholder="Enter code here" value={cardJoinCode} onChange={e => { setCardJoinCode(e.target.value); setCardJoinError('') }}/>
         {cardJoinError && <p className="text-[12px] text-red-500 mt-2">{cardJoinError}</p>}
       </Modal>
@@ -532,36 +476,34 @@ export default function GroupsPage() {
       <Modal open={!!agreementGroup} onClose={() => setAgreementGroup(null)} title="Before you join" size="md"
         footer={
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setAgreementGroup(null)} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleAcceptAgreement} disabled={!agreementChecked || agreementLoading}
-              className="h-9 px-5 rounded-lg text-white text-[12px] font-semibold disabled:opacity-50 transition-colors"
-              style={{ background: DARK_GREEN_BG }}>
-              {agreementLoading ? 'Please wait…' : 'Accept & Join'}
+            <button onClick={() => setAgreementGroup(null)} className={BTN_SECONDARY}>Cancel</button>
+            <button onClick={handleAcceptAgreement} disabled={!agreementChecked || agreementLoading} className={BTN_PRIMARY}>
+              {agreementLoading ? 'Please wait…' : 'Accept & join'}
             </button>
           </div>
         }>
         <div className="space-y-4">
-          <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
-            <p className="text-[13px] font-bold text-amber-800 mb-1">Important notice</p>
+          <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+            <p className="text-[13px] font-semibold text-amber-800 mb-1">Important notice</p>
             <p className="text-[12px] text-amber-700">By joining this contribution group, you agree to make every scheduled contribution on time.</p>
           </div>
 
-          <div className="space-y-2.5 text-[12.5px] text-gray-600 leading-relaxed">
-            <p className="font-semibold text-gray-900">Please understand the following rules:</p>
-            <div className="flex gap-2"><span className="text-gray-400">•</span><p>Missing your scheduled contribution will <strong>immediately pause the entire group</strong>, and every member is notified.</p></div>
-            <div className="flex gap-2"><span className="text-gray-400">•</span><p>You'll have <strong>48 hours</strong> to complete the missed payment.</p></div>
-            <div className="flex gap-2"><span className="text-gray-400">•</span><p>If paid within 48 hours, the group resumes automatically and continues normally.</p></div>
-            <div className="flex gap-2"><span className="text-gray-400">•</span><p>If <strong>not</strong> completed within 48 hours:</p></div>
+          <div className="space-y-2.5 text-[12.5px] text-dim leading-relaxed">
+            <p className="font-semibold text-ink">Please understand the following rules:</p>
+            <div className="flex gap-2"><span className="text-mist">•</span><p>Missing your scheduled contribution will <strong>immediately pause the entire group</strong>, and every member is notified.</p></div>
+            <div className="flex gap-2"><span className="text-mist">•</span><p>You'll have <strong>48 hours</strong> to complete the missed payment.</p></div>
+            <div className="flex gap-2"><span className="text-mist">•</span><p>If paid within 48 hours, the group resumes automatically and continues normally.</p></div>
+            <div className="flex gap-2"><span className="text-mist">•</span><p>If <strong>not</strong> completed within 48 hours:</p></div>
             <div className="pl-6 space-y-1.5">
               <div className="flex gap-2"><span className="text-red-400">–</span><p>You'll be automatically removed from the group.</p></div>
               <div className="flex gap-2"><span className="text-red-400">–</span><p>A debt equal to the missed contribution, plus a late fee, is added to your account.</p></div>
               <div className="flex gap-2"><span className="text-red-400">–</span><p>You won't be able to join or create another group until the debt is fully repaid.</p></div>
             </div>
-            <p className="text-[12px] text-gray-500 pt-1">Your NIN and BVN verification prevents opening another account to avoid repayment. Only join if you're confident you can complete every scheduled payment.</p>
+            <p className="text-[12px] text-mist pt-1">Your NIN and BVN verification prevents opening another account to avoid repayment. Only join if you're confident you can complete every scheduled payment.</p>
           </div>
 
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-            <p className="text-[13px] font-bold text-red-700 mb-1">⚠️ Join at your own risk</p>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-[13px] font-semibold text-red-700 mb-1">Join at your own risk</p>
             <p className="text-[12px] text-red-600 leading-relaxed">
               This is a known risk in every rotating savings circle: a member paid out early in the rotation can stop contributing afterward and walk away with the pot. It's a real pattern — not everyone follows through. Our protections (48hr grace period, automatic removal, debt tracking, NIN/BVN verification) make it much harder to get away with, but they can't guarantee you'll get your money back if someone defaults after their payout. Only join groups with people you trust, or start with a small amount until the group proves reliable.
             </p>
@@ -570,10 +512,10 @@ export default function GroupsPage() {
             </p>
           </div>
 
-          <label className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3.5 cursor-pointer">
+          <label className="flex items-start gap-3 bg-warm border border-black/[0.07] rounded-lg p-3.5 cursor-pointer">
             <input type="checkbox" checked={agreementChecked} onChange={e => setAgreementChecked(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-gray-300 cursor-pointer" style={{ accentColor: DARK_GREEN }}/>
-            <span className="text-[13px] font-semibold text-gray-800">I have read and understood these rules.</span>
+              className="mt-0.5 w-4 h-4 rounded border-stone cursor-pointer accent-brand"/>
+            <span className="text-[13px] font-semibold text-ink">I have read and understood these rules.</span>
           </label>
         </div>
       </Modal>
@@ -583,26 +525,26 @@ export default function GroupsPage() {
         title="Leave group" size="sm"
         footer={
           <div className="flex gap-2 justify-end">
-            <button onClick={() => { setLeaveGroup(null); setPendingWarning(false) }} className="h-9 px-4 rounded-lg border border-gray-200 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onClick={() => { setLeaveGroup(null); setPendingWarning(false) }} className={BTN_SECONDARY}>Cancel</button>
             <button onClick={handleLeaveConfirm} disabled={leaveLoading}
-              className="h-9 px-5 rounded-lg bg-red-500 text-white text-[12px] font-semibold hover:bg-red-600 disabled:opacity-50 transition-colors">
+              className="h-9 px-4 rounded-lg bg-red-600 text-white text-[13px] font-medium hover:bg-red-700 disabled:opacity-50 transition-colors">
               {leaveLoading ? 'Leaving…' : pendingWarning ? 'Leave anyway' : 'Yes, leave group'}
             </button>
           </div>
         }>
         {pendingWarning ? (
           <div className="space-y-3">
-            <div className="bg-red-50 border border-red-100 rounded-xl p-4">
-              <p className="text-[13px] font-bold text-red-600 mb-1">⚠️ You have pending contributions</p>
+            <div className="bg-red-50 border border-red-100 rounded-lg p-4">
+              <p className="text-[13px] font-semibold text-red-600 mb-1">You have pending contributions</p>
               <p className="text-[12px] text-red-500">Leaving now may affect your reputation score and you may lose your payout position.</p>
             </div>
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-[13px] text-gray-600">Are you sure you want to leave <strong className="text-gray-900">{leaveGroup?.name}</strong>?</p>
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-1.5">
+            <p className="text-[13px] text-dim">Are you sure you want to leave <strong className="text-ink">{leaveGroup?.name}</strong>?</p>
+            <div className="bg-warm rounded-lg p-4 border border-black/[0.06] space-y-1.5">
               {['You will lose your payout position','You will need an invite to rejoin','Your contribution history will be preserved'].map(t => (
-                <p key={t} className="text-[12px] text-gray-500">• {t}</p>
+                <p key={t} className="text-[12px] text-dim">• {t}</p>
               ))}
             </div>
           </div>

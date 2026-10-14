@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { BarChart, Bar, XAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -7,6 +8,9 @@ import { useDashboardSummary, useInsights, useTrend } from '@/hooks/useApi'
 import { useAuthStore } from '@/stores/authStore'
 import dayjs from 'dayjs'
 import type { Contribution, Payout, Insight } from '@/types'
+
+// Same key the Wallet page uses, so hiding on one hides on the other
+const BALANCE_HIDDEN_KEY = 'walletBalanceHidden'
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `₦${(n / 1_000_000).toFixed(1)}M`
@@ -82,6 +86,13 @@ export default function DashboardPage() {
   const { data: insights }           = useInsights()
   const { data: trendData }          = useTrend({ weeks: 8 })
 
+  const [balanceHidden, setBalanceHidden] = useState(() => localStorage.getItem(BALANCE_HIDDEN_KEY) === 'true')
+  const toggleBalance = () => setBalanceHidden(prev => {
+    const next = !prev
+    localStorage.setItem(BALANCE_HIDDEN_KEY, String(next))
+    return next
+  })
+
   const walletBalance = summary?.wallet?.balance ?? 0
   const availBalance  = summary?.wallet?.availableBalance ?? 0
   const totalContrib  = summary?.totals?.totalTransacted ?? 0
@@ -99,7 +110,7 @@ export default function DashboardPage() {
   })()
 
   const metrics = [
-    { label: 'Total contributed', value: fmt(totalContrib), unit: '', sub: `${txCount} transaction${txCount === 1 ? '' : 's'}` },
+    { label: 'Total contributed', value: balanceHidden ? '₦••••' : fmt(totalContrib), unit: '', sub: `${txCount} transaction${txCount === 1 ? '' : 's'}` },
     { label: 'Active groups',     value: String(activeGroups), unit: '', sub: 'Savings circles' },
     { label: 'Streak',            value: `${streak}`, unit: streak === 1 ? 'week' : 'weeks', sub: 'Consecutive on-time weeks' },
   ]
@@ -138,10 +149,24 @@ export default function DashboardPage() {
               <p className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/40 mt-5">Wallet balance</p>
               {isLoading
                 ? <Skeleton className="h-11 w-52 rounded-md mt-2" />
-                : <p className="text-[40px] sm:text-[48px] leading-none font-semibold tracking-tight text-white tabular-nums mt-2">
-                    <span className="text-white/45 font-normal mr-1">₦</span>{naira(walletBalance)}
-                  </p>}
-              <p className="text-[12px] text-white/45 mt-2.5 tabular-nums">Available ₦{naira(availBalance)}</p>
+                : <div className="flex items-center gap-2 mt-2">
+                    <p className="text-[40px] sm:text-[48px] leading-none font-semibold tracking-tight text-white tabular-nums">
+                      {balanceHidden
+                        ? '••••••'
+                        : <><span className="text-white/45 font-normal mr-1">₦</span>{naira(walletBalance)}</>}
+                    </p>
+                    <button onClick={toggleBalance} aria-label={balanceHidden ? 'Show balance' : 'Hide balance'}
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        {balanceHidden
+                          ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                          : <><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></>}
+                      </svg>
+                    </button>
+                  </div>}
+              <p className="text-[12px] text-white/45 mt-2.5 tabular-nums">
+                Available {balanceHidden ? '₦••••••' : `₦${naira(availBalance)}`}
+              </p>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -162,7 +187,7 @@ export default function DashboardPage() {
         {!isLoading && pendingCount > 0 && (
           <motion.div {...rise(1)} className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
             <p className="text-[12.5px] text-amber-900 font-medium">
-              {pendingCount} pending contribution{pendingCount > 1 ? 's' : ''} due, {fmt(pendingAmount)} in total
+              {pendingCount} pending contribution{pendingCount > 1 ? 's' : ''} due, {balanceHidden ? '₦••••' : fmt(pendingAmount)} in total
             </p>
             <Link to={payNowHref} className="h-8 px-4 rounded-md bg-void text-white text-[12px] font-semibold inline-flex items-center hover:opacity-90">Pay now</Link>
           </motion.div>
@@ -207,7 +232,7 @@ export default function DashboardPage() {
                 <BarChart data={trendData as any[]} barCategoryGap="28%">
                   <CartesianGrid vertical={false} stroke="#EDE9E1" />
                   <XAxis dataKey="week" tick={{ fontSize: 10, fill: '#9A968E' }} axisLine={false} tickLine={false} tickFormatter={v => dayjs(v).format('MMM D')} />
-                  <Tooltip cursor={{ fill: '#F4F1EA' }} formatter={(v: any) => [`₦${Number(v).toLocaleString()}`, 'Total']} labelFormatter={l => dayjs(l).format('MMM D, YYYY')} />
+                  <Tooltip cursor={{ fill: '#F4F1EA' }} formatter={(v: any) => [balanceHidden ? '₦••••' : `₦${Number(v).toLocaleString()}`, 'Total']} labelFormatter={l => dayjs(l).format('MMM D, YYYY')} />
                   <Bar dataKey="total" fill="#1B5C3C" radius={[4, 4, 0, 0]} maxBarSize={30} />
                 </BarChart>
               </ResponsiveContainer>

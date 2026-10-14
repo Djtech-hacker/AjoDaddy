@@ -308,3 +308,6 @@ export function CinematicLoader({ onComplete, duration = 3200 }: CinematicLoader
     </motion.div>
   )
 }
+
+
+

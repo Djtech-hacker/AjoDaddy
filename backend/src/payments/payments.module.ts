@@ -133,9 +133,12 @@ export class PaymentsService {
   private async assertKycVerified(userId: string) {
     const rec = await this.prisma.identityRecord.findUnique({
       where:  { userId },
-      select: { ninVerified: true, bvnVerified: true, identityMatched: true, faceScannedAt: true },
+      select: { status: true, ninVerified: true, bvnVerified: true, faceScannedAt: true },
     })
-    if (!rec?.ninVerified || !rec?.bvnVerified || !rec?.identityMatched || !rec?.faceScannedAt) {
+    const approved =
+      rec?.status === 'VERIFIED' &&
+      rec?.ninVerified && rec?.bvnVerified && !!rec?.faceScannedAt
+    if (!approved) {
       throw new ForbiddenException('KYC_REQUIRED: Complete identity verification before using your wallet.')
     }
   }

@@ -64,9 +64,9 @@ export class WalletService {
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
 
-    const rec = await this.prisma.identityRecord.findUnique({
+       const rec = await this.prisma.identityRecord.findUnique({
       where: { userId },
-      select: { ninVerified: true, bvnVerified: true, identityMatched: true, faceScannedAt: true },
+      select: { status: true, ninVerified: true, bvnVerified: true, faceScannedAt: true },
     });
 
     return {
@@ -74,7 +74,7 @@ export class WalletService {
       balance:        Number(wallet.balance) / 100,       // kobo → naira
       lockedBalance:  Number(wallet.lockedBalance) / 100,
       availableBalance: (Number(wallet.balance) - Number(wallet.lockedBalance)) / 100,
-      kycVerified: !!(rec?.ninVerified && rec?.bvnVerified && rec?.identityMatched && rec?.faceScannedAt),
+       kycVerified: !!(rec?.status === 'VERIFIED' && rec?.ninVerified && rec?.bvnVerified && rec?.faceScannedAt),
     };
   }
 

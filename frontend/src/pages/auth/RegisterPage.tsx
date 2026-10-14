@@ -26,7 +26,16 @@ type Step1Data = z.infer<typeof step1Schema>
 async function apiFetch(path: string, options: RequestInit = {}) {
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`)
+  if (!res.ok) {
+    // show the real validation reason instead of just "Validation failed"
+    const msg = Array.isArray(data.message) ? data.message.join(', ') : data.message
+    const extra = data.errors ? ` (${JSON.stringify(data.errors)})` : ''
+    throw new Error((msg || `Request failed (${res.status})`) + extra)
+  }
+  // if the backend wraps responses as { data: {...} }, unwrap so res.otpToken etc. always work
+  if (data && data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    return { ...data, ...data.data }
+  }
   return data
 }
 
@@ -83,7 +92,8 @@ export default function RegisterPage() {
     setStep1Data(data); setOtpError(''); setOtpSending(true)
     try {
       const res = await apiFetch('/auth/send-phone-otp', { method: 'POST', body: JSON.stringify({ phone: data.phone }) })
-      setOtpToken(res.otpToken); setStep('otp'); setResendCooldown(30)
+      if (!res.otpToken) throw new Error('Server did not return a code token. Please try again.')
+      setOtpToken(res.otpToken); setOtpCode(''); setStep('otp'); setResendCooldown(30)
     } catch (err: any) { setOtpError(err.message || 'Could not send code. Please try again.') }
     finally { setOtpSending(false) }
   }
@@ -93,6 +103,7 @@ export default function RegisterPage() {
     setOtpError(''); setOtpVerifying(true)
     try {
       const res = await apiFetch('/auth/verify-phone-otp', { method: 'POST', body: JSON.stringify({ otpToken, code: otpCode }) })
+      if (!res.phoneVerifiedToken) throw new Error('Verification failed. Please try again.')
       setPhoneVerifiedToken(res.phoneVerifiedToken); setStep(2)
     } catch (err: any) { setOtpError(err.message || 'Incorrect code. Please try again.') }
     finally { setOtpVerifying(false) }
@@ -103,6 +114,7 @@ export default function RegisterPage() {
     setOtpError(''); setOtpSending(true)
     try {
       const res = await apiFetch('/auth/send-phone-otp', { method: 'POST', body: JSON.stringify({ phone: step1Data.phone }) })
+      if (!res.otpToken) throw new Error('Server did not return a code token. Please try again.')
       setOtpToken(res.otpToken); setOtpCode(''); setResendCooldown(30)
     } catch (err: any) { setOtpError(err.message || 'Could not resend code.') }
     finally { setOtpSending(false) }

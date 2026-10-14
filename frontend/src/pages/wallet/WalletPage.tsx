@@ -17,6 +17,9 @@ import { useAuthStore } from '@/stores/authStore'
 import type { Transaction } from '@/types'
 import dayjs from 'dayjs'
 
+// Change this if your identity-verification page lives at a different route (check App.tsx)
+const KYC_ROUTE = '/verify-identity'
+
 const fundSchema = z.object({ amount: z.coerce.number().min(100, 'Minimum ₦100'), provider: z.enum(['paystack']) })
 type FundData = z.infer<typeof fundSchema>
 
@@ -359,9 +362,13 @@ function WithdrawModal({ open, onClose, onSuccess }: { open: boolean; onClose: (
         return
       }
       const msg = e?.response?.data?.message || 'Withdrawal failed'
-      showToast(Array.isArray(msg) ? msg[0] : msg, 'error')
+      const msgText = Array.isArray(msg) ? msg[0] : msg
+      showToast(msgText, 'error')
       setPin('')
-      if (e?.response?.status === 403) setPinError('Incorrect PIN')
+      if (String(msgText).includes('KYC_REQUIRED')) {
+        handleClose()
+        navigate(KYC_ROUTE)
+      } else if (e?.response?.status === 403) setPinError('Incorrect PIN')
       else setStep('form')
     } finally { setSubmitting(false) }
   }
@@ -584,6 +591,9 @@ export default function WalletPage() {
   const pagination = (txData as any)?.pagination
   const w = wallet as any
   const hasPin = user?.hasTransactionPin
+  const kycBlocked   = !walletLoading && w?.kycVerified === false
+  const openFund     = () => kycBlocked ? navigate(KYC_ROUTE) : setFundOpen(true)
+  const openWithdraw = () => kycBlocked ? navigate(KYC_ROUTE) : setWithdrawOpen(true)
   const totalFunded: number = statsData?.totalFunded ?? statsData?.totalDeposited ?? w?.totalFunded ?? w?.totalDeposited ?? 0
   const mask = (v: string) => balanceHidden ? '₦••••••' : v
   const balance = w?.balance ?? 0
@@ -598,6 +608,16 @@ export default function WalletPage() {
       <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
 
         <DebtsSection onSettled={() => refetchWallet()}/>
+
+        {kycBlocked && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[13px] font-semibold text-amber-800">Verify your identity</p>
+              <p className="text-[12px] text-amber-600 mt-0.5">Complete NIN, BVN and face verification to fund your wallet and withdraw.</p>
+            </div>
+            <button onClick={() => navigate(KYC_ROUTE)} className="h-8 px-4 rounded-md bg-void text-white text-[12px] font-semibold hover:opacity-90">Verify now</button>
+          </div>
+        )}
 
         <AnimatePresence>
           {verifying && (
@@ -643,8 +663,8 @@ export default function WalletPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={() => setFundOpen(true)} className={`${BTN_LIME} !h-10 !px-5`}>Fund wallet</button>
-                  <button onClick={() => setWithdrawOpen(true)} className={`${BTN_ON_DARK} !h-10 !px-5`}>Withdraw</button>
+                  <button onClick={openFund} className={`${BTN_LIME} !h-10 !px-5`}>Fund wallet</button>
+                  <button onClick={openWithdraw} className={`${BTN_ON_DARK} !h-10 !px-5`}>Withdraw</button>
                 </div>
               </div>
             </RibbonPanel>
@@ -672,9 +692,9 @@ export default function WalletPage() {
         <motion.div {...rise(2)}>
           <p className={`${LABEL} mb-2.5`}>Quick operations</p>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={() => setFundOpen(true)}
+            <OpCard title="Fund via Paystack" sub="Instant deposits via bank or card" onClick={openFund}
               icon={ico('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}/>
-            <OpCard title="Withdraw to bank" sub="Send money to your saved bank account" onClick={() => setWithdrawOpen(true)}
+            <OpCard title="Withdraw to bank" sub="Send money to your saved bank account" onClick={openWithdraw}
               icon={ico('M12 19l9 2-9-18-9 18 9-2zm0 0v-8')}/>
             <OpCard title="Circle escrow" sub="Check pending locks and releases" onClick={() => navigate('/groups')}
               icon={ico('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}/>

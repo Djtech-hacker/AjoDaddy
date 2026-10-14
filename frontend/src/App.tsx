@@ -140,7 +140,7 @@ export default function App() {
                   <Route path="/dashboard"       element={<RequireAuth><DashboardPage /></RequireAuth>} />
                   <Route path="/groups"          element={<RequireAuth><GroupsPage /></RequireAuth>} />
                   <Route path="/groups/:slug"    element={<RequireAuth><GroupDetailPage /></RequireAuth>} />
-                  <Route path="/verify-identity" element={<KycVerificationPage />} />
+                  <Route path="/verify-identity" element={<RequireAuth><KycVerificationPage /></RequireAuth>} />
                   <Route path="/wallet"          element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/payment/verify"  element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/profile"         element={<RequireAuth><ProfilePage /></RequireAuth>} />

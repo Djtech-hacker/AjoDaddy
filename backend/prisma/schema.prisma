@@ -1032,3 +1032,18 @@ model BankAccount {
   @@index([userId])
   @@map("bank_accounts")
 }
+
+model OtpCode {
+  id         String    @id @default(uuid())
+  phone      String
+  purpose    String    @default("REGISTER")
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("otp_codes")
+}

@@ -1,16 +1,12 @@
 // ============================================================
 // WALLET MODULE — Atomic balance operations, full audit trail
 // ============================================================
-// FIX: getTransactionHistory() and getWalletStats() previously only
-// queried the `transaction` table (written by payments.module.ts for
-// WALLET_FUNDING / WITHDRAWAL / REFUND). But groups.module.ts writes
-// CONTRIBUTION / PAYOUT / PENALTY rows into a *different* table,
-// `walletTransaction`. Since the wallet page only ever read from
-// `transaction`, contributions and payouts could never appear in the
-// UI list or stats no matter what filter was selected — the money
-// moved correctly, but the record of it lived somewhere the endpoint
-// never looked. Both methods below now query both tables, normalize
+// getTransactionHistory() and getWalletStats() query BOTH the
+// `transaction` table (funding/withdrawal/refund) and the
+// `walletTransaction` table (contribution/payout/penalty), normalize
 // them into one shape, and merge/sort/paginate in application code.
+// getWallet() also returns kycVerified so the UI can prompt for
+// identity verification.
 // ============================================================
 
 import {
@@ -67,21 +63,22 @@ export class WalletService {
       },
     });
     if (!wallet) throw new NotFoundException('Wallet not found');
+
+    const rec = await this.prisma.identityRecord.findUnique({
+      where: { userId },
+      select: { ninVerified: true, bvnVerified: true, identityMatched: true, faceScannedAt: true },
+    });
+
     return {
       ...wallet,
       balance:        Number(wallet.balance) / 100,       // kobo → naira
       lockedBalance:  Number(wallet.lockedBalance) / 100,
       availableBalance: (Number(wallet.balance) - Number(wallet.lockedBalance)) / 100,
+      kycVerified: !!(rec?.ninVerified && rec?.bvnVerified && rec?.identityMatched && rec?.faceScannedAt),
     };
   }
 
   // ── Merged transaction history ────────────────────────────
-  // Pulls from BOTH `transaction` (funding/withdrawal/refund, written by
-  // PaymentsService) and `walletTransaction` (contribution/payout/penalty,
-  // written by GroupsService), normalizes them to one shape, then sorts
-  // and paginates the combined result in app code. Over-fetches
-  // (skip + limit) rows from each source so the merged sort/slice is
-  // correct even when one source has far more rows than the other.
   async getTransactionHistory(userId: string, page = 1, limit = 20, type?: string) {
     const skip = (page - 1) * limit;
     const fetchCount = skip + limit;
@@ -261,10 +258,6 @@ export class WalletService {
   }
 
   // ── Merged wallet stats ────────────────────────────────────
-  // Same root issue as getTransactionHistory: PAYOUT lives only in
-  // `walletTransaction` and CONTRIBUTION only in `walletTransaction`,
-  // while WALLET_FUNDING/WITHDRAWAL live in `transaction`. Aggregating
-  // only one table silently undercounted totalReceived/totalSpent.
   async getWalletStats(userId: string) {
     const monthStart = new Date(new Date().setDate(1));
 
@@ -300,7 +293,7 @@ export class WalletService {
 
     const totalReceived = Number(txIn._sum.amount || 0) + Number(wtIn._sum.amount || 0);
     const totalSpent     = Number(txOut._sum.amount || 0) + Number(wtOut._sum.amount || 0);
-    const monthlyFunded   = Number(txMonthlyIn._sum.amount || 0); // WALLET_FUNDING only ever lands in `transaction`
+    const monthlyFunded   = Number(txMonthlyIn._sum.amount || 0);
 
     return {
       totalReceived: totalReceived / 100,
@@ -348,6 +341,6 @@ export class WalletController {
 @Module({
   controllers: [WalletController],
   providers:   [WalletService],
-  exports:     [WalletService],   // ← this line must be here
+  exports:     [WalletService],
 })
 export class WalletModule {}

@@ -14,33 +14,32 @@
 // FIX (previous pass): login() validated password/status but never
 // checked isEmailVerified, so a PENDING_VERIFICATION account (i.e.
 // someone who never clicked the emailed link) could still log in.
-// register() and verifyEmail() were already correct — this closes the
-// one actual gap.
 //
 // FIX (previous pass): register() was AWAITING sendVerificationEmail()
-// before responding to the client, which could block the whole POST
-// /auth/register request long enough to race the frontend's axios
-// timeout even though the user + wallet rows were already committed.
-// Fixed by dropping the `await` — it's now fire-and-forget.
+// before responding, which could race the frontend's axios timeout.
+// It is now fire-and-forget.
 //
-// ADDED (this pass): register() now accepts an optional avatarUrl (a
-// base64 data URL the register form already crops/shrinks client-side)
-// and, once the user + wallet are committed, hands it to
-// UsersService.uploadAvatarFromDataUrl() to push it to Cloudinary and
-// save the resulting link. This is awaited (unlike the email send)
-// because it's a single fast Cloudinary call rather than a slow SMTP
-// round trip, and a profile picture is core account data the client
-// reasonably expects to be saved by the time registration responds —
-// not a background side effect. uploadAvatarFromDataUrl() itself never
-// throws, so a bad/oversized image still can't fail registration; the
-// user just ends up with no avatar and can set one later from Profile.
+// ADDED (previous pass): register() accepts an optional avatarUrl
+// (base64 data URL) and hands it to
+// UsersService.uploadAvatarFromDataUrl() after user + wallet commit.
+//
+// FIX (this pass): phone OTP security.
+//   - The otpToken used to contain the plain OTP code. JWTs are only
+//     base64-encoded (not encrypted), so anyone could decode the token
+//     and read the code. The token now stores an HMAC hash of the code.
+//   - Code is generated with crypto.randomInt instead of Math.random.
+//   - The code comparison is constant-time.
+//   - sendPhoneOtp now awaits the SMS and returns a 503 if sending fails
+//     (it used to say "Code sent" even when the SMS failed).
+//   - SMS provider is now Arkesel (see src/sms/termii.service.ts — class
+//     name kept as TermiiService so no other file needed to change).
 // ============================================================
 
 import {
   Module, Controller, Post, Get, Body, Req, Res,
   UseGuards, HttpCode, HttpStatus, UnauthorizedException,
   BadRequestException, ConflictException, Injectable,
-  NotFoundException,
+  NotFoundException, ServiceUnavailableException,
 } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -52,6 +51,7 @@ import { IsEmail, IsString, MinLength, MaxLength, IsOptional, Matches } from 'cl
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import * as argon2 from 'argon2';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -62,6 +62,7 @@ import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SmsModule } from '../sms/sms.module';
 import { TermiiService } from '../sms/termii.service';
+
 // ── DTOs ─────────────────────────────────────────────────────
 
 export class RegisterDto {
@@ -96,10 +97,9 @@ export class RegisterDto {
   @IsString()
   phoneVerifiedToken: string;
 
-  // NEW — the register form crops/shrinks the picture client-side and
-  // sends it as a base64 data URL. Optional: registration must still
-  // succeed with no photo at all. 200000 chars is generous headroom
-  // for a small 256-400px JPEG data URL.
+  // The register form crops/shrinks the picture client-side and sends it
+  // as a base64 data URL. Optional: registration must still succeed with
+  // no photo at all.
   @IsOptional()
   @IsString()
   @MaxLength(200000)
@@ -286,28 +286,16 @@ export class AuthService {
       return newUser;
     });
 
-    // NEW: upload the registration profile picture, if one was provided.
-    // Awaited (unlike the email send below) — this is a single fast
-    // Cloudinary call, not a slow SMTP round trip, and the picture is
-    // core account data rather than a side effect the client shouldn't
-    // have to wait on. uploadAvatarFromDataUrl() swallows its own
-    // errors, so a bad/oversized image can never turn this successful
-    // registration into a failure response.
+    // Upload the registration profile picture, if one was provided.
+    // uploadAvatarFromDataUrl() swallows its own errors, so a bad/oversized
+    // image can never turn a successful registration into a failure.
     if (dto.avatarUrl) {
       await this.usersService.uploadAvatarFromDataUrl(user.id, dto.avatarUrl);
     }
 
-    // FIX: removed `await` here (see file-level note at the top). The
-    // user + wallet above are already committed — this is now
-    // fire-and-forget so a slow/unreachable mail server can no longer
-    // block the HTTP response for 14-15+ seconds and race the
-    // frontend's axios timeout. Failures still get logged below; they
-    // just don't hold up the response anymore.
+    // Fire-and-forget: user + wallet are already committed, so a slow or
+    // unreachable mail server must not block the HTTP response.
     this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
-      // The user + wallet above are already committed — a failure here
-      // (mail hiccup, audit log, etc.) must NOT make a successful
-      // registration look like a failure to the frontend. Log it and
-      // move on; the user can be sent a fresh verification link later.
       console.error(`[register] sendVerificationEmail failed for ${user.email}:`, err);
     });
 
@@ -343,11 +331,6 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // FIX: this was missing — a registered-but-unverified account could
-    // log in fine since only SUSPENDED/BANNED/deletedAt were checked
-    // below. register() already sends the verification email and
-    // verifyEmail() already flips this to true, so this just enforces
-    // it at the login gate.
     if (!user.isEmailVerified) {
       await logAttempt(false, 'EMAIL_NOT_VERIFIED');
       throw new UnauthorizedException('Please verify your email before logging in. Check your inbox for the verification link.');
@@ -431,21 +414,34 @@ export class AuthService {
   }
 
   // ── Phone OTP (pre-registration) ───────────────────────────
-  // Stateless: no user row exists yet, so the OTP is encoded into a
-  // short-lived signed token instead of a DB row.
+  // Stateless: no user row exists yet, so the OTP proof lives in a
+  // short-lived signed token. The token holds only an HMAC HASH of the
+  // code (never the code itself), so decoding the token reveals nothing.
+
+  private otpHash(phone: string, code: string): string {
+    return createHmac('sha256', this.configService.get<string>('jwt.secret')!)
+      .update(`phone-otp:${phone}:${code}`)
+      .digest('hex');
+  }
+
   async sendPhoneOtp(phone: string) {
     const digits = phone.replace(/\D/g, '');
     const existing = await this.prisma.user.findFirst({ where: { phone: { contains: digits.slice(-10) } } });
     if (existing) throw new ConflictException('This phone number is already registered.');
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 1000000).toString();
 
     const otpToken = this.jwtService.sign(
-      { phone, code },
+      { phone, h: this.otpHash(phone, code) },
       { secret: this.configService.get('jwt.secret'), expiresIn: '10m' },
     );
 
-    this.termii.sendOtp(phone, code).catch((err) => console.error('[sendPhoneOtp] Termii send failed:', err));
+    try {
+      await this.termii.sendOtp(phone, code);
+    } catch (err) {
+      console.error('[sendPhoneOtp] SMS send failed:', err);
+      throw new ServiceUnavailableException('Could not send SMS right now. Please try again shortly.');
+    }
 
     return { message: 'Code sent to your phone', otpToken };
   }
@@ -457,7 +453,12 @@ export class AuthService {
     } catch {
       throw new BadRequestException('Code expired or invalid. Please request a new one.');
     }
-    if (payload.code !== dto.code.trim()) throw new BadRequestException('Incorrect code');
+
+    const expected = Buffer.from(String(payload.h || ''));
+    const got = Buffer.from(this.otpHash(payload.phone, dto.code.trim()));
+    if (expected.length !== got.length || !timingSafeEqual(expected, got)) {
+      throw new BadRequestException('Incorrect code');
+    }
 
     const phoneVerifiedToken = this.jwtService.sign(
       { phone: payload.phone, verified: true },
@@ -610,7 +611,7 @@ export class AuthService {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-    @Post('send-phone-otp')
+  @Post('send-phone-otp')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({ summary: 'Send OTP to a phone number before registration' })

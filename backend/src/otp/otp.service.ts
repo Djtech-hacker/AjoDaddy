@@ -86,7 +86,7 @@ export class OtpService {
     try {
       await this.sendSms(
         phone,
-        `Your PayPaddy verification code is ${code}. It expires in 5 minutes. Do not share it with anyone.`,
+        `Your AjoDaddy verification code is ${code}. It expires in 5 minutes. Do not share it with anyone.`,
       );
     } catch (e) {
       await this.prisma.otpCode.delete({ where: { id: record.id } });
@@ -143,23 +143,30 @@ export class OtpService {
     return phone;
   }
 
-  // ---- Arkesel ----
+  // ---- Termii ----
   private async sendSms(to: string, message: string) {
-    const res = await fetch('https://sms.arkesel.com/api/v2/sms/send', {
+    const apiKey = process.env.TERMII_API_KEY;
+    const sender = process.env.TERMII_SENDER_ID;
+    if (!apiKey || !sender) {
+      throw new Error('TERMII_API_KEY or TERMII_SENDER_ID is missing in .env');
+    }
+    const baseUrl = process.env.TERMII_BASE_URL || 'https://api.ng.termii.com';
+
+    const res = await fetch(`${baseUrl}/api/sms/send`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-key': process.env.ARKESEL_API_KEY!,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sender: process.env.ARKESEL_SENDER_ID, // max 11 chars
-        message,
-        recipients: [to], // 234XXXXXXXXXX, no +
+        to,                // 234XXXXXXXXXX, no +
+        from: sender,
+        sms: message,
+        type: 'plain',
+        channel: process.env.TERMII_CHANNEL || 'generic', // 'dnd' reaches DND numbers
+        api_key: apiKey,
       }),
     });
     const data: any = await res.json().catch(() => ({}));
-    if (!res.ok || data.status !== 'success') {
-      throw new Error(`Arkesel ${res.status}: ${JSON.stringify(data)}`);
+    if (!res.ok || (data.code && data.code !== 'ok')) {
+      throw new Error(`Termii ${res.status}: ${JSON.stringify(data)}`);
     }
   }
 }

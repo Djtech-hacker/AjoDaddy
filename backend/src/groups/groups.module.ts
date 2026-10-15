@@ -152,9 +152,7 @@ export class GroupsService {
   async createGroup(userId: string, dto: CreateGroupDto) {
     const creator = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
     if (!creator || creator.status !== 'ACTIVE') throw new ForbiddenException('Please verify your email before creating a group.');
-    const identityRecord = await this.prisma.identityRecord.findUnique({ where: { userId } });
-    if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification in profile section before creating a group.');
-    if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verificationin profile section before creating a group.');
+    await this.requireKyc(userId);
     // Same check joinGroup() already enforces — a member removed for a
     // missed contribution carries a debt, and until it's settled they
     // shouldn't be able to sidestep it by starting a brand new group
@@ -281,6 +279,7 @@ export class GroupsService {
     if (!agreement) throw new ForbiddenException('You must read and accept the group agreement before joining.');
     const result = await this.prisma.executeTransaction(async (tx) => {
       const group = await tx.group.findUnique({ where: { id: groupId } });
+      await this.requireKyc(userId, tx);
       if (!group) throw new NotFoundException('Group not found');
       if (group.status === 'ARCHIVED' || group.status === 'COMPLETED') throw new BadRequestException('Group is no longer accepting members');
       if (group.status === 'PAUSED') throw new BadRequestException('Group is paused');
@@ -288,9 +287,7 @@ export class GroupsService {
       if (!joiner || joiner.status !== 'ACTIVE') throw new ForbiddenException('You must complete identity verification before joining a group. Go to Profile → Verify Identity.');
       const outstandingDebts = await tx.debt.count({ where: { userId, status: 'OUTSTANDING' } });
       if (outstandingDebts > 0) throw new ForbiddenException('You have outstanding debts that must be settled before joining a new group.');
-      const identityRecord = await tx.identityRecord.findUnique({ where: { userId } });
-      if (process.env.KYC_REQUIRE_NIN === 'true' && !identityRecord?.ninVerified) throw new ForbiddenException('Please complete NIN verification in profile sectionbefore joining a group.');
-      if (process.env.KYC_REQUIRE_BVN === 'true' && !identityRecord?.bvnVerified) throw new ForbiddenException('Please complete BVN verification in profile section before joining a group.');
+      await this.requireKyc(userId, tx);
       if (group.visibility === 'INVITE_ONLY' || group.visibility === 'PRIVATE') {
         if (!dto.inviteCode) throw new ForbiddenException('Invite code required');
         const invite = await tx.inviteLink.findFirst({ where: { groupId, code: dto.inviteCode, isActive: true } });
@@ -893,6 +890,12 @@ export class GroupsService {
     const periods = Math.round(payoutDays / contribDays);
     return Math.max(1, periods);
   }
+  private async requireKyc(userId: string, db: any = this.prisma) {
+  const rec = await db.identityRecord.findUnique({ where: { userId } });
+  if (!rec?.ninVerified || !rec?.bvnVerified) {
+    throw new ForbiddenException('Complete NIN and BVN verification in Profile → Verify Identity first.');
+  }
+}
   private async requireAdmin(userId: string, groupId: string) {
     const member = await this.prisma.groupMember.findFirst({ where: { groupId, userId, status: 'ACTIVE', role: { in: ['ADMIN','MODERATOR'] } } });
     if (!member) throw new ForbiddenException('Admin access required');
@@ -911,8 +914,14 @@ export class GroupsService {
   private async verifyPin(pin: string, transactionPinHash: string): Promise<boolean> {
     const bcrypt = await import('bcrypt');
     return bcrypt.compare(pin, transactionPinHash);
+    return bcrypt.compare(pin, transactionPinHash);
+    return bcrypt.compare(pin, transactionPinHash);
   }
   private formatGroup(group: any, requestingUserId?: string) {
+    return { ...group, contributionAmount: Number(group.contributionAmount) / 100, penaltyAmount: Number(group.penaltyAmount || 0) / 100, poolBalance: Number(group.poolBalance || 0) / 100, memberCount: group._count?.members ?? 0, myMembership: requestingUserId ? (group.members?.find?.((m: any) => m.userId === requestingUserId) ?? null) : (group.members?.length === 1 ? group.members[0] : null) };
+    return { ...group, contributionAmount: Number(group.contributionAmount) / 100, penaltyAmount: Number(group.penaltyAmount || 0) / 100, poolBalance: Number(group.poolBalance || 0) / 100, memberCount: group._count?.members ?? 0, myMembership: requestingUserId ? (group.members?.find?.((m: any) => m.userId === requestingUserId) ?? null) : (group.members?.length === 1 ? group.members[0] : null) };
+    return { ...group, contributionAmount: Number(group.contributionAmount) / 100, penaltyAmount: Number(group.penaltyAmount || 0) / 100, poolBalance: Number(group.poolBalance || 0) / 100, memberCount: group._count?.members ?? 0, myMembership: requestingUserId ? (group.members?.find?.((m: any) => m.userId === requestingUserId) ?? null) : (group.members?.length === 1 ? group.members[0] : null) };
+    return { ...group, contributionAmount: Number(group.contributionAmount) / 100, penaltyAmount: Number(group.penaltyAmount || 0) / 100, poolBalance: Number(group.poolBalance || 0) / 100, memberCount: group._count?.members ?? 0, myMembership: requestingUserId ? (group.members?.find?.((m: any) => m.userId === requestingUserId) ?? null) : (group.members?.length === 1 ? group.members[0] : null) };
     return { ...group, contributionAmount: Number(group.contributionAmount) / 100, penaltyAmount: Number(group.penaltyAmount || 0) / 100, poolBalance: Number(group.poolBalance || 0) / 100, memberCount: group._count?.members ?? 0, myMembership: requestingUserId ? (group.members?.find?.((m: any) => m.userId === requestingUserId) ?? null) : (group.members?.length === 1 ? group.members[0] : null) };
   }
 }

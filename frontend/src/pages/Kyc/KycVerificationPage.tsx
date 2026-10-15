@@ -1,383 +1,313 @@
-// ============================================================
-// KycVerificationPage.tsx — AjoDaddy identity verification
-// Same flow and API calls as before (NIN → BVN → face liveness),
-// restyled to match the Profile page cards.
-// ============================================================
-import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
-import DashboardLayout from '@/components/layout/DashboardLayout'
-import { useUIStore } from '@/stores/uiStore'
-import { kycApi } from '@/api/services'
-import LivenessCapture from '@/components/LivenessCapture'
+// src/components/LivenessCapture.tsx
+//
+// Automatic liveness check + auto-capture. Nobody presses a "snap" button:
+//   1. finds ONE face and waits until it is centered and steady
+//   2. asks for blink / smile / head-turn in a RANDOM order (a pre-recorded video can't predict it)
+//   3. asks them to look straight, then captures the photo by itself
+//
+// Install once:  npm i @mediapipe/tasks-vision
 
-type KycStep = 'nin' | 'bvn' | 'face' | 'complete' | 'pending' | 'rejected'
+import { useEffect, useRef, useState } from 'react'
+import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 
-function deriveStep(status: any): KycStep {
-  if (!status)                                                    return 'nin'
-  if (status.status === 'VERIFIED')                               return 'complete'
-  if (status.status === 'REJECTED')                               return 'rejected'
-  if (status.status === 'MANUAL_REVIEW' && status.faceSubmitted)  return 'pending'
-  if (status.bvnVerified && !status.faceSubmitted)                return 'face'
-  if (status.ninVerified  && !status.bvnVerified)                 return 'bvn'
-  return 'nin'
+export type Challenge = 'blink' | 'smile' | 'turn'
+export type LivenessMeta = { challenges: Challenge[]; durationMs: number }
+
+type Props = {
+  onCapture: (imageDataUrl: string, meta: LivenessMeta) => void
+  onCancel?: () => void
 }
 
-// ── small icons ────────────────────────────────────────────────
-const Icon = {
-  check: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>,
-  x:     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18"/></svg>,
-  clock: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 2"/></svg>,
-  shield:<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.6-4A12 12 0 0112 2.9 12 12 0 013.4 6 12 12 0 003 9c0 5.6 3.8 10.3 9 11.6 5.2-1.3 9-6 9-11.6 0-1-.1-2-.4-3z"/></svg>,
-  lock:  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path strokeLinecap="round" d="M8 11V8a4 4 0 018 0v3"/></svg>,
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+const MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
+
+const STEP_MS = 10000 // time allowed per challenge
+const LABEL: Record<Challenge, string> = {
+  blink: 'Blink your eyes',
+  smile: 'Give a big smile',
+  turn: 'Slowly turn your head to one side',
 }
 
-const STEPS = ['NIN', 'BVN', 'Face scan', 'Done']
-
-function Stepper({ current }: { current: number }) {
-  return (
-    <ol className="kx-stepper" aria-label="Verification progress">
-      {STEPS.map((label, i) => {
-        const n = i + 1
-        const state = n < current ? 'done' : n === current ? 'active' : 'todo'
-        return (
-          <li key={label} className={`kx-step ${state}`} aria-current={state === 'active' ? 'step' : undefined}>
-            <span className="kx-dot">{state === 'done' ? Icon.check : n}</span>
-            <span className="kx-step-label">{label}</span>
-          </li>
-        )
-      })}
-    </ol>
-  )
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1)
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
 }
 
-function SummaryRows({ status, review = false }: { status: any; review?: boolean }) {
-  const tag = review ? 'Submitted' : 'Verified'
-  return (
-    <div className="kx-summary">
-      <div className="kx-sum-row"><span>NIN</span><b className="kx-mono">{status?.ninMasked || '—'}</b><i className="kx-chip ok">{tag}</i></div>
-      <div className="kx-sum-row"><span>BVN</span><b className="kx-mono">{status?.bvnMasked || '—'}</b><i className="kx-chip ok">{tag}</i></div>
-      <div className="kx-sum-row"><span>Face scan</span><b>Liveness check</b><i className="kx-chip ok">{review ? 'Submitted' : 'Confirmed'}</i></div>
-    </div>
-  )
+type Shapes = { categories: { categoryName: string; score: number }[] } | undefined
+const shape = (bs: Shapes, name: string) => bs?.categories.find(c => c.categoryName === name)?.score ?? 0
+
+function faceBox(pts: { x: number; y: number }[]) {
+  let minX = 1, maxX = 0, minY = 1, maxY = 0
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return { w: maxX - minX, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 }
 }
 
-function IdStep({ title, subtitle, note, banner, label, placeholder, value, onChange, error, loading, onSubmit, cta, busyCta }: {
-  title: string; subtitle: string; note: string; banner?: string
-  label: string; placeholder: string; value: string; onChange: (v: string) => void
-  error: string; loading: boolean; onSubmit: () => void; cta: string; busyCta: string
-}) {
-  const ready = value.length === 11
-  return (
-    <div className="kx-body">
-      {banner && <div className="kx-banner ok"><span className="kx-banner-ic">{Icon.check}</span>{banner}</div>}
-      <div>
-        <h2 className="kx-title">{title}</h2>
-        <p className="kx-sub">{subtitle}</p>
-      </div>
-      <div className="kx-note"><span className="kx-note-ic">{Icon.lock}</span>{note}</div>
-      <div>
-        <label className="kx-label" htmlFor="kx-id">{label}</label>
-        <input
-          id="kx-id" className="kx-input" value={value} inputMode="numeric" autoComplete="off" maxLength={11}
-          placeholder={placeholder}
-          onChange={e => onChange(e.target.value.replace(/\D/g, ''))}
-          onKeyDown={e => { if (e.key === 'Enter' && ready && !loading) onSubmit() }}
-          aria-invalid={!!error}
-        />
-        <div className="kx-meter" aria-hidden><span style={{ width: `${(value.length / 11) * 100}%` }} /></div>
-        <p className="kx-hint">{value.length}/11 digits</p>
-      </div>
-      {error && <p className="kx-error" role="alert">{error}</p>}
-      <button className="kx-btn" onClick={onSubmit} disabled={loading || !ready}>{loading ? busyCta : cta}</button>
-    </div>
-  )
-}
+export default function LivenessCapture({ onCapture, onCancel }: Props) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const onCaptureRef = useRef(onCapture)
+  onCaptureRef.current = onCapture
 
-export default function KycVerificationPage() {
-  const navigate      = useNavigate()
-  const { showToast } = useUIStore()
+  const [challenges] = useState<Challenge[]>(() => shuffle<Challenge>(['blink', 'smile', 'turn']))
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [error, setError] = useState('')
+  const [hint, setHint] = useState('Starting camera…')
+  const [done, setDone] = useState(0)
+  const [facing, setFacing] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
-  const [status, setStatus]             = useState<any>(null)
-  const [loading, setLoading]           = useState(true)
-  const [nin, setNin]                   = useState('')
-  const [bvn, setBvn]                   = useState('')
-  const [ninLoading, setNinLoading]     = useState(false)
-  const [bvnLoading, setBvnLoading]     = useState(false)
-  const [error, setError]               = useState('')
-  const [faceLoading, setFaceLoading]   = useState(false)
-  const [showLiveness, setShowLiveness] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    let raf = 0
+    let stream: MediaStream | null = null
+    let landmarker: FaceLandmarker | null = null
+    let captured = false
 
-  const step: KycStep = useMemo(() => deriveStep(status), [status])
-
-  useEffect(() => { loadStatus() }, [])
-  useEffect(() => { setShowLiveness(step === 'face') }, [step])
-
-  const loadStatus = async () => {
-    setLoading(true)
-    try {
-      const res = await kycApi.getStatus()
-      setStatus((res.data as any)?.data || res.data)
-    } catch {
-      showToast('Could not load verification status', 'error')
-    } finally {
-      setLoading(false)
+    const cleanup = () => {
+      cancelAnimationFrame(raf)
+      stream?.getTracks().forEach(t => t.stop())
+      try { landmarker?.close() } catch { /* ignore */ }
     }
-  }
 
-  const handleNinSubmit = async () => {
-    setError('')
-    if (!/^\d{11}$/.test(nin.trim())) { setError('NIN must be exactly 11 digits'); return }
-    setNinLoading(true)
-    try {
-      const res = await kycApi.verifyNin(nin.trim())
-      const d   = (res.data as any)?.data || res.data
-      showToast('NIN verified', 'success')
-      setStatus((prev: any) => ({ ...(prev || {}), ninVerified: true, ninMasked: d?.ninMasked || ('*'.repeat(7) + nin.slice(-4)) }))
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'NIN verification failed. Please try again.')
-    } finally { setNinLoading(false) }
-  }
+    const run = async () => {
+      try {
+        setStatus('loading'); setError(''); setDone(0); setFacing(false); setHint('Starting camera…')
 
-  const handleBvnSubmit = async () => {
-    setError('')
-    if (!/^\d{11}$/.test(bvn.trim())) { setError('BVN must be exactly 11 digits'); return }
-    setBvnLoading(true)
-    try {
-      const res = await kycApi.verifyBvn(bvn.trim())
-      const d   = (res.data as any)?.data || res.data
-      showToast('BVN verified. One more step: face scan', 'success')
-      setStatus((prev: any) => ({ ...(prev || {}), bvnVerified: true, bvnMasked: d?.bvnMasked || ('*'.repeat(7) + bvn.slice(-4)), identityMatched: d?.identityMatched }))
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'BVN verification failed. Please try again.')
-    } finally { setBvnLoading(false) }
-  }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        })
+        if (cancelled) { cleanup(); return }
+        const video = videoRef.current!
+        video.srcObject = stream
+        await video.play()
 
-  const handleLivenessCapture = async (base64: string) => {
-    setFaceLoading(true)
-    try {
-      const cloudName    = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME    || 'dq8vykxut'
-      const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'paypaddy_kyc_faces'
-      const fd = new FormData()
-      fd.append('file', base64)
-      fd.append('upload_preset', uploadPreset)
-      fd.append('folder', 'kyc-face-captures')
-      fd.append('tags', 'user_kyc_face_liveness')
+        setHint('Loading face detection…')
+        const fileset = await FilesetResolver.forVisionTasks(WASM_URL)
+        const make = (delegate: 'GPU' | 'CPU') =>
+          FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: MODEL_URL, delegate },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+            outputFaceBlendshapes: true,
+          })
+        try { landmarker = await make('GPU') } catch { landmarker = await make('CPU') }
+        if (cancelled) { cleanup(); return }
+        setStatus('ready')
 
-      const upRes  = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: fd })
-      const upData = await upRes.json()
-      if (!upData.secure_url) throw new Error('Face upload failed. Check that the Cloudinary preset is Unsigned.')
+        const startedAt = Date.now()
+        let phase: 'position' | 'challenges' | 'final' = 'position'
+        let idx = 0
+        let stableFrames = 0
+        let finalFrames = 0
+        let eyesWereOpen = false
+        let smileFrames = 0
+        let deadline = 0
+        let lastSeen = Date.now()
+        let lastVideoTime = -1
 
-      const res = await kycApi.submitFacePhoto(upData.secure_url)
-      const d   = (res.data as any)?.data || res.data
+        const resetToPosition = (msg?: string) => {
+          phase = 'position'; idx = 0; stableFrames = 0; finalFrames = 0
+          eyesWereOpen = false; smileFrames = 0
+          setDone(0); setFacing(false)
+          if (msg) setHint(msg)
+        }
 
-      if (d?.status === 'VERIFIED' || d?.message?.includes('active')) {
-        showToast('Identity fully verified. Account activated', 'success')
-        setStatus((prev: any) => ({ ...(prev || {}), status: 'VERIFIED', faceSubmitted: true, facePhotoUrl: upData.secure_url }))
-      } else {
-        showToast('Face scan submitted. Under manual review.', 'info')
-        setStatus((prev: any) => ({ ...(prev || {}), status: 'MANUAL_REVIEW', faceSubmitted: true, facePhotoUrl: upData.secure_url }))
+        const capture = () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = video.videoWidth
+          canvas.height = video.videoHeight
+          canvas.getContext('2d')!.drawImage(video, 0, 0)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
+          captured = true
+          cleanup()
+          onCaptureRef.current(dataUrl, { challenges, durationMs: Date.now() - startedAt })
+        }
+
+        const tick = () => {
+          if (cancelled || captured) return
+          raf = requestAnimationFrame(tick)
+          if (video.readyState < 2 || video.currentTime === lastVideoTime) return
+          lastVideoTime = video.currentTime
+
+          const res = landmarker!.detectForVideo(video, performance.now())
+          const faces = res.faceLandmarks
+          const now = Date.now()
+
+          if (!faces || faces.length === 0) {
+            setFacing(false)
+            if (phase !== 'position' && now - lastSeen > 1500) resetToPosition('Face lost. Let’s start again.')
+            else if (phase === 'position') { stableFrames = 0; setHint('No face found. Look at the camera.') }
+            return
+          }
+          if (faces.length > 1) {
+            setFacing(false); stableFrames = 0
+            setHint('Only one person should be in the frame.')
+            if (phase !== 'position') resetToPosition('Only one person should be in the frame.')
+            return
+          }
+          lastSeen = now
+
+          const pts = faces[0]
+          const { w, cx, cy } = faceBox(pts)
+          const bs = res.faceBlendshapes?.[0] as Shapes
+
+          // position quality
+          let posMsg = ''
+          if (w < 0.22) posMsg = 'Move a little closer.'
+          else if (w > 0.6) posMsg = 'Move back a little.'
+          else if (Math.abs(cx - 0.5) > 0.15 || Math.abs(cy - 0.5) > 0.18) posMsg = 'Center your face in the oval.'
+          const posOk = posMsg === ''
+
+          // expression / pose measurements
+          const blinkL = shape(bs, 'eyeBlinkLeft')
+          const blinkR = shape(bs, 'eyeBlinkRight')
+          const smile = (shape(bs, 'mouthSmileLeft') + shape(bs, 'mouthSmileRight')) / 2
+          const nose = pts[1], edgeA = pts[234], edgeB = pts[454]
+          const span = edgeB.x - edgeA.x || 1
+          const ratio = (nose.x - edgeA.x) / span // ~0.5 when looking straight
+
+          if (phase === 'position') {
+            if (!posOk) { stableFrames = 0; setFacing(false); setHint(posMsg); return }
+            setFacing(true)
+            stableFrames++
+            if (stableFrames < 12) { setHint('Hold still…'); return }
+            phase = 'challenges'; idx = 0; deadline = now + STEP_MS
+            eyesWereOpen = false; smileFrames = 0
+            setDone(0)
+          }
+
+          if (phase === 'challenges') {
+            if (cx < 0.2 || cx > 0.8 || w < 0.15) { resetToPosition('Keep your face inside the frame.'); return }
+            if (now > deadline) { resetToPosition('Too slow. Let’s try again.'); return }
+
+            const cur = challenges[idx]
+            setHint(LABEL[cur])
+            let passed = false
+
+            if (cur === 'blink') {
+              if (blinkL < 0.25 && blinkR < 0.25) eyesWereOpen = true
+              if (eyesWereOpen && blinkL > 0.55 && blinkR > 0.55) passed = true
+            } else if (cur === 'smile') {
+              smileFrames = smile > 0.55 ? smileFrames + 1 : 0
+              passed = smileFrames >= 4
+            } else {
+              passed = Math.abs(ratio - 0.5) > 0.16
+            }
+
+            if (passed) {
+              idx++
+              setDone(idx)
+              eyesWereOpen = false
+              smileFrames = 0
+              deadline = now + STEP_MS
+              if (idx >= challenges.length) { phase = 'final'; finalFrames = 0 }
+            }
+            return
+          }
+
+          // final: neutral, straight, eyes open -> auto capture
+          if (now > deadline) { resetToPosition('Too slow. Let’s try again.'); return }
+          setHint('Now look straight at the camera…')
+          const straight =
+            posOk && smile < 0.3 && Math.abs(ratio - 0.5) < 0.08 && blinkL < 0.3 && blinkR < 0.3
+          finalFrames = straight ? finalFrames + 1 : 0
+          if (finalFrames >= 6) capture()
+        }
+
+        raf = requestAnimationFrame(tick)
+      } catch (err: any) {
+        if (cancelled) return
+        cleanup()
+        setStatus('error')
+        setError(
+          err?.name === 'NotAllowedError'
+            ? 'Camera permission was denied. Allow camera access in your browser, then retry.'
+            : err?.name === 'NotFoundError'
+              ? 'No camera was found on this device.'
+              : 'Could not start face detection. Check your internet connection and retry.',
+        )
       }
-      setShowLiveness(false)
-    } catch (err: any) {
-      showToast(err?.response?.data?.message || err?.message || 'Face submission failed. Try again.', 'error')
-    } finally { setFaceLoading(false) }
-  }
+    }
 
-  const handleResubmit = () => { setNin(''); setBvn(''); setError(''); setStatus(null) }
-
-  const currentStepNum = step === 'nin' ? 1 : step === 'bvn' ? 2 : step === 'face' ? 3 : 4
-  const showLocked = step !== 'complete' && step !== 'rejected'
+    run()
+    return () => { cancelled = true; cleanup() }
+  }, [attempt, challenges])
 
   return (
-    <DashboardLayout title="Verify Identity" subtitle="Complete KYC to unlock all AjoDaddy features">
-      <style>{CSS}</style>
-      <div className="kx-root">
-        <div className="kx-grid">
-          <div className="kx-main">
-            <section className="kx-card">
-              <Stepper current={currentStepNum} />
-
-              {loading ? (
-                <div className="kx-center">
-                  <div className="kx-spin" />
-                  <p className="kx-sub">Loading your verification status…</p>
-                </div>
-
-              ) : step === 'complete' ? (
-                <div className="kx-body kx-centered">
-                  <div className="kx-badge ok">{Icon.shield}</div>
-                  <h2 className="kx-title">Identity verified</h2>
-                  <p className="kx-sub">Your account is fully active. All features are unlocked.</p>
-                  <SummaryRows status={status} />
-                  <button className="kx-btn" onClick={() => navigate('/groups')}>Go to groups →</button>
-                </div>
-
-              ) : step === 'rejected' ? (
-                <div className="kx-body kx-centered">
-                  <div className="kx-badge err">{Icon.x}</div>
-                  <h2 className="kx-title">Verification rejected</h2>
-                  <p className="kx-sub">We couldn't verify your identity with the details you submitted.</p>
-                  {status?.rejectionReason && (
-                    <div className="kx-banner err kx-left"><div><b>Reason</b><p>{status.rejectionReason}</p></div></div>
-                  )}
-                  <div className="kx-actions">
-                    <button className="kx-btn" onClick={handleResubmit}>Resubmit →</button>
-                    <button className="kx-btn ghost" onClick={() => navigate('/contact-support')}>Contact support</button>
-                  </div>
-                </div>
-
-              ) : step === 'pending' ? (
-                <div className="kx-body kx-centered">
-                  <div className="kx-badge warn">{Icon.clock}</div>
-                  <h2 className="kx-title">Under review</h2>
-                  <p className="kx-sub">Your identity is being reviewed manually. This usually takes under 24 hours.</p>
-                  <SummaryRows status={status} review />
-                  <span className="kx-chip warn big">Under review</span>
-                </div>
-
-              ) : step === 'nin' ? (
-                <IdStep
-                  title="Step 1: NIN verification" subtitle="Enter your 11-digit National Identification Number."
-                  note="Your NIN is encrypted before storage. Only the last 4 digits are ever shown."
-                  label="National Identification Number (NIN)" placeholder="Enter your 11-digit NIN"
-                  value={nin} onChange={v => { setNin(v); setError('') }} error={error}
-                  loading={ninLoading} onSubmit={handleNinSubmit} cta="Verify NIN →" busyCta="Verifying NIN…"
-                />
-
-              ) : step === 'bvn' ? (
-                <IdStep
-                  banner={`NIN verified: ${status?.ninMasked ?? ''}`}
-                  title="Step 2: BVN verification" subtitle="Enter your 11-digit Bank Verification Number."
-                  note="Your BVN is encrypted and cross-matched with your NIN to confirm your identity."
-                  label="Bank Verification Number (BVN)" placeholder="Enter your 11-digit BVN"
-                  value={bvn} onChange={v => { setBvn(v); setError('') }} error={error}
-                  loading={bvnLoading} onSubmit={handleBvnSubmit} cta="Verify BVN →" busyCta="Verifying BVN…"
-                />
-
-              ) : step === 'face' ? (
-                <div className="kx-body">
-                  <div className="kx-banner ok"><span className="kx-banner-ic">{Icon.check}</span>NIN and BVN verified</div>
-                  <div>
-                    <h2 className="kx-title">Step 3: Face liveness scan</h2>
-                    <p className="kx-sub">Centre your face in good lighting and capture a clear selfie. We'll confirm it's really you.</p>
-                  </div>
-                  {faceLoading ? (
-                    <div className="kx-center"><div className="kx-spin" /><p className="kx-sub">Uploading your face scan…</p></div>
-                  ) : showLiveness ? (
-                    <LivenessCapture
-                      onCapture={handleLivenessCapture}
-                      onCancel={() => setShowLiveness(false)}
-                      uploadingLabel="Uploading your face scan…"
-                    />
-                  ) : (
-                    <button className="kx-btn" onClick={() => setShowLiveness(true)}>Start face scan →</button>
-                  )}
-                </div>
-              ) : null}
-            </section>
-          </div>
-
-          {showLocked && (
-            <aside className="kx-side">
-              <section className="kx-card kx-locked">
-                <h3 className="kx-side-h">Until you verify</h3>
-                <ul>
-                  {['Join or create contribution groups', 'Receive payouts', 'Withdraw funds', 'Use financial features'].map(t => (
-                    <li key={t}><span className="kx-x">{Icon.lock}</span>{t}</li>
-                  ))}
-                </ul>
-              </section>
-            </aside>
-          )}
+    <div className="space-y-3">
+      <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-black">
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          className="h-full w-full object-cover"
+          style={{ transform: 'scaleX(-1)' }}
+        />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div
+            className={`aspect-[3/4] h-[78%] rounded-[50%] border-4 transition-colors ${facing ? 'border-emerald-400' : 'border-white/70'}`}
+            style={{ boxShadow: '0 0 0 999px rgba(0,0,0,0.35)' }}
+          />
         </div>
+        {status === 'loading' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-[13px] font-medium text-white">
+            {hint}
+          </div>
+        )}
       </div>
-    </DashboardLayout>
+
+      {status !== 'error' && (
+        <>
+          <p aria-live="polite" className="text-center text-[14px] font-semibold text-ink">
+            {status === 'ready' ? hint : 'Please wait…'}
+          </p>
+          <ul className="flex justify-center gap-2 text-[12px]">
+            {challenges.map((c, i) => (
+              <li
+                key={c}
+                className={`rounded-full px-3 py-1 font-semibold ${i < done ? 'bg-emerald-100 text-emerald-700' : 'bg-black/[0.05] text-dim'}`}
+              >
+                {i < done ? '✓ ' : ''}{c === 'blink' ? 'Blink' : c === 'smile' ? 'Smile' : 'Turn'}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {status === 'error' && (
+        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-600">
+          {error}
+          <button
+            type="button"
+            onClick={() => setAttempt(a => a + 1)}
+            className="ml-2 font-bold underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {onCancel && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border border-black/[0.1] bg-white px-5 py-2.5 text-[13px] font-semibold text-ink"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
-
-const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
-  .kx-root { font-family: 'Inter', -apple-system, sans-serif; background: #F8F9FB; min-height: 100vh; padding: 24px 20px 40px; color: #111827; }
-  .kx-grid { max-width: 940px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; }
-  .kx-grid:has(.kx-side) { grid-template-columns: minmax(0, 1fr) 260px; }
-  .kx-grid:not(:has(.kx-side)) { grid-template-columns: minmax(0, 620px); justify-content: center; }
-  @media (max-width: 820px) { .kx-grid, .kx-grid:has(.kx-side) { grid-template-columns: 1fr; } .kx-side { order: -1; } }
-  .kx-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 18px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
-
-  /* stepper */
-  .kx-stepper { list-style: none; margin: 0 0 26px; padding: 0; display: flex; }
-  .kx-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
-  .kx-step:not(:last-child)::after { content: ''; position: absolute; top: 14px; left: calc(50% + 18px); right: calc(-50% + 18px); height: 2px; background: #E5E7EB; }
-  .kx-step.done:not(:last-child)::after { background: #16A34A; }
-  .kx-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: #F3F4F6; color: #9CA3AF; border: 1.5px solid #E5E7EB; position: relative; z-index: 1; }
-  .kx-step.active .kx-dot { background: #0B3D2A; border-color: #0B3D2A; color: #fff; box-shadow: 0 0 0 4px rgba(11,61,42,.12); }
-  .kx-step.done .kx-dot { background: #16A34A; border-color: #16A34A; color: #fff; }
-  .kx-step-label { font-size: 11px; font-weight: 600; color: #9CA3AF; }
-  .kx-step.active .kx-step-label { color: #111827; }
-  .kx-step.done .kx-step-label { color: #15803D; }
-
-  /* content */
-  .kx-body { display: flex; flex-direction: column; gap: 16px; }
-  .kx-centered { align-items: center; text-align: center; }
-  .kx-left { text-align: left; align-self: stretch; }
-  .kx-title { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
-  .kx-sub { font-size: 12.5px; color: #6B7280; line-height: 1.55; margin-top: 3px; }
-  .kx-badge { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-  .kx-badge.ok { background: #DCFCE7; color: #15803D; }
-  .kx-badge.err { background: #FEE2E2; color: #B91C1C; }
-  .kx-badge.warn { background: #FEF3C7; color: #B45309; }
-
-  .kx-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: #374151; line-height: 1.5; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 11px 12px; }
-  .kx-note-ic { color: #16A34A; margin-top: 1px; display: flex; }
-  .kx-banner { display: flex; gap: 10px; align-items: center; font-size: 12px; font-weight: 600; border-radius: 10px; padding: 11px 12px; }
-  .kx-banner.ok { background: #F0FDF4; color: #15803D; }
-  .kx-banner.err { background: #FEF2F2; color: #B91C1C; align-items: flex-start; }
-  .kx-banner.err b { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
-  .kx-banner.err p { font-weight: 500; margin-top: 3px; }
-  .kx-banner-ic { width: 20px; height: 20px; border-radius: 50%; background: #16A34A; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .kx-banner-ic svg { width: 11px; height: 11px; }
-
-  /* input */
-  .kx-label { display: block; font-size: 9.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9CA3AF; margin-bottom: 6px; }
-  .kx-input { width: 100%; height: 46px; padding: 0 14px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; font-family: 'DM Mono', monospace; font-size: 15px; letter-spacing: .18em; color: #111827; outline: none; transition: border-color .15s, box-shadow .15s, background .15s; }
-  .kx-input::placeholder { letter-spacing: 0; font-family: 'Inter', sans-serif; font-size: 13px; color: #9CA3AF; }
-  .kx-input:focus { border-color: #22C55E; background: #fff; box-shadow: 0 0 0 3px rgba(34,197,94,.12); }
-  .kx-input[aria-invalid="true"] { border-color: #F87171; }
-  .kx-meter { height: 3px; background: #F3F4F6; border-radius: 99px; margin-top: 8px; overflow: hidden; }
-  .kx-meter span { display: block; height: 100%; background: #16A34A; border-radius: 99px; transition: width .15s; }
-  .kx-hint { font-size: 11px; color: #9CA3AF; margin-top: 5px; }
-  .kx-error { font-size: 12px; color: #B91C1C; background: #FEF2F2; border-radius: 8px; padding: 10px 12px; }
-
-  /* buttons */
-  .kx-btn { font-family: inherit; height: 44px; padding: 0 22px; border: none; border-radius: 10px; background: #0B3D2A; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; }
-  .kx-body > .kx-btn { width: 100%; }
-  .kx-btn:hover:not(:disabled) { background: #0F5138; }
-  .kx-btn:disabled { opacity: .45; cursor: not-allowed; }
-  .kx-btn:focus-visible { outline: 2px solid #16A34A; outline-offset: 2px; }
-  .kx-btn.ghost { background: #fff; color: #374151; border: 1px solid #D1D5DB; }
-  .kx-btn.ghost:hover:not(:disabled) { background: #F9FAFB; }
-  .kx-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-  .kx-body.kx-centered > .kx-btn { width: auto; }
-
-  /* summary */
-  .kx-summary { align-self: stretch; text-align: left; border: 1px solid #E5E7EB; border-radius: 12px; background: #F9FAFB; }
-  .kx-sum-row { display: grid; grid-template-columns: 82px 1fr auto; align-items: center; gap: 10px; padding: 12px 14px; font-size: 12px; }
-  .kx-sum-row + .kx-sum-row { border-top: 1px solid #E5E7EB; }
-  .kx-sum-row span { font-size: 9.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9CA3AF; }
-  .kx-sum-row b { font-weight: 600; color: #111827; }
-  .kx-mono { font-family: 'DM Mono', monospace; }
-  .kx-chip { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
-  .kx-chip.ok { color: #15803D; background: #DCFCE7; }
-  .kx-chip.warn { color: #B45309; background: #FEF3C7; }
-  .kx-chip.big { font-size: 10px; padding: 5px 10px; }
-
-  /* side + loading */
-  .kx-side-h { font-size: 13px; font-weight: 700; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid #F3F4F6; }
-  .kx-locked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-  .kx-locked li { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #4B5563; }
-  .kx-x { width: 24px; height: 24px; border-radius: 7px; background: #F3F4F6; color: #9CA3AF; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .kx-center { text-align: center; padding: 36px 0; }
-  .kx-spin { width: 26px; height: 26px; border: 2px solid #E5E7EB; border-top-color: #16A34A; border-radius: 50%; margin: 0 auto 12px; animation: kx-spin .8s linear infinite; }
-  @keyframes kx-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .kx-spin { animation-duration: 2s; } .kx-meter span, .kx-btn, .kx-input { transition: none; } }
-`

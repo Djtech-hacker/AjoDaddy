@@ -59,6 +59,51 @@ function fileToAvatar(file: File, size = 256): Promise<string> {
   })
 }
 
+// ---- Password strength meter ----
+function PasswordStrength({ password }: { password: string }) {
+  if (!password) return null
+
+  const rules = [
+    { label: '8+ characters',            ok: password.length >= 8 },
+    { label: 'Uppercase letter (A-Z)',   ok: /[A-Z]/.test(password) },
+    { label: 'Lowercase letter (a-z)',   ok: /[a-z]/.test(password) },
+    { label: 'Number (0-9)',             ok: /\d/.test(password) },
+    { label: 'Special character (!@#$)', ok: /[^A-Za-z0-9]/.test(password) },
+  ]
+  const score = rules.filter(r => r.ok).length
+
+  let level = { label: 'Weak',   bars: 1, color: 'bg-red-500',   text: 'text-red-500' }
+  if (score === 3) level = { label: 'Fair',   bars: 2, color: 'bg-amber-400', text: 'text-amber-500' }
+  if (score === 4) level = { label: 'Good',   bars: 3, color: 'bg-lime-500',  text: 'text-lime-600' }
+  if (score === 5) level = { label: 'Strong', bars: 4, color: 'bg-green-600', text: 'text-green-600' }
+
+  return (
+    <div className="pt-0.5">
+      <div className="flex items-center gap-2">
+        <div className="flex flex-1 gap-1">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="h-1.5 flex-1 rounded-full bg-black/[0.08] overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${level.color}`}
+                style={{ width: i <= level.bars ? '100%' : '0%' }}
+              />
+            </div>
+          ))}
+        </div>
+        <span className={`text-[12px] font-semibold w-12 text-right ${level.text}`}>{level.label}</span>
+      </div>
+      <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+        {rules.map(r => (
+          <li key={r.label} className={`text-[12px] flex items-center gap-1.5 transition-colors ${r.ok ? 'text-green-600' : 'text-dim'}`}>
+            <span className="font-bold w-3">{r.ok ? '✓' : '○'}</span>
+            {r.label}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function RegisterPage() {
   const register  = useRegister()
   const [step, setStep] = useState<1 | 'otp' | 2 | 'done'>(1)
@@ -75,7 +120,8 @@ export default function RegisterPage() {
   const [avatarError, setAvatarError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const { register: reg1, handleSubmit: hs1, formState: { errors: e1 } } = useForm<Step1Data>({ resolver: zodResolver(step1Schema) })
+  const { register: reg1, handleSubmit: hs1, watch, formState: { errors: e1 } } = useForm<Step1Data>({ resolver: zodResolver(step1Schema) })
+  const passwordValue = watch('password') || ''
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -190,6 +236,7 @@ export default function RegisterPage() {
             </div>
             <Input label="Email address" type="email" placeholder="adaeze@domain.com" autoComplete="email" error={e1.email?.message} {...reg1('email')} />
             <Input label="Choose password" type="password" placeholder="Min 8 chars, upper + lower + number" autoComplete="new-password" error={e1.password?.message} {...reg1('password')} />
+            <PasswordStrength password={passwordValue} />
             <Input label="Confirm password" type="password" placeholder="Repeat password" autoComplete="new-password" error={e1.confirmPassword?.message} {...reg1('confirmPassword')} />
             {otpError && <p className="text-[12px] text-red-500">{otpError}</p>}
             <Button type="submit" fullWidth className="mt-1" loading={otpSending} disabled={otpSending}>

@@ -7,7 +7,7 @@
 // }
 
 // const LOGO_URL =
-//   'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+//   'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
 
 // /**
 //  * TAREVA loader
@@ -170,7 +170,7 @@ interface CinematicLoaderProps {
   duration?: number
 }
 
-const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
 
 // ── Switch the whole look here: 'light' or 'dark' ──
 const MODE = 'light' as 'light' | 'dark'

@@ -7,7 +7,7 @@ import { motion } from 'framer-motion'
 import { authApi } from '@/api/services'
 import { Button, Input } from '@/components/ui'
 
-const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
 
 const schema = z.object({
   newPassword:     z.string().min(8).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Must contain upper, lower & number'),

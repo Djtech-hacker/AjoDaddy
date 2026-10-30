@@ -45,7 +45,7 @@ export class MailService {
   private readonly fromEmail: string;
   private readonly appName: string;
   private readonly frontendUrl: string;
-  private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png';
+  private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png';
 
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('MAILJET_API_KEY', '');

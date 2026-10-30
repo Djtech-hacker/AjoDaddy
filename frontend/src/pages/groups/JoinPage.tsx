@@ -75,7 +75,7 @@ export default function JoinPage() {
     return (
       <Backdrop>
         <div className="text-center space-y-4">
-          <img src={LOGO_URL} alt="AjoDaddy" className="h-14 w-auto object-contain mx-auto" />
+          <img src={LOGO_URL} alt="TAREVA" className="h-14 w-auto object-contain mx-auto" />
           <div className="w-8 h-8 border-2 border-lime border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-[13px] font-medium text-white/60">{phase === 'joining' ? 'Joining group…' : 'Loading invite…'}</p>
         </div>
@@ -87,7 +87,7 @@ export default function JoinPage() {
     return (
       <Backdrop>
         <div className="text-center space-y-4 max-w-sm px-6">
-          <img src={LOGO_URL} alt="AjoDaddy" className="h-14 w-auto object-contain mx-auto" />
+          <img src={LOGO_URL} alt="TAREVA" className="h-14 w-auto object-contain mx-auto" />
           <p className="text-[15px] font-semibold text-white">{errorMsg}</p>
           <button onClick={() => navigate('/groups')}
             className="h-10 px-5 rounded-lg bg-lime text-ink text-[13px] font-semibold hover:bg-lime/90 transition-colors">
@@ -102,7 +102,7 @@ export default function JoinPage() {
   return (
     <Backdrop>
       <div className="w-full max-w-lg">
-        <img src={LOGO_URL} alt="AjoDaddy" className="h-14 w-auto object-contain mx-auto mb-5" />
+        <img src={LOGO_URL} alt="TAREVA" className="h-14 w-auto object-contain mx-auto mb-5" />
         <div className={`${CARD} shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] p-6 space-y-5`}>
           <div>
             <p className={LABEL}>You've been invited to</p>

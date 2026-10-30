@@ -367,7 +367,7 @@ export class KycService {
       const dup = await this.prisma.identityRecord.findFirst({ where: { ninHash, NOT: { userId } } });
       if (dup) {
         await this.prisma.auditLog.create({ data: { actorId: userId, action: 'KYC_DUPLICATE_NIN_ATTEMPT', entityType: 'USER', entityId: userId, metadata: { ipAddress } } });
-        throw new ConflictException('This NIN is already linked to another AjoDaddy account.');
+        throw new ConflictException('This NIN is already linked to another TAREVA account.');
       }
     }
 
@@ -450,7 +450,7 @@ export class KycService {
       const dup = await this.prisma.identityRecord.findFirst({ where: { bvnHash, NOT: { userId } } });
       if (dup) {
         await this.prisma.auditLog.create({ data: { actorId: userId, action: 'KYC_DUPLICATE_BVN_ATTEMPT', entityType: 'USER', entityId: userId, metadata: { ipAddress } } });
-        throw new ConflictException('This BVN is already linked to another AjoDaddy account.');
+        throw new ConflictException('This BVN is already linked to another TAREVA account.');
       }
     }
 
@@ -688,7 +688,7 @@ export class KycService {
       userId, type: 'SYSTEM',
       title: approved ? 'Identity fully verified! 🎉' : 'Face scan received',
       body: approved
-        ? 'Your identity is fully verified. Your AjoDaddy account is now active!'
+        ? 'Your identity is fully verified. Your TAREVA account is now active!'
         : 'Your face scan has been received. Your account is under manual review.',
       data: { step: 'FACE_SUBMITTED' },
     }).catch(() => {});

@@ -12,7 +12,7 @@ export default function LegalLayout({ title, updated, children }: { title: strin
           {children}
         </div>
         <p className="text-sm text-mist mt-12 border-t border-black/10 pt-6">
-          AjoDaddy is a product of Banji Digital Technologies (Business Name Registration No. 9693887),
+          TAREVA is a product of Banji Digital Technologies (Business Name Registration No. 9693887),
           [FULL STREET ADDRESS], Ikeja, Lagos State, Nigeria. Contact: [SUPPORT EMAIL]
         </p>
       </div>

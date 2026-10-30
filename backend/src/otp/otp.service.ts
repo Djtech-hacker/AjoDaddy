@@ -86,7 +86,7 @@ export class OtpService {
     try {
       await this.sendSms(
         phone,
-        `Your AjoDaddy verification code is ${code}. It expires in 5 minutes. Do not share it with anyone.`,
+        `Your TAREVA verification code is ${code}. It expires in 5 minutes. Do not share it with anyone.`,
       );
     } catch (e) {
       await this.prisma.otpCode.delete({ where: { id: record.id } });

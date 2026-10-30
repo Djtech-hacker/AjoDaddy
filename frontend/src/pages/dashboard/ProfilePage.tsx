@@ -1,5 +1,5 @@
 // ============================================================
-// ProfilePage.tsx — AjoDaddy Profile (original features + Figma settings)
+// ProfilePage.tsx — TAREVA Profile (original features + Figma settings)
 // ============================================================
 // KEPT: hero, identity verification, Recent Activity, Edit modal, avatar upload.
 // REMOVED: Trust Score, Streak, Stats, Badges, Leaderboard.
@@ -202,7 +202,7 @@ function KycStatusCard({ isOwn, onStatus }: { isOwn: boolean; onStatus?: (s: any
             <p className="kyc-note err">Your identity verification was rejected.{kycStatus?.rejectionReason ? ` Reason: ${kycStatus.rejectionReason}` : ''}</p>
           )}
           {isOwn && isUnderReview && <p className="kyc-note warn">Your identity is under manual review. We'll notify you within 24 hours.</p>}
-          {isOwn && isVerified && <p className="kyc-note ok">Identity fully verified. All AjoDaddy features are unlocked.</p>}
+          {isOwn && isVerified && <p className="kyc-note ok">Identity fully verified. All TAREVA features are unlocked.</p>}
 
           {isOwn && !isVerified && !isUnderReview && (
             <div className="ps-save-row" style={{ marginTop: 14 }}>

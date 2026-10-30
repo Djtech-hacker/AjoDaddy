@@ -4,16 +4,16 @@ export default function Terms() {
   return (
     <LegalLayout title="Terms of Service" updated="[DATE]">
       <p>
-        These Terms of Service ("Terms") govern your use of AjoDaddy, a product of Banji Digital
-        Technologies (Business Name Registration No. 9693887) ("AjoDaddy", "we", "us"). By creating an
-        account or using AjoDaddy, you agree to these Terms. If you do not agree, do not use the service.
+        These Terms of Service ("Terms") govern your use of TAREVA, a product of Banji Digital
+        Technologies (Business Name Registration No. 9693887) ("TAREVA", "we", "us"). By creating an
+        account or using TAREVA, you agree to these Terms. If you do not agree, do not use the service.
       </p>
 
-      <h2>1. What AjoDaddy is</h2>
+      <h2>1. What TAREVA is</h2>
       <p>
-        AjoDaddy is a software platform that helps groups of people organise rotating savings (Ajo,
+        TAREVA is a software platform that helps groups of people organise rotating savings (Ajo,
         Esusu or Susu). We provide tools to create groups, track contributions, schedule payouts and
-        keep a record of activity. AjoDaddy is a technology provider. We are not a bank, we are not a
+        keep a record of activity. TAREVA is a technology provider. We are not a bank, we are not a
         member of any group, and we do not guarantee that any member will make their contributions.
       </p>
 
@@ -27,7 +27,7 @@ export default function Terms() {
 
       <h2>3. Groups: private and public</h2>
       <p>
-        Groups on AjoDaddy are created and run by their members. AjoDaddy does not create, manage,
+        Groups on TAREVA are created and run by their members. TAREVA does not create, manage,
         vouch for or supervise any group, and we do not select or screen group members.
       </p>
       <ul>
@@ -42,7 +42,7 @@ export default function Terms() {
         someone they are not, or use a group to deceive others.
       </p>
       <ul>
-        <li>AjoDaddy is not responsible or liable for any loss, fraud, scam, default or dispute between members, including in public groups and groups with people you do not know.</li>
+        <li>TAREVA is not responsible or liable for any loss, fraud, scam, default or dispute between members, including in public groups and groups with people you do not know.</li>
         <li>We do not guarantee that you will receive a payout, recover money, or be repaid by another member.</li>
         <li>Our verification tools (NIN/BVN checks, the 48-hour grace period, automatic removal and debt tracking) make default harder but do not guarantee protection.</li>
         <li>Before joining, check who the group admin and members are, and never send money or personal details to anyone outside the platform because of a group.</li>
@@ -58,7 +58,7 @@ export default function Terms() {
         <li>Contributions are processed through third-party payment providers (currently Paystack and Flutterwave). Their terms also apply to payments.</li>
         <li>If a member misses a scheduled contribution, the group may be paused and members notified. The member has 48 hours to pay. If they do not, they may be removed from the group and the unpaid amount recorded as a debt on their account, which must be settled before they can use some features again.</li>
         <li>Payouts are sent to the bank account on your profile. You are responsible for making sure your bank details are correct. We are not liable for transfers sent to details you provided.</li>
-        <li>Fees: [DESCRIBE ANY FEES, e.g. withdrawal fees and platform fees, OR state "AjoDaddy currently charges no platform fee"]. Payment providers may charge their own fees.</li>
+        <li>Fees: [DESCRIBE ANY FEES, e.g. withdrawal fees and platform fees, OR state "TAREVA currently charges no platform fee"]. Payment providers may charge their own fees.</li>
       </ul>
 
       <h2>6. Identity verification and debts</h2>
@@ -73,7 +73,7 @@ export default function Terms() {
         <li>No fraud, money laundering, terrorist financing or use of another person's identity or accounts.</li>
         <li>No harassment, hate speech, threats or unlawful content in group chat.</li>
         <li>No attempts to hack, disrupt or misuse the platform, or to bypass verification or limits.</li>
-        <li>No using AjoDaddy to collect money from people for purposes other than the group you created.</li>
+        <li>No using TAREVA to collect money from people for purposes other than the group you created.</li>
       </ul>
       <p>
         We may warn, suspend, ban or close accounts, freeze or close groups, and hold or reverse
@@ -87,12 +87,12 @@ export default function Terms() {
         [SUPPORT EMAIL]. We will review what we can see on the platform and may take action on accounts
         or transactions, but we are not a court or arbitrator. We cannot force a member to pay, and
         recovering money from another member is your responsibility, including through lawful means
-        outside AjoDaddy.
+        outside TAREVA.
       </p>
 
       <h2>9. Our liability</h2>
       <p>
-        To the fullest extent permitted by law, AjoDaddy is provided "as is" and we are not liable for:
+        To the fullest extent permitted by law, TAREVA is provided "as is" and we are not liable for:
       </p>
       <ul>
         <li>losses caused by other members, including default, fraud, scams or misrepresentation;</li>
@@ -103,11 +103,11 @@ export default function Terms() {
       <p>Where we are found liable, our liability is limited to the fees you paid us in the 6 months before the claim, to the extent the law allows.</p>
 
       <h2>10. Privacy</h2>
-      <p>Our Privacy Policy explains how we collect and use your data. By using AjoDaddy you agree to it.</p>
+      <p>Our Privacy Policy explains how we collect and use your data. By using TAREVA you agree to it.</p>
 
       <h2>11. Changes, ending your account and governing law</h2>
       <p>
-        We may update these Terms and will tell you about material changes. Continuing to use AjoDaddy
+        We may update these Terms and will tell you about material changes. Continuing to use TAREVA
         after a change means you accept it. You may close your account at any time once you have no
         unpaid contributions or debts. These Terms are governed by the laws of the Federal Republic of
         Nigeria, and the courts of Lagos State have jurisdiction.

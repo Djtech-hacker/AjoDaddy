@@ -1,8 +1,8 @@
 {
   "name": "paypaddy-backend",
   "version": "1.0.0",
-  "description": "PayPaddy NestJS Backend",
-  "author": "PayPaddy",
+  "description": "TAREVA NestJS Backend",
+  "author": "TAREVA",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {

@@ -1,5 +1,5 @@
 // ============================================================
-// PAYPADDY — Shared TypeScript Types
+// TAREVA — Shared TypeScript Types
 // ============================================================
 
 export type UserRole   = 'USER' | 'ADMIN' | 'SUPER_ADMIN' | 'CUSTOMER_SERVICE'

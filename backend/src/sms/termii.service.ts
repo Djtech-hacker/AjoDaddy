@@ -10,7 +10,7 @@
 //   private readonly channel = process.env.TERMII_CHANNEL || 'dnd';
 //   private readonly baseUrl = 'https://api.ng.termii.com/api/sms/send';
 
-//   async sendOtp(phone: string, code: string, appName = 'AjoDaddy'): Promise<boolean> {
+//   async sendOtp(phone: string, code: string, appName = 'TAREVA'): Promise<boolean> {
 //     if (!this.apiKey) {
 //       this.logger.warn('No TERMII_API_KEY set — logging OTP instead of sending');
 //       this.logger.log(`📱 OTP for ${phone}: ${code}`);
@@ -84,7 +84,7 @@ export class TermiiService {
     }
   }
 
-  async sendOtp(phone: string, code: string, appName = 'AjoDaddy'): Promise<boolean> {
+  async sendOtp(phone: string, code: string, appName = 'TAREVA'): Promise<boolean> {
     // Dev mode: show the code in the terminal and carry on as if it was delivered.
     if (DEV_MODE) {
       this.logger.log(`📱 [DEV] OTP for ${phone}: ${code}`);

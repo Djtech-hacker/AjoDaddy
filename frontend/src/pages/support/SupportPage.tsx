@@ -12,7 +12,7 @@ type Tab = 'tickets' | 'reports'
 // Edit these to your real contact details
 const CONTACT = {
   email: 'support@ajodaddy.com',
-  phone: '+234 1 800 AJODADDY',
+  phone: '+234 1 800 TAREVA',
   hours: [
     { days: 'Monday – Friday', time: '8:00 AM – 6:00 PM (GMT+1)' },
     { days: 'Saturday – Sunday', time: '10:00 AM – 4:00 PM (GMT+1)' },
@@ -56,7 +56,7 @@ const Svg = ({ d, className = 'w-4 h-4', sw = 1.8 }: { d: string; className?: st
 )
 
 const TOPICS = [
-  { icon: ICON.user,   title: 'Account & Profile', desc: 'Verification, AjoDaddy ID, and settings' },
+  { icon: ICON.user,   title: 'Account & Profile', desc: 'Verification, TAREVA ID, and settings' },
   { icon: ICON.wallet, title: 'Payment & Wallet',  desc: 'Deposits, linked cards, and bank transfers' },
   { icon: ICON.group,  title: 'Group Savings',     desc: 'Cycle schedules, payouts, and invites' },
   { icon: ICON.shield, title: 'Security & Keys',   desc: 'Two-factor setup and password resets' },

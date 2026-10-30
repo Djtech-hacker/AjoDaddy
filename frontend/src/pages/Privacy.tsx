@@ -3,7 +3,7 @@ import LegalLayout from '../components/LegalLayout'
 export default function Privacy() {
   return (
     <LegalLayout title="Privacy Policy" updated="[DATE]">
-      <p>This policy explains how Banji Digital Technologies ("we", "us"), the operator of AjoDaddy, collects and uses your personal data in line with the Nigeria Data Protection Act 2023.</p>
+      <p>This policy explains how Banji Digital Technologies ("we", "us"), the operator of TAREVA, collects and uses your personal data in line with the Nigeria Data Protection Act 2023.</p>
 
       <h2>1. Data we collect</h2>
       <ul>
@@ -23,7 +23,7 @@ export default function Privacy() {
       </ul>
 
       <h2>3. Who we share it with</h2>
-      <p>We share data only as needed with service providers that help us run AjoDaddy, including payment processors (Paystack, Flutterwave), identity verification providers, our database host (Supabase), and SMS/email providers. Other members of your group can see your name, profile and contribution status. We do not sell your personal data.</p>
+      <p>We share data only as needed with service providers that help us run TAREVA, including payment processors (Paystack, Flutterwave), identity verification providers, our database host (Supabase), and SMS/email providers. Other members of your group can see your name, profile and contribution status. We do not sell your personal data.</p>
 
       <h2>4. Retention and security</h2>
       <p>We keep your data for as long as your account is active and as required by law. We use encrypted connections and access controls to protect it. No system is completely secure, so please keep your password and PIN private.</p>

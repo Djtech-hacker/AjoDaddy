@@ -146,7 +146,7 @@ export default function LoginPage() {
       </form>
 
       <p className="text-center text-[12px] text-dim mt-6">
-        New to AjoDaddy? <Link to="/register" className="text-brand font-bold">Create your account free</Link>
+        New to TAREVA? <Link to="/register" className="text-brand font-bold">Create your account free</Link>
       </p>
     </AuthShell>
   )

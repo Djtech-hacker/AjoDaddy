@@ -241,7 +241,7 @@ export default function VendorProductFormPage() {
                 <label htmlFor="pf-refund">Customers can cancel for a refund while they have paid LESS than (%)</label>
                 <input id="pf-refund" inputMode="numeric" value={refundPct} onChange={e => setRefundPct(e.target.value.replace(/\D/g, ''))} />
                 <p className="ss-hint">
-                  {refundN === 0 ? 'No refunds on this product.' : `Below ${refundN}% a customer can cancel. A 10% fee is kept: you receive 3% of what they paid and AjoDaddy 7%.`}
+                  {refundN === 0 ? 'No refunds on this product.' : `Below ${refundN}% a customer can cancel. A 10% fee is kept: you receive 3% of what they paid and TAREVA 7%.`}
                 </p>
               </div>
 

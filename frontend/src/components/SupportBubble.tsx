@@ -12,7 +12,7 @@ export default function SupportBubble({ userName }: SupportBubbleProps) {
   if (!WHATSAPP_NUMBER) return null;
 
   const message = encodeURIComponent(
-    `Hello AjoDaddy support, my name is ${userName || 'a user'}. I need help with: `
+    `Hello TAREVA support, my name is ${userName || 'a user'}. I need help with: `
   );
   const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${message}`;
 
@@ -21,7 +21,7 @@ export default function SupportBubble({ userName }: SupportBubbleProps) {
       {open && (
         <div className="w-72 overflow-hidden rounded-2xl bg-white shadow-2xl border border-gray-100">
           <div className="bg-[#0f3d2e] px-4 py-3">
-            <p className="text-sm font-semibold text-white">AjoDaddy Support 👋</p>
+            <p className="text-sm font-semibold text-white">TAREVA Support 👋</p>
             <p className="mt-0.5 text-xs text-[#d9f99d]">We typically reply within a few minutes</p>
           </div>
           <div className="p-4">

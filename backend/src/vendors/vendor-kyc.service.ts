@@ -7,7 +7,7 @@
 // result and compare names:
 //
 //   identityComplete : IdentityRecord is VERIFIED, BVN matched, face scan on file
-//   nameMatched      : the AjoDaddy account name matches the verified identity name
+//   nameMatched      : the TAREVA account name matches the verified identity name
 //   payoutNameMatched: the payout bank account name matches the verified identity name
 //
 // For the audit log we store a REFERENCE to the face, never a copy of it:
@@ -111,7 +111,7 @@ export class VendorKycService {
 
     if (!result.identityComplete) { result.flag = 'KYC_INCOMPLETE'; return result; }
 
-    // AjoDaddy account name vs verified identity name
+    // TAREVA account name vs verified identity name
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { firstName: true, lastName: true },

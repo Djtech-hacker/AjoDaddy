@@ -10,7 +10,7 @@
 //   'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
 
 // /**
-//  * AjoDaddy loader
+//  * TAREVA loader
 //  * Visual idea: a calm contribution cycle around a shared pool of savings.
 //  * Kept deliberately simple: no particles, network lines, gradients, or 3D effects.
 //  */
@@ -81,7 +81,7 @@
 //   return (
 //     <motion.div
 //       role="status"
-//       aria-label="Loading AjoDaddy"
+//       aria-label="Loading TAREVA"
 //       aria-live="polite"
 //       className="fixed inset-0 z-[9999] flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#F8F9FA] px-6"
 //       initial={{ opacity: 1 }}
@@ -91,7 +91,7 @@
 //       <div className="flex w-full max-w-[300px] flex-col items-center">
 //         <motion.img
 //           src={LOGO_URL}
-//           alt="AjoDaddy"
+//           alt="TAREVA"
 //           className="mb-12 h-12 w-auto max-w-[220px] object-contain"
 //           initial={reduceMotion ? false : { opacity: 0, y: 5 }}
 //           animate={{ opacity: 1, y: 0 }}
@@ -289,14 +289,14 @@ export function CinematicLoader({ onComplete, duration = 2800 }: CinematicLoader
     <motion.div
       role="status"
       aria-live="polite"
-      aria-label="Loading AjoDaddy"
+      aria-label="Loading TAREVA"
       className="fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-6 sm:gap-8 select-none"
       style={{ background: THEME.background }}
       initial={{ opacity: 1 }}
       animate={{ opacity: exiting ? 0 : 1 }}
       transition={{ duration: EXIT_MS / 1000, ease: [0.4, 0, 0.2, 1] }}
     >
-      <span className="sr-only">Loading AjoDaddy</span>
+      <span className="sr-only">Loading TAREVA</span>
 
       <motion.img
         src={LOGO_URL}

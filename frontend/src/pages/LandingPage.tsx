@@ -56,10 +56,10 @@ const weeklyData = [
 ]
 
 const faqs = [
-  { q: 'What is Ajo and how does AjoDaddy work?', a: 'Ajo (also called Esusu or Susu) is a traditional rotating savings model where each member contributes a fixed amount regularly and members take turns receiving the pool. AjoDaddy helps groups track contributions, schedule payouts, and keep a clear record of every payment.' },
+  { q: 'What is Ajo and how does TAREVA work?', a: 'Ajo (also called Esusu or Susu) is a traditional rotating savings model where each member contributes a fixed amount regularly and members take turns receiving the pool. TAREVA helps groups track contributions, schedule payouts, and keep a clear record of every payment.' },
   { q: 'How are payouts made?', a: "Payouts are sent to the bank account the member has added to their profile, on the agreed date. Every payout is recorded in the group's history." },
   { q: 'What happens if a member misses a contribution?', a: 'Group admins are notified, and the rules the group has set for late or missed contributions apply.' },
-  { q: 'Is my money safe?', a: 'Payments are processed by Paystack and Flutterwave, and your data is sent over encrypted (HTTPS) connections. Every contribution and payout is recorded in your group history. Only join groups with people you know and trust, because AjoDaddy is not responsible for losses caused by other members. Please read our Terms of Service and Privacy Policy for details.' },
+  { q: 'Is my money safe?', a: 'Payments are processed by Paystack and Flutterwave, and your data is sent over encrypted (HTTPS) connections. Every contribution and payout is recorded in your group history. Only join groups with people you know and trust, because TAREVA is not responsible for losses caused by other members. Please read our Terms of Service and Privacy Policy for details.' },
   { q: 'Can I create my own group or join an existing one?', a: 'Both. Create a private group and invite members, or join with an invite link. Group admins control membership and contribution rules. We recommend private groups with people you personally know.' },
 ]
 
@@ -90,7 +90,7 @@ function Nav() {
         <Link to="/" className="flex items-center justify-center">
           <img
             src={LOGO_URL}
-            alt="AjoDaddy"
+            alt="TAREVA"
             className="h-14 sm:h-16 w-auto object-contain flex-shrink-0"
           />
         </Link>
@@ -302,7 +302,7 @@ function ActivityStack() {
             <motion.div key="summary" {...enter} className={`${card} px-5 py-4`}>
               <div className="flex items-center gap-2 mb-2">
                 <img src={LOGO_URL} alt="" className="h-5 w-auto object-contain" />
-                <span className="text-[12px] text-white/50">AjoDaddy summary</span>
+                <span className="text-[12px] text-white/50">TAREVA summary</span>
               </div>
               <p className="text-[15px] text-white leading-snug">9 of 12 members have paid. Reminders went out to the other 3.</p>
             </motion.div>
@@ -927,7 +927,7 @@ function CTABanner() {
           initial={{ opacity: 0, y: 24 }} animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
         >
-          <p className="text-[11px] font-bold text-lime uppercase tracking-widest mb-4">Join AjoDaddy</p>
+          <p className="text-[11px] font-bold text-lime uppercase tracking-widest mb-4">Join TAREVA</p>
           <h2 className="text-[40px] sm:text-[48px] md:text-[60px] font-extrabold tracking-[-0.05em] text-white leading-tight mb-5 sm:mb-6">
             Start saving<br/>with your people.
           </h2>
@@ -960,9 +960,9 @@ function Footer() {
       <div className="max-w-5xl mx-auto px-5 sm:px-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-10 mb-10">
           <div className="col-span-2">
-            <img src={LOGO_URL} alt="AjoDaddy" className="h-12 md:h-20 w-auto object-contain mb-4" />
+            <img src={LOGO_URL} alt="TAREVA" className="h-12 md:h-20 w-auto object-contain mb-4" />
             <p className="text-[13px] text-white/40 leading-relaxed max-w-sm">
-              AjoDaddy is a product of <strong className="text-white/70 font-semibold">Banji Digital Technologies</strong>{' '}
+              TAREVA is a product of <strong className="text-white/70 font-semibold">Banji Digital Technologies</strong>{' '}
               (Business Name Registration No. 9693887), registered with the Corporate Affairs Commission of Nigeria.
             </p>
             <p className="text-[13px] text-white/40 leading-relaxed max-w-sm mt-3">

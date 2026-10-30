@@ -504,7 +504,7 @@ export default function BecomeVendorPage() {
                       <input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />
                       <span>
                         I agree to the vendor terms. Customers can cancel and get a refund while they have paid less than my refund
-                        limit (a 10% fee applies: 3% to me, 7% to AjoDaddy), and I must deliver the goods once I am paid.
+                        limit (a 10% fee applies: 3% to me, 7% to TAREVA), and I must deliver the goods once I am paid.
                       </span>
                     </label>
 

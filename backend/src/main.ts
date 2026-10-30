@@ -89,8 +89,8 @@ async function bootstrap() {
   // ── Swagger API docs ───────────────────────────────────────
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
-      .setTitle('AjoDaddy API')
-      .setDescription('AjoDaddy — African Fintech Contribution Platform')
+      .setTitle('TAREVA API')
+      .setDescription('TAREVA — African Fintech Contribution Platform')
       .setVersion('1.0')
       .addBearerAuth()
       .addCookieAuth('refresh_token')
@@ -102,7 +102,7 @@ async function bootstrap() {
 
   const port = process.env.PORT || 4000;
   await app.listen(port);
-  logger.log(`🚀 AjoDaddy API running on port ${port}`);
+  logger.log(`🚀 TAREVA API running on port ${port}`);
   logger.log(` Created by Olabanji David Aka Dj Tech olabanjidavid16@gmail.com `);
   logger.log(`📍 Environment: ${process.env.NODE_ENV}`);
 }

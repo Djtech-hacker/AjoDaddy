@@ -23,7 +23,7 @@
 //   MAILJET_API_KEY=...
 //   MAILJET_SECRET_KEY=...
 //   EMAIL_FROM=your-verified-sender@example.com   (bare address only)
-//   APP_NAME=AjoDaddy                              (optional)
+//   APP_NAME=TAREVA                              (optional)
 //   FRONTEND_URL=http://localhost:5173             (used to build the links)
 // ============================================================
 
@@ -53,7 +53,7 @@ export class MailService {
     // NOTE: bare email only (e.g. 'you@gmail.com') — NOT the 'Name <email>' format.
     // The display name is sent separately via `Name` below, using APP_NAME.
     this.fromEmail = this.configService.get<string>('EMAIL_FROM', '');
-    this.appName = this.configService.get<string>('APP_NAME', 'AjoDaddy');
+    this.appName = this.configService.get<string>('APP_NAME', 'TAREVA');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
 
     if (DEV_MODE) {

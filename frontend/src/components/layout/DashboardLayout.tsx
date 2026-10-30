@@ -81,7 +81,7 @@ function Sidebar({ onClose, mobile }: { onClose?: () => void; mobile?: boolean }
 
       <div className="relative px-5 pt-5 pb-3 flex items-center justify-between">
         <Link to="/" className="inline-flex">
-          <img src={LOGO_URL} alt="AjoDaddy" className="h-14 w-auto object-contain" />
+          <img src={LOGO_URL} alt="TAREVA" className="h-14 w-auto object-contain" />
         </Link>
         {mobile && (
           <button onClick={onClose} aria-label="Close menu"

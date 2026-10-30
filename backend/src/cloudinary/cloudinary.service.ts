@@ -1,5 +1,5 @@
 // ============================================================
-// CLOUDINARY SERVICE — signed uploads for AjoDaddy
+// CLOUDINARY SERVICE — signed uploads for TAREVA
 // ============================================================
 //
 // Why SIGNED uploads (not the unsigned preset you use for KYC faces):

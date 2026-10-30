@@ -1022,7 +1022,7 @@ export default function SuperAdminPage() {
         {/* ── Company Revenue ── */}
         {tab === 'revenue' && (
           <div className="space-y-4">
-            <Notice tone="blue" icon={ICON.inbox} title="Total money users have put into AjoDaddy">
+            <Notice tone="blue" icon={ICON.inbox} title="Total money users have put into TAREVA">
               All wallet funding by users (via Paystack), separate from company revenue. This money belongs to your users, not the platform.
             </Notice>
             {depositsLoading ? (
@@ -1440,7 +1440,7 @@ export default function SuperAdminPage() {
           </div>
         }>
         <div className="space-y-4">
-          <Notice tone="red" icon={ICON.alert} title="Super Admin action: permanent">This user will be permanently banned from AjoDaddy. Only you can reverse this.</Notice>
+          <Notice tone="red" icon={ICON.alert} title="Super Admin action: permanent">This user will be permanently banned from TAREVA. Only you can reverse this.</Notice>
           <Field label="Reason" placeholder="e.g. Severe fraud, platform abuse" value={banReason} onChange={e => setBanReason(e.target.value)} />
         </div>
       </Modal>

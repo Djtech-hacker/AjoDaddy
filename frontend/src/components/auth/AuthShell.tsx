@@ -32,7 +32,7 @@ export default function AuthShell({ children, panel }: { children: ReactNode; pa
       {/* Form side (unchanged) */}
       <div className="flex-1 flex flex-col px-5 sm:px-12 py-6 min-w-0">
         <Link to="/" className="flex justify-center">
-          <img src={LOGO_URL} alt="AjoDaddy" className="h-28 sm:h-36 w-auto object-contain" />
+          <img src={LOGO_URL} alt="TAREVA" className="h-28 sm:h-36 w-auto object-contain" />
         </Link>
         <div className="flex-1 flex items-center justify-center py-4">
           <motion.div className="w-full max-w-[400px]"
@@ -41,7 +41,7 @@ export default function AuthShell({ children, panel }: { children: ReactNode; pa
             {children}
           </motion.div>
         </div>
-        <p className="text-[11px] text-mist text-center">Secured by AjoDaddy Shield · CBN compliant processors</p>
+        <p className="text-[11px] text-mist text-center">Secured by TAREVA Shield · CBN compliant processors</p>
       </div>
 
       {/* Dark brand panel, now animated */}

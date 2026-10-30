@@ -6,8 +6,12 @@
 // ADDED (from Figma): email + Verified badge in hero, Personal
 //       Information, Residential Address, Security & Authentication,
 //       Bank & Payment Methods and "Save settings changes".
-// UPDATED: Bank & Payment Methods is now <BankAccountsCard /> (add / default / remove
-//       saved bank accounts, name-matched to the verified identity, PIN-confirmed).
+// UPDATED (this pass):
+//   - Email, phone and date of birth are READ-ONLY and never sent on save.
+//     Phone comes from registration, DOB comes from the NIN/BVN record.
+//   - DOB is shown as "23 February ••••" (the year is never displayed, and the
+//     backend no longer sends it: it returns dobDisplay = "23 February").
+//   - 2FA is <TwoFactorCard /> (email-code confirmed, own endpoints).
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useForm, UseFormRegister, UseFormSetFocus } from 'react-hook-form'
@@ -15,6 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '@/stores/authStore'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import BankAccountsCard from '@/components/BankAccountsCard'
+import TwoFactorCard from '@/components/TwoFactorCard'
 import { kycApi } from '@/api/services'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
@@ -31,7 +36,8 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `API error ${res.status}`)
+    const m = err.message
+    throw new Error((Array.isArray(m) ? m.join(', ') : m) || `API error ${res.status}`)
   }
   return res.json()
 }
@@ -75,8 +81,8 @@ interface FullProfile {
   currentStreak: number; longestStreak: number
   streak: UserStreak; achievements: Achievement[]; stats: ProfileStats
   activity: ActivityFeedItem[]; rank: LeaderboardRank
-  // new settings fields
-  phone?: string; phoneNumber?: string; dateOfBirth?: string
+  // settings fields
+  phone?: string; phoneNumber?: string; dateOfBirth?: string; dobDisplay?: string
   streetAddress?: string; city?: string; state?: string; postalCode?: string; country?: string
   twoFactorEnabled?: boolean; passwordChangedAt?: string; lastLoginAt?: string; lastLoginInfo?: string
   bankAccount?: BankAccount
@@ -118,6 +124,17 @@ function timeAgo(iso?: string) {
   if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`
   const years = Math.floor(months / 12)
   return `${years} year${years === 1 ? '' : 's'} ago`
+}
+
+// Date of birth is never shown in full. Prefers the server's pre-masked value
+// ("23 February"); falls back to masking a raw date if an old API is running.
+function dobText(p: { dobDisplay?: string; dateOfBirth?: string }) {
+  if (p.dobDisplay) return `${p.dobDisplay} ••••`
+  if (!p.dateOfBirth) return ''
+  const d = new Date(p.dateOfBirth)
+  if (isNaN(d.getTime())) return ''
+  const month = d.toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' })
+  return `${d.getUTCDate()} ${month} ••••`
 }
 
 // ── Identity verification (styled like the settings cards) ──────
@@ -199,8 +216,10 @@ function KycStatusCard({ isOwn, onStatus }: { isOwn: boolean; onStatus?: (s: any
 }
 
 // ── Settings (Figma): Personal, Address, Security, Bank, Save ──
+// Only editable fields live in the form. Email, phone and date of birth
+// are read-only and are rendered with <ReadOnlyField />.
 type SettingsValues = {
-  firstName: string; lastName: string; email: string; phone: string; dateOfBirth: string
+  firstName: string; lastName: string
   streetAddress: string; city: string; state: string; postalCode: string; country: string
 }
 
@@ -224,15 +243,25 @@ function Field({ name, label, register, setFocus, type = 'text', locked = false,
   )
 }
 
+// Not part of the form: no pencil, no editing, never submitted.
+function ReadOnlyField({ label, value, placeholder, wide = false }: { label: string; value: string; placeholder: string; wide?: boolean }) {
+  return (
+    <div className={`ps-field ${wide ? 'ps-wide' : ''}`}>
+      <label>{label}</label>
+      <div className="ps-input ps-locked">
+        <input type="text" readOnly tabIndex={-1} value={value} placeholder={placeholder} />
+      </div>
+    </div>
+  )
+}
+
 function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; userId: string; onSaved: (d: Partial<FullProfile>) => void }) {
   const navigate = useNavigate()
   const [twoFA, setTwoFA] = useState(!!profile.twoFactorEnabled)
   const [status, setStatus] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
   const { register, handleSubmit, reset, setFocus, formState: { isSubmitting, isDirty } } = useForm<SettingsValues>({
     defaultValues: {
-      firstName: profile.firstName ?? '', lastName: profile.lastName ?? '', email: profile.email ?? '',
-      phone: profile.phone ?? profile.phoneNumber ?? '',
-      dateOfBirth: profile.dateOfBirth ? profile.dateOfBirth.slice(0, 10) : '',
+      firstName: profile.firstName ?? '', lastName: profile.lastName ?? '',
       streetAddress: profile.streetAddress ?? '', city: profile.city ?? '', state: profile.state ?? '',
       postalCode: profile.postalCode ?? '', country: profile.country ?? 'Nigeria',
     },
@@ -241,9 +270,12 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
   async function onSave(values: SettingsValues) {
     setStatus(null)
     try {
-      const { email, ...payload } = values // email is read-only
-      await apiFetch(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, twoFactorEnabled: twoFA }) })
-      onSaved({ ...payload, twoFactorEnabled: twoFA })
+      // Email, phone and date of birth are never sent: phone comes from
+      // registration, DOB from NIN/BVN. 2FA has its own code-confirmed
+      // endpoints. Empty strings are dropped.
+      const payload = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== '')) as Record<string, string>
+      await apiFetch(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      onSaved(payload as Partial<FullProfile>)
       reset(values)
       const cur = useAuthStore.getState().user
       if (cur) useAuthStore.getState().setUser({ ...cur, firstName: values.firstName, lastName: values.lastName })
@@ -255,7 +287,6 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
 
   const pwChanged = timeAgo(profile.passwordChangedAt)
   const f = { register, setFocus }
-  const twoFAChanged = twoFA !== !!profile.twoFactorEnabled
 
   return (
     <form className="ps-form" onSubmit={handleSubmit(onSave)}>
@@ -265,9 +296,9 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
           <div className="ps-fields">
             <Field name="firstName" label="First name" {...f} />
             <Field name="lastName" label="Last name" {...f} />
-            <Field name="email" label="Email address" type="email" locked wide {...f} />
-            <Field name="phone" label="Phone number" type="tel" {...f} />
-            <Field name="dateOfBirth" label="Date of birth" type="date" {...f} />
+            <ReadOnlyField label="Email address" wide value={profile.email ?? ''} placeholder="" />
+            <ReadOnlyField label="Phone number" value={profile.phone ?? profile.phoneNumber ?? ''} placeholder="From registration" />
+            <ReadOnlyField label="Date of birth" value={dobText(profile)} placeholder="From your NIN/BVN" />
           </div>
         </section>
 
@@ -286,11 +317,7 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
       <div className="ps-grid">
         <section className="pp-card">
           <h3 className="ps-h">Security &amp; authentication</h3>
-          <div className="ps-row">
-            <span className="ps-row-title">Two-factor authentication (2FA)</span>
-            <button type="button" role="switch" aria-checked={twoFA} aria-label="Two-factor authentication"
-              className={`ps-switch ${twoFA ? 'on' : ''}`} onClick={() => setTwoFA(v => !v)}><span /></button>
-          </div>
+          <TwoFactorCard enabled={twoFA} onChange={v => { setTwoFA(v); onSaved({ twoFactorEnabled: v }) }} />
           <div className="ps-row ps-row-line">
             <div>
               <span className="ps-row-title">Password</span>
@@ -309,7 +336,7 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
 
       <div className="ps-save-row">
         {status && <span className={`ps-status ${status.type}`} role="status">{status.msg}</span>}
-        <button type="submit" className="ps-save" disabled={isSubmitting || (!isDirty && !twoFAChanged)}>
+        <button type="submit" className="ps-save" disabled={isSubmitting || !isDirty}>
           {isSubmitting ? 'Saving…' : 'Save settings changes'} →
         </button>
       </div>
@@ -699,6 +726,7 @@ const CSS = `
   .ps-switch:focus-visible { outline: 2px solid #16A34A; outline-offset: 2px; }
   .ps-ghost { font-family: inherit; font-size: 11px; font-weight: 600; color: #166534; background: #fff; border: 1px solid #D1D5DB; border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
   .ps-ghost:hover { background: #F9FAFB; }
+  .ps-ghost:disabled { opacity: .5; cursor: not-allowed; }
   .ps-login { font-size: 10px; color: #6B7280; margin-top: 12px; padding-top: 12px; border-top: 1px solid #F3F4F6; }
   .ps-bank { display: flex; align-items: center; gap: 12px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px; }
   .ps-bank-ic { width: 34px; height: 34px; border-radius: 8px; background: #fff; border: 1px solid #E5E7EB; display: flex; align-items: center; justify-content: center; color: #6B7280; }

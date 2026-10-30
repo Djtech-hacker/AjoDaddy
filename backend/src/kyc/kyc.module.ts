@@ -4,7 +4,7 @@
 //
 // Face step, how it works now (the browser is NEVER trusted):
 //   1. POST /kyc/liveness/start   -> server picks a random challenge order and
-//                                    returns a signed, single-use, 3-minute session token
+//                                    returns a signed, single-use, 5-minute session token
 //   2. Browser runs LivenessCapture with THOSE challenges, captures a JPEG
 //   3. POST /kyc/submit-face      -> { image (data URL), sessionToken }
 //        server: verifies token (signature, user, expiry, minimum duration, single use)
@@ -39,7 +39,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 const IS_PROD = process.env.NODE_ENV === 'production';
 const MOCK_MODE = process.env.KYC_MOCK_MODE === 'true' && !IS_PROD;
 
-const SESSION_TTL_MS      = 3 * 60 * 1000; // liveness session lifetime
+const SESSION_TTL_MS      = 5 * 60 * 1000; // liveness session lifetime (covers slow model downloads)
 const MIN_SESSION_AGE_MS  = 5 * 1000;      // a real person can't finish 3 challenges faster
 const MAX_FAILED_ATTEMPTS = 5;             // failed face attempts per 24h
 const MIN_IMAGE_BYTES     = 10 * 1024;
@@ -58,6 +58,11 @@ export class SubmitFacePhotoDto {
   @IsString() @MinLength(100) @MaxLength(3_500_000) image: string;
   @IsString() @MaxLength(2000) sessionToken: string;
   @IsOptional() @IsString() @MaxLength(200) deviceLabel?: string;
+}
+
+export class RejectKycDto {
+  @IsString() @MinLength(3) @MaxLength(500) reason: string;
+  @IsOptional() @IsString() @MaxLength(2000) facePhotoUrl?: string;
 }
 
 export class RevealIdentityDto {
@@ -733,6 +738,45 @@ export class KycService {
     };
   }
 
+  // ── Reject (Admin): wipes everything so the user restarts from NIN ──
+  async rejectKyc(actorId: string, targetUserId: string, reason: string, facePhotoUrl?: string, ipAddress?: string) {
+    const actor = await this.prisma.user.findUnique({ where: { id: actorId }, select: { role: true, username: true, email: true } });
+    if (!actor || !['ADMIN', 'SUPER_ADMIN'].includes(actor.role)) throw new ForbiddenException('Admin access required');
+
+    const record = await this.prisma.identityRecord.findUnique({ where: { userId: targetUserId } });
+    if (!record) throw new BadRequestException('No identity record found for this user');
+
+    await this.prisma.executeTransaction(async (tx) => {
+      await tx.identityRecord.update({
+        where: { userId: targetUserId },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: reason,
+          ninVerified: false, ninVerifiedAt: null, ninEncrypted: null, ninMasked: null, ninHash: null,
+          bvnVerified: false, bvnVerifiedAt: null, bvnEncrypted: null, bvnMasked: null, bvnHash: null,
+          firstName: '', lastName: '', dateOfBirth: '', phone: '',
+          facePhotoUrl: null, faceScannedAt: null,
+          identityMatched: false,
+        } as any,
+      });
+      await tx.kycAttempt.deleteMany({ where: { userId: targetUserId, type: { in: ['FACE_LIVENESS', 'FACE_MATCH'] } } });
+      await tx.user.update({ where: { id: targetUserId }, data: { status: 'PENDING_VERIFICATION' } });
+      await tx.auditLog.create({
+        data: {
+          actorId, action: 'KYC_MANUALLY_REJECTED', entityType: 'USER', entityId: targetUserId, ipAddress,
+          metadata: { rejectedBy: actor.username, rejectedByEmail: actor.email, reason, facePhotoUrl: facePhotoUrl || null, ipAddress },
+        },
+      });
+    });
+
+    await this.notifications.create({
+      userId: targetUserId, type: 'SYSTEM', title: 'Verification rejected',
+      body: `${reason}. Please start again with your NIN.`, data: { step: 'KYC_REJECTED' },
+    }).catch(() => {});
+
+    return { message: 'KYC rejected. The user must restart verification.' };
+  }
+
   // ── Debts ─────────────────────────────────────────────────
   async getMyDebts(userId: string) {
     const debts = await this.prisma.debt.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
@@ -852,6 +896,12 @@ export class KycController {
   @ApiOperation({ summary: 'Settle a debt from wallet' })
   settleDebt(@Req() req: any, @Param('debtId') debtId: string) { return this.kycService.settleDebt(req.user.id, debtId); }
 
+  @Post('admin/reject/:userId')
+  @ApiOperation({ summary: 'Admin: reject KYC and reset the whole flow' })
+  rejectKyc(@Req() req: any, @Param('userId') userId: string, @Body() dto: RejectKycDto) {
+    return this.kycService.rejectKyc(req.user.id, userId, dto.reason, dto.facePhotoUrl, req.ip);
+  }
+
   @Post('admin/reveal/:userId')
   @ApiOperation({ summary: 'Admin/Super Admin: reveal full NIN/BVN with password + face audit' })
   revealIdentity(@Req() req: any, @Param('userId') userId: string, @Body() dto: RevealIdentityDto) {
@@ -863,6 +913,7 @@ export class KycController {
   imports: [PrismaModule, NotificationsModule],
   controllers: [KycController],
   providers: [KycService, DojahProvider],
+  
   exports: [KycService],
 })
 export class KycModule {}

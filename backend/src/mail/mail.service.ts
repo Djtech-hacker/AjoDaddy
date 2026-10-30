@@ -1,56 +1,41 @@
 // ============================================================
 // MAIL SERVICE — Email sending via Mailjet (HTTPS API)
 // ============================================================
-// Previously: raw SMTP (Gmail) — blocked at the network level on
-// Render (every send timed out at exactly connectionTimeout).
-// Then: Resend's HTTP API — works, but its free/sandbox tier only
-// allows sending TO the exact email address the account was signed up
-// with, until you verify a whole domain (costs money, needs a domain).
-// Then: attempted Brevo — API key generation kept failing with a
-// platform-side error unrelated to anything in this codebase.
+// Mailjet's API uses HTTP Basic Auth (API key : secret key).
+// Free tier: 200 emails/day; only the SENDER address must be verified.
 //
-// FIX: switched to Mailjet. Same core benefit (plain HTTPS API, so no
-// SMTP port blocking) as Resend/Brevo, but Mailjet's free tier (200
-// emails/day, no credit card) only requires verifying a single SENDER
-// EMAIL ADDRESS — a 2-minute "click the link we emailed you" step —
-// after which you can send to ANY recipient, not just yourself.
+// Public methods: sendPasswordReset / sendEmailVerification /
+// sendPinChangeOtp / sendTwoFactorOtp / sendBankAccountAlert.
+// All return true/false (they never throw).
 //
-// Mailjet's API uses HTTP Basic Auth with API_KEY as the username and
-// SECRET_KEY as the password (base64-encoded "key:secret" in the
-// Authorization header) — different from Resend/Brevo's single
-// Bearer-token style, but otherwise the same shape of integration.
+// NEW (this pass): sendTwoFactorOtp(to, firstName, code, type) — the
+// emailed code for turning 2FA on/off and for 2FA login.
 //
-// All public method signatures are UNCHANGED
-// (sendPasswordReset / sendEmailVerification / sendPinChangeOtp all
-// take the same arguments and return the same Promise<boolean>), so
-// nothing else in the codebase (auth.module.ts, etc.) needs to change.
+// Node's "fetch failed" hides the real reason in err.cause. We log it
+// (ENOTFOUND = DNS, ETIMEDOUT / UND_ERR_CONNECT_TIMEOUT = blocked or slow
+// network, ECONNRESET = connection dropped).
 //
-// SETUP REQUIRED:
-//   1. Sign up free at https://mailjet.com (no credit card needed).
-//   2. Account Settings → Sender addresses & domains → Add a sender
-//      address → enter the email you want to send FROM → click the
-//      confirmation link Mailjet emails you. No domain required.
-//   3. Account Settings → REST API → Master API Key & Sub API Keys →
-//      copy both the API Key and the Secret Key (shown once).
-//   4. Add these two lines to env.validation.ts's schema (both
-//      optional, since only one email provider needs to be active):
-//        MAILJET_API_KEY:    Joi.string().optional(),
-//        MAILJET_SECRET_KEY: Joi.string().optional(),
-//   5. On Render (and locally in .env), set:
-//        MAILJET_API_KEY=your_api_key_here
-//        MAILJET_SECRET_KEY=your_secret_key_here
-//        EMAIL_FROM=your-verified-sender@example.com   (bare address
-//          only — env.validation.ts's Joi.string().email() check
-//          rejects the "Name <email>" format; the display name is
-//          sent separately via APP_NAME, see below)
-//   6. Redeploy. Registration/reset/PIN emails should now deliver to
-//      any recipient, not just your own inbox.
+// MAIL_DEV_MODE=true (development only, ignored in production): no email is
+// sent. The link or code is printed in the backend terminal instead, and the
+// call counts as sent.
+//
+// SETUP (for real sending):
+//   MAILJET_API_KEY=...
+//   MAILJET_SECRET_KEY=...
+//   EMAIL_FROM=your-verified-sender@example.com   (bare address only)
+//   APP_NAME=AjoDaddy                              (optional)
+//   FRONTEND_URL=http://localhost:5173             (used to build the links)
 // ============================================================
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 const MAILJET_API_URL = 'https://api.mailjet.com/v3.1/send';
+const SEND_TIMEOUT_MS = 8000;
+
+const IS_PROD = process.env.NODE_ENV === 'production';
+// Dev only: print the link/code in the terminal instead of sending. Ignored in production.
+const DEV_MODE = process.env.MAIL_DEV_MODE === 'true' && !IS_PROD;
 
 @Injectable()
 export class MailService {
@@ -65,28 +50,58 @@ export class MailService {
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('MAILJET_API_KEY', '');
     this.secretKey = this.configService.get<string>('MAILJET_SECRET_KEY', '');
-    // NOTE: bare email only (e.g. 'you@gmail.com') — NOT the
-    // 'Name <email>' format, which env.validation.ts's Joi email check
-    // rejects. Display name is sent separately via `FromName` below,
-    // using APP_NAME.
+    // NOTE: bare email only (e.g. 'you@gmail.com') — NOT the 'Name <email>' format.
+    // The display name is sent separately via `Name` below, using APP_NAME.
     this.fromEmail = this.configService.get<string>('EMAIL_FROM', '');
     this.appName = this.configService.get<string>('APP_NAME', 'AjoDaddy');
     this.frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:5173');
+
+    if (DEV_MODE) {
+      this.logger.warn('MAIL_DEV_MODE is ON — emails are printed here and NOTHING is sent. Never use in production.');
+    }
   }
 
-  private async send(to: string, subject: string, html: string): Promise<boolean> {
+  // Turns Node's vague "fetch failed" into something useful.
+  private describeError(err: any): string {
+    const parts: string[] = [];
+    if (err?.name === 'AbortError') {
+      parts.push(`timed out after ${SEND_TIMEOUT_MS / 1000}s (could not reach api.mailjet.com)`);
+    } else {
+      if (err?.message) parts.push(String(err.message));
+      const c = err?.cause;
+      if (c) parts.push(`cause: ${[c.code, c.message].filter(Boolean).join(' ') || String(c)}`);
+    }
+    return parts.join(' | ');
+  }
+
+  private hintFor(err: any): string | null {
+    const code = err?.cause?.code;
+    if (err?.name === 'AbortError' || code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'ETIMEDOUT')
+      return 'Hint: the connection to api.mailjet.com is blocked or too slow (firewall, antivirus, VPN or ISP). Test it with: curl.exe -I https://api.mailjet.com';
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+      return 'Hint: DNS could not resolve api.mailjet.com. Check your internet or DNS settings.';
+    if (code === 'ECONNRESET' || code === 'ECONNREFUSED')
+      return 'Hint: the connection was dropped. A VPN, proxy or antivirus is likely interfering.';
+    return null;
+  }
+
+  // devNote = the link or code, printed in the terminal when MAIL_DEV_MODE is on.
+  private async send(to: string, subject: string, html: string, devNote?: string): Promise<boolean> {
+    if (DEV_MODE) {
+      this.logger.log(`📧 [DEV] TO: ${to} | SUBJECT: ${subject}${devNote ? ` | ${devNote}` : ''}`);
+      return true;
+    }
+
     if (!this.apiKey || !this.secretKey || !this.fromEmail) {
-      this.logger.warn('No MAILJET_API_KEY/MAILJET_SECRET_KEY/EMAIL_FROM set — logging email instead');
+      this.logger.warn('No MAILJET_API_KEY/MAILJET_SECRET_KEY/EMAIL_FROM set — email not sent');
       this.logger.log(`📧 TO: ${to} | SUBJECT: ${subject}`);
       return false;
     }
 
-    try {
-      // Mailjet's HTTP API — plain HTTPS POST, same as Resend/Brevo,
-      // so this sidesteps Render's SMTP port blocking the same way.
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
 
+    try {
       // Basic Auth: base64("API_KEY:SECRET_KEY")
       const basicAuth = Buffer.from(`${this.apiKey}:${this.secretKey}`).toString('base64');
 
@@ -109,17 +124,13 @@ export class MailService {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(`Mailjet API returned ${response.status}: ${JSON.stringify(data)}`);
       }
 
-      // Mailjet returns per-message status inside Messages[0].Status —
-      // even a 200 response can carry a "error" status for that
-      // specific message (e.g. unverified sender), so check it too.
+      // Even a 200 can carry an "error" status for that specific message (e.g. unverified sender).
       const messageStatus = data?.Messages?.[0]?.Status;
       if (messageStatus && messageStatus !== 'success') {
         throw new Error(`Mailjet message status "${messageStatus}": ${JSON.stringify(data)}`);
@@ -127,9 +138,13 @@ export class MailService {
 
       this.logger.log(`Email sent to ${to} (status: ${messageStatus ?? 'unknown'})`);
       return true;
-    } catch (err) {
-      this.logger.error(`Failed to send email to ${to}`, err);
+    } catch (err: any) {
+      this.logger.error(`Failed to send email to ${to}: ${this.describeError(err)}`);
+      const hint = this.hintFor(err);
+      if (hint) this.logger.warn(hint);
       return false;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -174,7 +189,7 @@ export class MailService {
       </p>
     `);
 
-    return this.send(to, `Reset your ${this.appName} password`, html);
+    return this.send(to, `Reset your ${this.appName} password`, html, `RESET LINK: ${resetUrl}`);
   }
 
   async sendEmailVerification(to: string, firstName: string, token: string): Promise<boolean> {
@@ -202,7 +217,7 @@ export class MailService {
       </p>
     `);
 
-    return this.send(to, `Verify your ${this.appName} email`, html);
+    return this.send(to, `Verify your ${this.appName} email`, html, `VERIFY LINK: ${verifyUrl}`);
   }
 
   // Plain 6-digit code for the "change transaction PIN" flow. No
@@ -228,7 +243,50 @@ export class MailService {
       </p>
     `);
 
-    return this.send(to, `Your ${this.appName} PIN change code`, html);
+    return this.send(to, `Your ${this.appName} PIN change code`, html, `PIN CODE: ${code}`);
+  }
+
+  // 6-digit code for two-factor authentication.
+  // type: '2fa_login' | '2fa_enable' | '2fa_disable'
+  async sendTwoFactorOtp(to: string, firstName: string, code: string, type: string): Promise<boolean> {
+    const isLogin = type === '2fa_login';
+    const minutes = isLogin ? 5 : 10;
+
+    const title =
+      type === '2fa_enable'  ? 'Turn on two-factor authentication' :
+      type === '2fa_disable' ? 'Turn off two-factor authentication' :
+                               'Your login code';
+
+    const intro =
+      type === '2fa_enable'  ? 'Use the code below to turn on two-factor authentication for your account.' :
+      type === '2fa_disable' ? 'Use the code below to turn off two-factor authentication for your account.' :
+                               'Use the code below to finish signing in to your account.';
+
+    const warning = isLogin
+      ? `If this wasn't you, someone may know your password. Change it right away.`
+      : `If you didn't request this, ignore this email — your security settings won't change without this code.`;
+
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">${title}</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${firstName || 'there'},<br><br>
+        ${intro} This code expires in ${minutes} minutes.
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <span style="display: inline-block; background: #F3F4F6; color: #1a1a1a; font-size: 32px; font-weight: 700;
+                     letter-spacing: 8px; padding: 16px 28px; border-radius: 12px;">
+          ${code}
+        </span>
+      </div>
+
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        Never share this code with anyone. ${this.appName} will never ask for it.<br><br>
+        ${warning}
+      </p>
+    `);
+
+    return this.send(to, `Your ${this.appName} verification code`, html, `2FA CODE (${type}): ${code}`);
   }
 
   // Security alert when a bank account is added, removed, or set as default.

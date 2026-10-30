@@ -134,6 +134,37 @@ enum NotificationType {
   PENALTY_APPLIED
   BADGE_EARNED
   SYSTEM
+
+  // ── Pay Small Small ──────────────────────────
+  SS_PLAN_STARTED
+  SS_PAYMENT_RECEIVED
+  SS_PAYMENT_REMINDER
+  SS_AUTO_DEBIT_FAILED
+  SS_GRACE_STARTED
+  SS_PAYMENT_MISSED
+  SS_ORDER_DEFAULTED
+  SS_REFUND_PROCESSED
+  SS_REFUND_VENDOR
+  SS_VENDOR_PAYOUT
+  SS_PLAN_COMPLETED
+  SS_LOW_STOCK
+  SS_OUT_OF_STOCK
+  SS_NEW_MESSAGE
+  SS_DISPUTE_OPENED
+
+  // ── Vendor onboarding ────────────────────────
+  VENDOR_APPLICATION_SUBMITTED
+  VENDOR_APPLICATION_UPDATE
+  VENDOR_KYC_MISMATCH
+  VENDOR_APPROVED
+  VENDOR_REJECTED
+  VENDOR_SUSPENDED
+  VENDOR_REINSTATED
+}
+
+enum NotificationPriority {
+  NORMAL
+  IMPORTANT
 }
 
 enum MessageType {
@@ -202,6 +233,16 @@ model User {
   totalReceived       BigInt     @default(0)
   currentStreak       Int        @default(0)
   longestStreak       Int        @default(0)
+
+  // profile settings
+  dateOfBirth         DateTime?
+  streetAddress       String?
+  city                String?
+  state               String?
+  postalCode          String?
+  country             String?
+  twoFactorEnabled    Boolean    @default(false)
+
   deletedAt           DateTime?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
@@ -233,9 +274,17 @@ model User {
   identityRecord      IdentityRecord?
   kycAttempts         KycAttempt[]
   debts               Debt[]
-   gracePeriods        GracePeriod[]
-   groupAgreements     GroupAgreement[]
+  gracePeriods        GracePeriod[]
+  groupAgreements     GroupAgreement[]
   bankAccounts        BankAccount[]
+
+  // ── Pay Small Small ──────────────────────────
+  vendorProfile       VendorProfile?
+  vendorApplications  VendorApplication[]
+  ssProducts          SsProduct[]          @relation("SsProductVendor")
+  ssOrdersAsCustomer  SsOrder[]            @relation("SsOrderCustomer")
+  ssOrdersAsVendor    SsOrder[]            @relation("SsOrderVendor")
+  ssChatMessages      SsChatMessage[]
 
   @@index([email])
   @@index([username])
@@ -443,18 +492,17 @@ model Group {
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
-  owner          User            @relation("GroupOwner", fields: [ownerId], references: [id])
-  members        GroupMember[]
-  cycles         GroupCycle[]
-  contributions  Contribution[]
-  payouts        Payout[]
-  chatMessages   ChatMessage[]
-  pinnedMessages PinnedMessage[]
-  announcements  Announcement[]
-  inviteLinks    InviteLink[]
-  reputationLogs ReputationLog[]
+  owner           User             @relation("GroupOwner", fields: [ownerId], references: [id])
+  members         GroupMember[]
+  cycles          GroupCycle[]
+  contributions   Contribution[]
+  payouts         Payout[]
+  chatMessages    ChatMessage[]
+  pinnedMessages  PinnedMessage[]
+  announcements   Announcement[]
+  inviteLinks     InviteLink[]
+  reputationLogs  ReputationLog[]
   groupAgreements GroupAgreement[]
-  
 
   @@index([slug])
   @@index([ownerId])
@@ -632,21 +680,23 @@ model Announcement {
 }
 
 model Notification {
-  id        String           @id @default(uuid())
+  id        String               @id @default(uuid())
   userId    String
   type      NotificationType
   title     String
   body      String
   data      Json?
-  isRead    Boolean          @default(false)
+  priority  NotificationPriority @default(NORMAL)
+  isRead    Boolean              @default(false)
   readAt    DateTime?
-  createdAt DateTime         @default(now())
+  createdAt DateTime             @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([isRead])
   @@index([createdAt])
+  @@index([userId, priority, isRead])
   @@map("notifications")
 }
 
@@ -807,22 +857,38 @@ enum DisputeStatus {
 }
 
 model PlatformSetting {
-  id                          String   @id
-  platformFeePercent          Decimal  @default(1) @db.Decimal(5, 2)
-  minContributionKobo         BigInt   @default(10000)
-  maxContributionKobo         BigInt   @default(1000000000)
-  withdrawalsFrozen           Boolean  @default(false)
-  contributionsFrozen         Boolean  @default(false)
-  maintenanceMode             Boolean  @default(false)
+  id                          String    @id
+  platformFeePercent          Decimal   @default(1) @db.Decimal(5, 2)
+  minContributionKobo         BigInt    @default(10000)
+  maxContributionKobo         BigInt    @default(1000000000)
+  withdrawalsFrozen           Boolean   @default(false)
+  contributionsFrozen         Boolean   @default(false)
+  maintenanceMode             Boolean   @default(false)
   maintenanceScheduledAt      DateTime?
-   maintenanceAnnouncement    String?
-  paystackEnabled             Boolean  @default(true)
-  flutterwaveEnabled          Boolean  @default(false)
-  reportFlagThreshold         Int      @default(5)
-  reportHighPriorityThreshold Int      @default(10)
-  reportAutoEscalateThreshold Int      @default(15)
+  maintenanceAnnouncement     String?
+  paystackEnabled             Boolean   @default(true)
+  flutterwaveEnabled          Boolean   @default(false)
+  reportFlagThreshold         Int       @default(5)
+  reportHighPriorityThreshold Int       @default(10)
+  reportAutoEscalateThreshold Int       @default(15)
+
+  // ── Pay Small Small settings ─────────────────
+  // Percentages are of the amount the customer has paid so far.
+  // Refund: ssRefundFeePercent (10) is deducted; ssRefundVendorSharePercent (3)
+  // of that goes to the vendor and the rest (7) to the company.
+  ssRefundFeePercent          Decimal   @default(10) @db.Decimal(5, 2)
+  ssRefundVendorSharePercent  Decimal   @default(3) @db.Decimal(5, 2)
+  ssSaleFeePercent            Decimal   @default(0) @db.Decimal(5, 2)
+  ssRequireAdminApproval      Boolean   @default(true)
+  ssAutoDebitEnabled          Boolean   @default(true)
+  ssGraceHours                Int       @default(48)
+  ssMaxMissedPayments         Int       @default(3)
+  ssReapplyAfterDays          Int       @default(14)
+  ssMaxProductImages          Int       @default(5)
+  ssFrozen                    Boolean   @default(false)
+
   updatedById                 String?
-  updatedAt                   DateTime @updatedAt
+  updatedAt                   DateTime  @updatedAt
 
   @@map("platform_settings")
 }
@@ -881,6 +947,7 @@ model Dispute {
   reporterId     String
   reportedUserId String?
   groupId        String?
+  ssOrderId      String?
   type           String
   description    String
   evidenceUrls   String[]      @default([])
@@ -896,6 +963,7 @@ model Dispute {
   @@index([reporterId])
   @@index([reportedUserId])
   @@index([groupId])
+  @@index([ssOrderId])
   @@index([status])
   @@map("disputes")
 }
@@ -996,13 +1064,13 @@ model GracePeriod {
 }
 
 model GroupAgreement {
-  id          String   @id @default(uuid())
-  userId      String
-  groupId     String
-  acceptedAt  DateTime @default(now())
-  ipAddress   String?
-  deviceInfo  String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  userId     String
+  groupId    String
+  acceptedAt DateTime @default(now())
+  ipAddress  String?
+  deviceInfo String?
+  createdAt  DateTime @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -1046,4 +1114,479 @@ model OtpCode {
   @@index([phone, purpose, createdAt])
   @@index([expiresAt])
   @@map("otp_codes")
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  PAY SMALL SMALL  (vendor marketplace, installment plans, escrow)
+//  All money amounts are BigInt in KOBO, same as the rest of the app.
+//  Percent fields are whole numbers (e.g. 30 means 30%).
+// ════════════════════════════════════════════════════════════════════
+
+// ── Vendor onboarding ──────────────────────────────────────
+
+enum VendorApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_MORE_INFO
+}
+
+enum VendorDocumentType {
+  CAC
+  SOCIAL_PROOF
+  SALES_PROOF
+}
+
+enum VendorDocumentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VendorStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model VendorApplication {
+  id                String                  @id @default(uuid())
+  userId            String
+  status            VendorApplicationStatus @default(DRAFT)
+
+  // business details
+  businessName      String
+  category          String
+  description       String?
+  phone             String?
+  address           String?
+  cacNumber         String?
+  socialLinks       String[]                @default([])
+  bankAccountId     String? // id of the vendor's BankAccount (payout account)
+  acceptedTermsAt   DateTime?
+
+  // face scan / KYC result (snapshot taken at check time)
+  kycVerifiedName   String?
+  kycFaceScannedAt  DateTime?
+  kycNameMatched    Boolean?
+  payoutNameMatched Boolean?
+  kycFlag           String? // e.g. KYC_MISMATCH, NO_FACE_SCAN
+  kycCheckedAt      DateTime?
+
+  // review
+  recommendation    String? // RECOMMEND_APPROVE | RECOMMEND_REJECT | NEEDS_MORE_INFO
+  recommendedById   String?
+  recommendedAt     DateTime?
+  reviewedById      String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  infoRequestedNote String?
+  submittedAt       DateTime?
+  reapplyAfter      DateTime?
+
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents VendorDocument[]
+  notes     ApplicationNote[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([submittedAt])
+  @@map("vendor_applications")
+}
+
+model VendorDocument {
+  id                 String               @id @default(uuid())
+  applicationId      String
+  type               VendorDocumentType
+  cloudinaryPublicId String? // authenticated (private) upload, opened with signed URLs only
+  socialLink         String?
+  fileName           String?
+  mimeType           String?
+  sizeBytes          Int?
+  status             VendorDocumentStatus @default(PENDING)
+  reviewerNote       String?
+  reviewedById       String?
+  reviewedAt         DateTime?
+  createdAt          DateTime             @default(now())
+
+  application VendorApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([applicationId, type])
+  @@map("vendor_documents")
+}
+
+model ApplicationNote {
+  id            String   @id @default(uuid())
+  applicationId String
+  authorId      String
+  text          String
+  createdAt     DateTime @default(now())
+
+  application VendorApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("application_notes")
+}
+
+model VendorProfile {
+  id              String       @id @default(uuid())
+  userId          String       @unique
+  applicationId   String?      @unique
+  businessName    String
+  category        String
+  description     String?
+  phone           String?
+  address         String?
+  cacNumber       String?
+  socialLinks     String[]     @default([])
+  verifiedName    String
+  status          VendorStatus @default(ACTIVE)
+  approvedById    String?
+  approvedAt      DateTime?
+  isVerified      Boolean      @default(false)
+  verifiedAt      DateTime?
+  verifiedById    String?
+  suspendedAt     DateTime?
+  suspendedById   String?
+  suspendedReason String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("vendor_profiles")
+}
+
+// ── Products & stock ───────────────────────────────────────
+
+enum SsFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum SsPayoutMode {
+  ON_FULL_PAYMENT
+  AT_PERCENT
+}
+
+enum SsProductStatus {
+  ACTIVE
+  PAUSED
+  OUT_OF_STOCK
+  ARCHIVED
+}
+
+model SsProduct {
+  id                     String          @id @default(uuid())
+  referenceNumber        String          @unique
+  vendorId               String
+  name                   String
+  description            String
+  category               String?
+  price                  BigInt
+  images                 String[]        @default([]) // Cloudinary URLs, max 5 (checked in code)
+
+  // stock: available = totalStock - reservedCount - soldCount
+  totalStock             Int
+  reservedCount          Int             @default(0)
+  soldCount              Int             @default(0)
+
+  // vendor-chosen payment options
+  minDepositPercent      Int             @default(10)
+  allowedFrequencies     SsFrequency[]   @default([])
+  customIntervalDays     Int[]           @default([]) // used when CUSTOM is allowed, e.g. [2, 14]
+  paymentDeadlineDays    Int // longest time a customer has to finish paying
+
+  // vendor-chosen refund and payout rules
+  refundThresholdPercent Int             @default(0) // customer can refund below this % paid (0 = no refunds)
+  payoutMode             SsPayoutMode    @default(ON_FULL_PAYMENT)
+  payoutPercent          Int? // used when AT_PERCENT; must be >= refundThresholdPercent (checked in code)
+
+  status                 SsProductStatus @default(ACTIVE)
+  isFlagged              Boolean         @default(false)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  vendor    User         @relation("SsProductVendor", fields: [vendorId], references: [id])
+  orders    SsOrder[]
+  stockLogs SsStockLog[]
+  notes     SsNote[]
+
+  @@index([vendorId])
+  @@index([status])
+  @@index([name])
+  @@map("ss_products")
+}
+
+model SsStockLog {
+  id          String   @id @default(uuid())
+  productId   String
+  changedById String
+  oldTotal    Int
+  newTotal    Int
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  product SsProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("ss_stock_logs")
+}
+
+// ── Orders (a customer's installment plan on one product) ──
+
+enum SsPaymentMode {
+  MANUAL
+  AUTO
+}
+
+enum SsOrderStatus {
+  ACTIVE
+  COMPLETED
+  REFUNDED
+  DEFAULTED
+  CANCELLED
+  DISPUTED
+}
+
+enum SsInstallmentStatus {
+  PENDING
+  PAID
+  OVERDUE
+}
+
+model SsOrder {
+  id                       String        @id @default(uuid())
+  orderNumber              String        @unique
+  productId                String
+  customerId               String
+  vendorId                 String
+  status                   SsOrderStatus @default(ACTIVE)
+
+  // money (kobo)
+  totalPrice               BigInt
+  depositAmount            BigInt
+  amountPaid               BigInt        @default(0)
+  escrowBalance            BigInt        @default(0) // money held by the company for this order
+
+  // plan
+  paymentMode              SsPaymentMode @default(MANUAL)
+  frequency                SsFrequency
+  intervalDays             Int
+  durationDays             Int
+  installmentCount         Int
+  installmentAmount        BigInt
+  startedAt                DateTime      @default(now())
+  deadlineAt               DateTime
+  nextDueDate              DateTime?
+  missedCount              Int           @default(0)
+  graceExpiresAt           DateTime?
+
+  // terms copied from the product and settings when the plan starts,
+  // so later edits by the vendor or admin never change an existing plan
+  refundThresholdPercent   Int
+  payoutMode               SsPayoutMode
+  payoutPercent            Int?
+  refundFeePercent         Decimal       @db.Decimal(5, 2)
+  refundVendorSharePercent Decimal       @db.Decimal(5, 2)
+
+  // payout state
+  payoutReleased           Boolean       @default(false)
+  payoutReleasedAt         DateTime?
+
+  completedAt              DateTime?
+  refundedAt               DateTime?
+  defaultedAt              DateTime?
+  cancelledReason          String?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  product      SsProduct       @relation(fields: [productId], references: [id])
+  customer     User            @relation("SsOrderCustomer", fields: [customerId], references: [id])
+  vendor       User            @relation("SsOrderVendor", fields: [vendorId], references: [id])
+  installments SsInstallment[]
+  payments     SsPayment[]
+  refund       SsRefund?
+  ledgerEntries SsLedgerEntry[]
+  notes        SsNote[]
+  chatThread   SsChatThread?
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([productId])
+  @@index([status])
+  @@index([status, nextDueDate])
+  @@index([deadlineAt])
+  @@map("ss_orders")
+}
+
+model SsInstallment {
+  id         String              @id @default(uuid())
+  orderId    String
+  number     Int
+  dueDate    DateTime
+  amount     BigInt
+  paidAmount BigInt              @default(0)
+  status     SsInstallmentStatus @default(PENDING)
+  paidAt     DateTime?
+
+  order SsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, number])
+  @@index([status, dueDate])
+  @@map("ss_installments")
+}
+
+model SsPayment {
+  id                  String        @id @default(uuid())
+  orderId             String
+  userId              String // the customer who paid
+  amount              BigInt
+  mode                SsPaymentMode // MANUAL (customer tapped pay) or AUTO (cron debit)
+  idempotencyKey      String        @unique
+  walletTransactionId String?
+  paidAt              DateTime      @default(now())
+
+  order SsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([userId])
+  @@map("ss_payments")
+}
+
+model SsRefund {
+  id                   String   @id @default(uuid())
+  orderId              String   @unique
+  customerId           String
+  vendorId             String
+  reason               String   @default("CUSTOMER_REQUEST") // CUSTOMER_REQUEST | DEFAULT | ADMIN
+  paidAmount           BigInt
+  paidPercentAtRequest Decimal  @db.Decimal(5, 2)
+  feeTotal             BigInt
+  vendorShare          BigInt
+  companyShare         BigInt
+  customerRefund       BigInt
+  createdAt            DateTime @default(now())
+
+  order SsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([createdAt])
+  @@map("ss_refunds")
+}
+
+// ── Escrow ledger ──────────────────────────────────────────
+// Append-only. Every money movement writes entries here so the
+// company can always reconcile: sum(ESCROW credits - debits) must equal
+// sum(SsOrder.escrowBalance).
+
+enum SsLedgerAccount {
+  CUSTOMER_WALLET
+  VENDOR_WALLET
+  ESCROW
+  COMPANY_REVENUE
+}
+
+enum SsLedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum SsLedgerType {
+  ESCROW_HOLD
+  ESCROW_RELEASE
+  ESCROW_REFUND
+  REFUND_FEE_VENDOR
+  REFUND_FEE_PLATFORM
+  VENDOR_PAYOUT
+  SALE_FEE
+}
+
+model SsLedgerEntry {
+  id        String            @id @default(uuid())
+  orderId   String?
+  account   SsLedgerAccount
+  direction SsLedgerDirection
+  type      SsLedgerType
+  userId    String? // set for wallet accounts, empty for ESCROW / COMPANY_REVENUE
+  amount    BigInt
+  reference String            @unique
+  metadata  Json?
+  createdAt DateTime          @default(now())
+
+  order SsOrder? @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([account, createdAt])
+  @@index([userId])
+  @@map("ss_ledger_entries")
+}
+
+// ── Notes (customer care / admin) ──────────────────────────
+
+model SsNote {
+  id        String   @id @default(uuid())
+  productId String?
+  orderId   String?
+  authorId  String
+  text      String
+  createdAt DateTime @default(now())
+
+  product SsProduct? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order   SsOrder?   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([orderId])
+  @@map("ss_notes")
+}
+
+// ── Chat between customer and vendor (one thread per order) ─
+
+model SsChatThread {
+  id            String    @id @default(uuid())
+  orderId       String    @unique
+  customerId    String
+  vendorId      String
+  isOpen        Boolean   @default(true)
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  order    SsOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  messages SsChatMessage[]
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@map("ss_chat_threads")
+}
+
+model SsChatMessage {
+  id        String      @id @default(uuid())
+  threadId  String
+  senderId  String
+  type      MessageType @default(TEXT)
+  content   String?
+  fileUrl   String?
+  fileName  String?
+  isEdited  Boolean     @default(false)
+  isDeleted Boolean     @default(false)
+  deletedAt DateTime?
+  readBy    String[]    @default([])
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  thread SsChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User         @relation(fields: [senderId], references: [id])
+
+  @@index([threadId, createdAt])
+  @@index([senderId])
+  @@map("ss_chat_messages")
 }

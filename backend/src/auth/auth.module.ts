@@ -2,37 +2,26 @@
 // AUTH MODULE — Full production authentication
 // ============================================================
 // ADDED (previous pass): verifyPassword() + POST /auth/verify-password.
+// ADDED (previous pass): OTP-for-PIN-change flow (send-pin-otp / change-pin).
+// FIX (previous pass): login() checks isEmailVerified.
+// FIX (previous pass): register() sends the verification email fire-and-forget.
+// ADDED (previous pass): register() accepts optional avatarUrl.
+// FIX (previous pass): phone OTP security (HMAC-hashed code, randomInt,
+//   constant-time compare, 503 when SMS fails).
 //
-// ADDED (previous pass): the real OTP-for-PIN-change flow.
-//   - POST /auth/send-pin-otp   — generates a 6-digit code, stores it in
-//     the existing verificationToken table (type: 'pin_change_otp',
-//     10 min expiry), emails it via MailService.sendPinChangeOtp().
-//   - POST /auth/change-pin     — checks the code matches, isn't expired,
-//     isn't already used, then updates the transaction PIN hash — same
-//     bcrypt path setTransactionPin() already uses.
-//
-// FIX (previous pass): login() validated password/status but never
-// checked isEmailVerified, so a PENDING_VERIFICATION account (i.e.
-// someone who never clicked the emailed link) could still log in.
-//
-// FIX (previous pass): register() was AWAITING sendVerificationEmail()
-// before responding, which could race the frontend's axios timeout.
-// It is now fire-and-forget.
-//
-// ADDED (previous pass): register() accepts an optional avatarUrl
-// (base64 data URL) and hands it to
-// UsersService.uploadAvatarFromDataUrl() after user + wallet commit.
-//
-// FIX (this pass): phone OTP security.
-//   - The otpToken used to contain the plain OTP code. JWTs are only
-//     base64-encoded (not encrypted), so anyone could decode the token
-//     and read the code. The token now stores an HMAC hash of the code.
-//   - Code is generated with crypto.randomInt instead of Math.random.
-//   - The code comparison is constant-time.
-//   - sendPhoneOtp now awaits the SMS and returns a 503 if sending fails
-//     (it used to say "Code sent" even when the SMS failed).
-//   - SMS provider is now Arkesel (see src/sms/termii.service.ts — class
-//     name kept as TermiiService so no other file needed to change).
+// ADDED (this pass): real two-factor authentication (email OTP).
+//   - POST /auth/2fa/send-otp       — emails a code to enable/disable 2FA
+//   - POST /auth/2fa/enable         — confirm code -> twoFactorEnabled = true
+//   - POST /auth/2fa/disable        — password + code -> twoFactorEnabled = false
+//   - login() returns { twoFactorRequired, twoFactorToken, maskedEmail }
+//     when the user has 2FA on (no session is issued yet)
+//   - POST /auth/2fa/login/verify   — token + code -> real session
+//   - POST /auth/2fa/login/resend   — new login code
+//   Codes live in verificationToken as HMAC hashes (type 2fa_enable /
+//   2fa_disable / 2fa_login). The twoFactorToken is signed with a separate
+//   secret and uses `uid` (not `sub`) so it can never pass as an access token.
+//   MailService.send() returns false on failure instead of throwing, so
+//   issueTwoFactorCode() checks the return value and fails loudly.
 // ============================================================
 
 import {
@@ -47,7 +36,7 @@ import { ConfigService } from '@nestjs/config';
 import { Strategy as JwtStrategy, ExtractJwt } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Request, Response } from 'express';
-import { IsEmail, IsString, MinLength, MaxLength, IsOptional, Matches } from 'class-validator';
+import { IsEmail, IsString, MinLength, MaxLength, IsOptional, Matches, IsIn } from 'class-validator';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import * as argon2 from 'argon2';
@@ -97,9 +86,6 @@ export class RegisterDto {
   @IsString()
   phoneVerifiedToken: string;
 
-  // The register form crops/shrinks the picture client-side and sends it
-  // as a base64 data URL. Optional: registration must still succeed with
-  // no photo at all.
   @IsOptional()
   @IsString()
   @MaxLength(200000)
@@ -162,7 +148,6 @@ export class VerifyPasswordDto {
   password: string;
 }
 
-// body for POST /auth/change-pin
 export class ChangePinDto {
   @IsString()
   @MinLength(4, { message: 'Enter the code sent to your email' })
@@ -172,6 +157,45 @@ export class ChangePinDto {
   @Matches(/^\d{4}$/, { message: 'PIN must be exactly 4 digits' })
   newPin: string;
 }
+
+// ── 2FA DTOs ─────────────────────────────────────────────────
+
+export class TwoFactorSendDto {
+  @IsIn(['enable', 'disable'])
+  purpose: 'enable' | 'disable';
+}
+
+export class TwoFactorCodeDto {
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code' })
+  code: string;
+}
+
+export class DisableTwoFactorDto {
+  @IsString()
+  @MinLength(1, { message: 'Enter your password' })
+  password: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code' })
+  code: string;
+}
+
+export class TwoFactorLoginDto {
+  @IsString()
+  twoFactorToken: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code' })
+  code: string;
+}
+
+export class TwoFactorResendDto {
+  @IsString()
+  twoFactorToken: string;
+}
+
+type TwoFactorType = '2fa_enable' | '2fa_disable' | '2fa_login';
 
 // ── JWT Strategies ────────────────────────────────────────────
 
@@ -246,8 +270,6 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto, ipAddress: string) {
-    // Confirm the phone was actually verified via the OTP flow, and that
-    // the proof token matches THIS phone number.
     let phonePayload: any;
     try {
       phonePayload = this.jwtService.verify(dto.phoneVerifiedToken, { secret: this.configService.get('jwt.secret') });
@@ -286,15 +308,10 @@ export class AuthService {
       return newUser;
     });
 
-    // Upload the registration profile picture, if one was provided.
-    // uploadAvatarFromDataUrl() swallows its own errors, so a bad/oversized
-    // image can never turn a successful registration into a failure.
     if (dto.avatarUrl) {
       await this.usersService.uploadAvatarFromDataUrl(user.id, dto.avatarUrl);
     }
 
-    // Fire-and-forget: user + wallet are already committed, so a slow or
-    // unreachable mail server must not block the HTTP response.
     this.sendVerificationEmail(user.id, user.email, user.firstName).catch((err) => {
       console.error(`[register] sendVerificationEmail failed for ${user.email}:`, err);
     });
@@ -311,7 +328,10 @@ export class AuthService {
   async login(dto: LoginDto, ipAddress: string, userAgent: string, res: Response) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase() },
-      select: { id: true, email: true, passwordHash: true, status: true, firstName: true, role: true, isEmailVerified: true, deletedAt: true },
+      select: {
+        id: true, email: true, passwordHash: true, status: true, firstName: true,
+        role: true, isEmailVerified: true, deletedAt: true, twoFactorEnabled: true,
+      },
     });
 
     const logAttempt = async (success: boolean, reason?: string) => {
@@ -339,6 +359,16 @@ export class AuthService {
     if (user.deletedAt)              { await logAttempt(false, 'ACCOUNT_DELETED');   throw new UnauthorizedException('This account no longer exists.'); }
     if (user.status === 'SUSPENDED') { await logAttempt(false, 'ACCOUNT_SUSPENDED'); throw new UnauthorizedException('Account suspended. Contact support.'); }
     if (user.status === 'BANNED')    { await logAttempt(false, 'ACCOUNT_BANNED');    throw new UnauthorizedException('Account banned.'); }
+
+    // 2FA: password was right, but no session until the emailed code is confirmed.
+    if (user.twoFactorEnabled) {
+      const email = await this.issueTwoFactorCode(user.id, '2fa_login', 5 * 60 * 1000);
+      const twoFactorToken = this.jwtService.sign(
+        { uid: user.id, purpose: '2fa-login' },
+        { secret: this.tfaSecret(), expiresIn: '10m' },
+      );
+      return { twoFactorRequired: true, twoFactorToken, maskedEmail: this.maskEmail(email) };
+    }
 
     await logAttempt(true);
     return this.generateTokensAndLogin(user, ipAddress, userAgent, res);
@@ -413,10 +443,156 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
+  // ── Two-factor authentication (email OTP) ──────────────────
+
+  private tfaSecret(): string {
+    return `${this.configService.get<string>('jwt.secret')}:2fa`;
+  }
+
+  private tfaHash(userId: string, type: TwoFactorType, code: string): string {
+    return createHmac('sha256', this.configService.get<string>('jwt.secret')!)
+      .update(`2fa:${userId}:${type}:${code}`)
+      .digest('hex');
+  }
+
+  private maskEmail(email: string): string {
+    const [name, domain] = email.split('@');
+    if (!domain) return email;
+    return `${name.slice(0, 2)}${'*'.repeat(Math.max(name.length - 2, 1))}@${domain}`;
+  }
+
+  // Generates + emails a code. Older unused codes of the same type are
+  // invalidated so only the newest one works. Returns the user's email.
+  private async issueTwoFactorCode(userId: string, type: TwoFactorType, ttlMs: number): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, firstName: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const code = randomInt(100000, 1000000).toString();
+
+    await this.prisma.verificationToken.updateMany({
+      where: { userId, type, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await this.prisma.verificationToken.create({
+      data: { userId, token: this.tfaHash(userId, type, code), type, expiresAt: new Date(Date.now() + ttlMs) },
+    });
+
+    // MailService.send() returns false on failure instead of throwing.
+    let sent = false;
+    try {
+      sent = await this.mailService.sendTwoFactorOtp(user.email, user.firstName, code, type);
+    } catch (err) {
+      console.error('[2fa] email send failed:', err);
+    }
+    if (!sent) {
+      // mark the unusable code as used so it can't be guessed later
+      await this.prisma.verificationToken.updateMany({
+        where: { userId, type, usedAt: null },
+        data: { usedAt: new Date() },
+      }).catch(() => {});
+      throw new ServiceUnavailableException('Could not send the code right now. Please try again shortly.');
+    }
+    return user.email;
+  }
+
+  // Single-use: updateMany with usedAt:null guards against two requests
+  // consuming the same code at once.
+  private async consumeTwoFactorCode(userId: string, type: TwoFactorType, code: string): Promise<void> {
+    const record = await this.prisma.verificationToken.findFirst({
+      where: {
+        userId, type, token: this.tfaHash(userId, type, code.trim()),
+        usedAt: null, expiresAt: { gt: new Date() },
+      },
+    });
+    if (!record) throw new BadRequestException('Incorrect or expired code');
+
+    const claimed = await this.prisma.verificationToken.updateMany({
+      where: { id: record.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (claimed.count !== 1) throw new BadRequestException('Incorrect or expired code');
+  }
+
+  async sendTwoFactorOtp(userId: string, purpose: 'enable' | 'disable') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { twoFactorEnabled: true } });
+    if (!user) throw new NotFoundException('User not found');
+    if (purpose === 'enable' && user.twoFactorEnabled) throw new BadRequestException('Two-factor authentication is already on');
+    if (purpose === 'disable' && !user.twoFactorEnabled) throw new BadRequestException('Two-factor authentication is already off');
+
+    const email = await this.issueTwoFactorCode(userId, purpose === 'enable' ? '2fa_enable' : '2fa_disable', 10 * 60 * 1000);
+    return { message: 'Code sent to your email', maskedEmail: this.maskEmail(email) };
+  }
+
+  async enableTwoFactor(userId: string, code: string) {
+    await this.consumeTwoFactorCode(userId, '2fa_enable', code);
+    await this.prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: true } });
+    await this.prisma.auditLog.create({
+      data: { actorId: userId, action: 'TWO_FACTOR_ENABLED', entityType: 'User', entityId: userId },
+    }).catch(() => {});
+    return { twoFactorEnabled: true };
+  }
+
+  async disableTwoFactor(userId: string, dto: DisableTwoFactorDto) {
+    const pwOk = await this.verifyPassword(userId, dto.password);
+    if (!pwOk) throw new UnauthorizedException('Incorrect password');
+    await this.consumeTwoFactorCode(userId, '2fa_disable', dto.code);
+    await this.prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: false } });
+    await this.prisma.auditLog.create({
+      data: { actorId: userId, action: 'TWO_FACTOR_DISABLED', entityType: 'User', entityId: userId },
+    }).catch(() => {});
+    return { twoFactorEnabled: false };
+  }
+
+  private readTwoFactorToken(token: string): string {
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(token, { secret: this.tfaSecret() });
+    } catch {
+      throw new UnauthorizedException('Your sign-in session expired. Please log in again.');
+    }
+    if (payload?.purpose !== '2fa-login' || !payload?.uid) {
+      throw new UnauthorizedException('Invalid sign-in session. Please log in again.');
+    }
+    return payload.uid as string;
+  }
+
+  async resendTwoFactorLogin(token: string) {
+    const userId = this.readTwoFactorToken(token);
+    const email = await this.issueTwoFactorCode(userId, '2fa_login', 5 * 60 * 1000);
+    return { message: 'A new code has been sent', maskedEmail: this.maskEmail(email) };
+  }
+
+  async verifyTwoFactorLogin(dto: TwoFactorLoginDto, ipAddress: string, userAgent: string, res: Response) {
+    const userId = this.readTwoFactorToken(dto.twoFactorToken);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, status: true, role: true, deletedAt: true, twoFactorEnabled: true },
+    });
+    if (!user || user.deletedAt || user.status === 'SUSPENDED' || user.status === 'BANNED') {
+      throw new UnauthorizedException('Unable to sign in. Contact support.');
+    }
+
+    const logAttempt = (success: boolean, reason?: string) =>
+      this.prisma.loginAttempt.create({
+        data: { userId: user.id, email: user.email, ipAddress, userAgent, success, reason },
+      }).catch(() => {});
+
+    try {
+      await this.consumeTwoFactorCode(user.id, '2fa_login', dto.code);
+    } catch (err) {
+      await logAttempt(false, 'TWO_FACTOR_FAILED');
+      throw err;
+    }
+
+    await logAttempt(true);
+    return this.generateTokensAndLogin(user, ipAddress, userAgent, res);
+  }
+
   // ── Phone OTP (pre-registration) ───────────────────────────
-  // Stateless: no user row exists yet, so the OTP proof lives in a
-  // short-lived signed token. The token holds only an HMAC HASH of the
-  // code (never the code itself), so decoding the token reveals nothing.
 
   private otpHash(phone: string, code: string): string {
     return createHmac('sha256', this.configService.get<string>('jwt.secret')!)
@@ -524,16 +700,12 @@ export class AuthService {
     return { message: 'Password reset successfully. Please log in with your new password.' };
   }
 
-  // ── Verify current password — used to re-confirm identity before a
-  // sensitive action (e.g. changing the transaction PIN) without
-  // creating a brand new session the way calling login() again would.
   async verifyPassword(userId: string, password: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
     if (!user?.passwordHash) return false;
     return argon2.verify(user.passwordHash, password);
   }
 
-  // ── Transaction PIN — uses bcrypt to match the contribution/withdrawal check ──
   async setTransactionPin(userId: string, dto: SetTransactionPinDto) {
     const bcrypt = await import('bcrypt');
     const pinHash = await bcrypt.hash(dto.pin, 10);
@@ -554,10 +726,6 @@ export class AuthService {
     return bcrypt.compare(pin, user.transactionPinHash);
   }
 
-  // ── PIN-change OTP ──────────────────────────────────────────
-  // Called only after verifyPassword() has already succeeded on the
-  // frontend, so we don't re-check the password here — this step's job
-  // is just "prove you own this inbox right now."
   async sendPinChangeOtp(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -565,12 +733,9 @@ export class AuthService {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    // 6-digit numeric code, zero-padded, 10 minute expiry.
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Reuses verificationToken — `token` column holds the code here,
-    // `type` distinguishes it from email verification tokens.
     await this.prisma.verificationToken.create({
       data: { userId, token: code, type: 'pin_change_otp', expiresAt },
     });
@@ -638,9 +803,55 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60000, limit: 10 } })
-  @ApiOperation({ summary: 'Login with email and password' })
+  @ApiOperation({ summary: 'Login with email and password (returns twoFactorRequired when 2FA is on)' })
   login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     return this.authService.login(dto, req.ip || '', req.headers['user-agent'] || '', res);
+  }
+
+  @Post('2fa/login/verify')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @ApiOperation({ summary: 'Finish login by confirming the emailed 2FA code' })
+  verifyTwoFactorLogin(@Body() dto: TwoFactorLoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.verifyTwoFactorLogin(dto, req.ip || '', req.headers['user-agent'] || '', res);
+  }
+
+  @Post('2fa/login/resend')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @ApiOperation({ summary: 'Resend the login 2FA code' })
+  resendTwoFactorLogin(@Body() dto: TwoFactorResendDto) {
+    return this.authService.resendTwoFactorLogin(dto.twoFactorToken);
+  }
+
+  @Post('2fa/send-otp')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @ApiOperation({ summary: 'Email a code to enable or disable 2FA' })
+  sendTwoFactorOtp(@Req() req: any, @Body() dto: TwoFactorSendDto) {
+    return this.authService.sendTwoFactorOtp(req.user.id, dto.purpose);
+  }
+
+  @Post('2fa/enable')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @ApiOperation({ summary: 'Turn on 2FA after confirming the emailed code' })
+  enableTwoFactor(@Req() req: any, @Body() dto: TwoFactorCodeDto) {
+    return this.authService.enableTwoFactor(req.user.id, dto.code);
+  }
+
+  @Post('2fa/disable')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @ApiOperation({ summary: 'Turn off 2FA with password + emailed code' })
+  disableTwoFactor(@Req() req: any, @Body() dto: DisableTwoFactorDto) {
+    return this.authService.disableTwoFactor(req.user.id, dto);
   }
 
   @Post('refresh')

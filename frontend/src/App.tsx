@@ -11,6 +11,7 @@ import { CinematicLoader } from '@/components/ui/CinematicLoader'
 import { PageTransition }  from '@/components/ui/PageTransition'
 import { MaintenanceScreen } from '@/components/ui/MaintenanceScreen'
 import { MaintenanceBanner } from '@/components/ui/MaintenanceBanner'
+import SupportBubble from '@/components/SupportBubble'
 
 import LoginPage       from '@/pages/auth/LoginPage'
 import RegisterPage    from '@/pages/auth/RegisterPage'
@@ -32,6 +33,14 @@ import NotFoundPage    from '@/pages/NotFoundPage'
 import KycVerificationPage from '@/pages/Kyc/KycVerificationPage'
 import PrivacyPage from '@/pages/Privacy'
 import TermsPage   from '@/pages/Terms'
+import BecomeVendorPage from '@/pages/vendor/BecomeVendorPage'
+import ShopPage from '@/pages/shop/ShopPage'
+import ProductPage from '@/pages/shop/ProductPage'
+import MyPlansPage from '@/pages/shop/MyPlansPage'
+import PlanPage from '@/pages/shop/PlanPage'
+import VendorHubPage from '@/pages/vendor/VendorHubPage'
+import VendorProductFormPage from '@/pages/vendor/VendorProductFormPage'
+import SmallSmallStaffPage from '@/pages/staff/SmallSmallStaffPage'
 
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -57,6 +66,13 @@ function RequireSuperAdmin({ children }: { children: React.ReactNode }) {
 function RequireCustomerService({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
   if (!user || user.role !== 'CUSTOMER_SERVICE') return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
+// Pay Small Small staff screens: customer care, admins and super admins
+function RequireStaff({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore()
+  if (!user || !['CUSTOMER_SERVICE','ADMIN','SUPER_ADMIN'].includes(user.role)) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -118,7 +134,17 @@ export default function App() {
   const isExemptFromMaintenance = user && ['ADMIN', 'SUPER_ADMIN'].includes(user.role)
   const showMaintenanceScreen = appReady && isMaintenanceMode && !isExemptFromMaintenance
 
-    return (
+  // Name sent in the WhatsApp message. Cast to any so TypeScript doesn't
+  // complain if your user type uses different field names.
+  const u = user as any
+  const supportName: string | undefined =
+    u?.fullName ||
+    [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
+    u?.name ||
+    u?.username ||
+    undefined
+
+  return (
     <>
       {!appReady && <CinematicLoader onComplete={() => setAppReady(true)} duration={3200} />}
       {appReady && (
@@ -141,6 +167,15 @@ export default function App() {
                   <Route path="/groups"          element={<RequireAuth><GroupsPage /></RequireAuth>} />
                   <Route path="/groups/:slug"    element={<RequireAuth><GroupDetailPage /></RequireAuth>} />
                   <Route path="/verify-identity" element={<RequireAuth><KycVerificationPage /></RequireAuth>} />
+                  <Route path="/become-vendor"   element={<RequireAuth><BecomeVendorPage /></RequireAuth>} />
+                  <Route path="/shop"            element={<RequireAuth><ShopPage /></RequireAuth>} />
+                  <Route path="/shop/:id"        element={<RequireAuth><ProductPage /></RequireAuth>} />
+                  <Route path="/plans"           element={<RequireAuth><MyPlansPage /></RequireAuth>} />
+                  <Route path="/plans/:id"       element={<RequireAuth><PlanPage /></RequireAuth>} />
+                  <Route path="/vendor"          element={<RequireAuth><VendorHubPage /></RequireAuth>} />
+                  <Route path="/vendor/products/new" element={<RequireAuth><VendorProductFormPage /></RequireAuth>} />
+                  <Route path="/vendor/products/:id" element={<RequireAuth><VendorProductFormPage /></RequireAuth>} />
+                  <Route path="/ss-staff"        element={<RequireAuth><RequireStaff><SmallSmallStaffPage /></RequireStaff></RequireAuth>} />
                   <Route path="/wallet"          element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/payment/verify"  element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/profile"         element={<RequireAuth><ProfilePage /></RequireAuth>} />
@@ -156,6 +191,7 @@ export default function App() {
               </AnimatePresence>
             </PageTransition>
             {toast && <Toast message={toast.message} type={toast.type} />}
+            <SupportBubble userName={supportName} />
           </>
         )
       )}

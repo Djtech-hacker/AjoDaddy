@@ -6,11 +6,12 @@ import { adminApi } from '@/api/services'
 import { useUIStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import LivenessCapture from '@/components/LivenessCapture'
+import { VendorReviewPanels } from '@/pages/staff/SmallSmallStaffPage'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 dayjs.extend(relativeTime)
 
-type AdminTab = 'escalations' | 'users' | 'transactions' | 'groups' | 'contributions' | 'fraud' | 'payouts' | 'audit' | 'kyc'
+type AdminTab = 'escalations' | 'users' | 'transactions' | 'groups' | 'contributions' | 'fraud' | 'payouts' | 'audit' | 'kyc' | 'vendors'
 
 /* ───────────── design tokens (shared look with SupportPage) ───────────── */
 const fieldCls = 'w-full border border-gray-200 rounded-lg px-3 text-[12px] text-gray-900 bg-gray-50 outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 transition-all'
@@ -511,6 +512,7 @@ export default function AdminPage() {
     { id: 'payouts',       label: 'Payouts'        },
     { id: 'audit',         label: 'Audit log'      },
     { id: 'kyc',           label: 'KYC review',    badge: kycPendingCount || undefined },
+    { id: 'vendors',       label: 'Vendors'        },
   ]
 
   const SectionTitle = ({ children }: { children: React.ReactNode }) => (
@@ -870,6 +872,14 @@ export default function AdminPage() {
                 )}
               </div>
             )}
+            
+            {/* VENDORS */}
+            {tab === 'vendors' && (
+              <div className="ss-root px-5 sm:px-6 pb-6">
+                <VendorReviewPanels isAdmin />
+              </div>
+            )}
+            
           </section>
         </div>
       </div>

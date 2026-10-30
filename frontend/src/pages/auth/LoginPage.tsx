@@ -7,9 +7,11 @@ import { motion } from 'framer-motion'
 import { useLogin } from '@/hooks/useApi'
 import { authApi } from '@/api/services'
 import { useUIStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import { Button, Input } from '@/components/ui'
 import AuthShell from '@/components/auth/AuthShell'
 import { LoginPanel } from '@/components/auth/AuthPanels'
+import TwoFactorLoginStep from '@/components/TwoFactorLoginStep'
 
 const schema = z.object({
   email:    z.string().email('Enter a valid email'),
@@ -32,16 +34,30 @@ export default function LoginPage() {
   const [showPass, setShowPass]         = useState(false)
   const [showPinSetup, setShowPinSetup] = useState(false)
   const [pinLoading, setPinLoading]     = useState(false)
+  const [tfa, setTfa] = useState<{ token: string; email?: string } | null>(null)
 
   const { register, handleSubmit, formState: { errors }, setError } = useForm<FormData>({ resolver: zodResolver(schema) })
   const { register: regPin, handleSubmit: hsPIN, formState: { errors: pinErrors } } = useForm<PinData>({ resolver: zodResolver(pinSchema) })
 
+  // shared by normal login and 2FA login
+  const finishLogin = (user: any) => {
+    if (user && !user.hasTransactionPin) setShowPinSetup(true)
+    else navigate(from, { replace: true })
+  }
+
   const onSubmit = async (data: FormData) => {
     try {
       const result: any = await login.mutateAsync(data)
-      const user = result?.user || result?.data?.user
-      if (user && !user.hasTransactionPin) setShowPinSetup(true)
-      else navigate(from, { replace: true })
+      const payload = result?.data?.twoFactorRequired !== undefined ? result.data : result
+
+      // 2FA on: no session yet. Make sure nothing half-set sits in the store.
+      if (payload?.twoFactorRequired) {
+        useAuthStore.getState().logout()
+        setTfa({ token: payload.twoFactorToken, email: payload.maskedEmail })
+        return
+      }
+
+      finishLogin(result?.user || result?.data?.user)
     } catch (err: any) {
       setError('root', { message: err.response?.data?.message || 'Login failed' })
     }
@@ -61,6 +77,19 @@ export default function LoginPage() {
   }
 
   const skipPin = () => navigate(from, { replace: true })
+
+  if (tfa && !showPinSetup) {
+    return (
+      <AuthShell panel={<LoginPanel />}>
+        <TwoFactorLoginStep
+          twoFactorToken={tfa.token}
+          maskedEmail={tfa.email}
+          onBack={() => setTfa(null)}
+          onSuccess={finishLogin}
+        />
+      </AuthShell>
+    )
+  }
 
   if (showPinSetup) {
     return (

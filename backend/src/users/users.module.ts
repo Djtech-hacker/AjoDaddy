@@ -1,32 +1,20 @@
 // ============================================================
 // USERS MODULE — Profiles, avatars, reputation, badges
 // ============================================================
-// ADDED: the badge award engine. Nothing in this codebase previously
-// wrote to the UserBadge table — getUserBadges() only ever read from
-// it, so every user's Badges section showed 0/10 earned regardless of
-// activity. checkAndAwardBadges() / awardBadgeIfMissing() below are
-// the actual logic that decides when someone has qualified, called
-// from the places where each badge's condition can become true
-// (claimStreak here; makeContribution, joinGroup, and the payout path
-// in groups.module.ts).
+// ADDED: the badge award engine (checkAndAwardBadges / awardBadgeIfMissing).
+// ADDED: adjustReputationScore() — clamps reputation to 0-1000.
+// ADDED: uploadAvatarFromDataUrl() — registration avatar upload.
 //
-// ADDED: adjustReputationScore() — reputationScore was being
-// incremented/decremented directly in several places with no bounds,
-// even though the frontend Trust Score display is built entirely
-// around a fixed 0-1000 scale with 5 tiers. This clamps every change
-// to that range so the score (and therefore the tier, and the
-// progress bar) always makes sense.
-//
-// ADDED (this pass): uploadAvatarFromDataUrl() — the register flow
-// (auth.module.ts) collects a profile picture in the browser as a
-// base64 data URL and needs it uploaded to Cloudinary the same way
-// uploadAvatar() does for the existing multipart-file route, but
-// there's no Express.Multer.File at registration time — just a raw
-// string. This is the same upload/transform/save logic, adapted for
-// that input shape, and swallows its own errors so a bad or oversized
-// image can never fail — or even flicker — the account-creation
-// response; the user just ends up with no avatar and can set one from
-// Profile afterward.
+// UPDATED (this pass): date of birth + phone come from verified sources.
+//   - UpdateProfileDto no longer accepts dateOfBirth (or phone, email,
+//     twoFactorEnabled). DOB is written only by NIN/BVN verification.
+//   - getFullProfileById() reads the viewer's own identity record and
+//     shapeProfile() returns:
+//        dobDisplay = "23 February" (day + month only, the YEAR is never sent)
+//        phone      = users.phone, falling back to the NIN record's phone
+//     The raw dateOfBirth is no longer included in any API response.
+//   - Private fields are still returned ONLY when the viewer is looking
+//     at their own profile.
 // ============================================================
 
 import {
@@ -55,8 +43,20 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(200)
   bio?: string;
 
-  @IsOptional() @IsString()
-  phone?: string;
+  @IsOptional() @IsString() @MaxLength(200)
+  streetAddress?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  city?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  state?: string;
+
+  @IsOptional() @IsString() @MaxLength(20)
+  postalCode?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  country?: string;
 }
 
 // Friendly text for badge-earned notifications. Matches the 10 badges
@@ -74,6 +74,11 @@ const BADGE_NOTIFICATION_TEXT: Record<string, { title: string; body: string }> =
   VETERAN:             { title: 'Badge earned: Top Contributor 🎖️',   body: "You've been a member for a full year." },
 };
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -90,8 +95,22 @@ export class UsersService {
     });
   }
 
+  // Parses the date of birth stored on the NIN/BVN record. Providers return
+  // it as "1999-02-23", "23-02-1999", "23/02/1999" or similar.
+  private parseDob(raw?: string | null): Date | null {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    const m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(s); // DD-MM-YYYY or DD/MM/YYYY
+    const d = m ? new Date(Date.UTC(+m[3], +m[2] - 1, +m[1])) : new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
   // ── Full profile by ID ─────────────────────────────────────
-  async getFullProfileById(userId: string) {
+  // viewerId = the logged-in user making the request. Private fields
+  // (email, phone, DOB, address, 2FA) are only returned when
+  // viewerId === userId.
+  async getFullProfileById(userId: string, viewerId?: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -99,6 +118,9 @@ export class UsersService {
         lastName: true, phone: true, avatarUrl: true, bio: true,
         role: true, status: true, isEmailVerified: true,
         hasTransactionPin: true,
+        dateOfBirth: true, streetAddress: true, city: true,
+        state: true, postalCode: true, country: true,
+        twoFactorEnabled: true,
         reputationScore: true, totalContributed: true,
         totalReceived: true, currentStreak: true, longestStreak: true,
         referralCode: true, createdAt: true,
@@ -123,10 +145,21 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    return this.shapeProfile(user);
+
+    // The NIN/BVN record is the source of truth for date of birth, and a
+    // fallback for phone. Only loaded for the user's own profile.
+    const isSelf = viewerId === userId;
+    const identity = isSelf
+      ? await this.prisma.identityRecord.findUnique({
+          where: { userId },
+          select: { dateOfBirth: true, phone: true },
+        })
+      : null;
+
+    return this.shapeProfile(user, isSelf, identity);
   }
 
-  // ── Full profile by username ───────────────────────────────
+  // ── Full profile by username (public view — never private fields) ──
   async getFullProfileByUsername(username: string) {
     const user = await this.prisma.user.findUnique({
       where: { username },
@@ -157,11 +190,15 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    return this.shapeProfile(user);
+    return this.shapeProfile(user, false);
   }
 
   // ── Shape DB result into the exact shape ProfilePage.tsx expects ──
-  private shapeProfile(user: any) {
+  private shapeProfile(
+    user: any,
+    includePrivate = false,
+    identity?: { dateOfBirth?: string | null; phone?: string | null } | null,
+  ) {
     const ps = user.profileStats;
     const streak = user.streak;
     const ranking = user.leaderboardRankings?.[0];
@@ -223,11 +260,31 @@ export class UsersService {
         weekly_movement: 0,
         category:        'REPUTATION',
       },
+
+      // Private fields: own profile only.
+      ...(includePrivate ? (() => {
+        // NIN/BVN date of birth wins. Only day + month ever leave the server.
+        const dob = this.parseDob(identity?.dateOfBirth)
+          ?? (user.dateOfBirth ? new Date(user.dateOfBirth) : null);
+        const validDob = dob && !isNaN(dob.getTime()) ? dob : null;
+        return {
+          email:            user.email,
+          phone:            user.phone ?? (identity?.phone || null),
+          dobDisplay:       validDob ? `${validDob.getUTCDate()} ${MONTH_NAMES[validDob.getUTCMonth()]}` : null,
+          streetAddress:    user.streetAddress ?? null,
+          city:             user.city ?? null,
+          state:            user.state ?? null,
+          postalCode:       user.postalCode ?? null,
+          country:          user.country ?? null,
+          twoFactorEnabled: user.twoFactorEnabled ?? false,
+        };
+      })() : {}),
     };
   }
 
+  // getProfile() is the "own profile" helper, so the viewer is the user.
   async getProfile(userId: string) {
-    return this.getFullProfileById(userId);
+    return this.getFullProfileById(userId, userId);
   }
 
   async getPublicProfile(username: string) {
@@ -256,25 +313,36 @@ export class UsersService {
   }
 
   // ── Update profile ─────────────────────────────────────────
+  // Email, phone, date of birth and 2FA are deliberately NOT editable here.
   async updateProfile(userId: string, dto: UpdateProfileDto) {
-    if (dto.phone) {
-      const existing = await this.prisma.user.findFirst({
-        where: { phone: dto.phone, id: { not: userId } },
-      });
-      if (existing) throw new BadRequestException('Phone number already in use');
+    const data: Record<string, any> = {};
+
+    if (dto.firstName     !== undefined) data.firstName     = dto.firstName;
+    if (dto.lastName      !== undefined) data.lastName      = dto.lastName;
+    if (dto.bio           !== undefined) data.bio           = dto.bio;
+    if (dto.streetAddress !== undefined) data.streetAddress = dto.streetAddress;
+    if (dto.city          !== undefined) data.city          = dto.city;
+    if (dto.state         !== undefined) data.state         = dto.state;
+    if (dto.postalCode    !== undefined) data.postalCode    = dto.postalCode;
+    if (dto.country       !== undefined) data.country       = dto.country;
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No changes to save');
     }
+
     return this.prisma.user.update({
       where: { id: userId },
-      data: dto,
+      data,
       select: {
         id: true, email: true, username: true, firstName: true,
         lastName: true, phone: true, avatarUrl: true, bio: true,
+        streetAddress: true, city: true,
+        state: true, postalCode: true, country: true,
       },
     });
   }
 
-  // ── Avatar upload (multipart file — used by the "change photo"
-  // route on the Profile page, once one exists) ──────────────
+  // ── Avatar upload (multipart file — "change photo" route) ──
   async uploadAvatar(userId: string, file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
     if (file.size > 5 * 1024 * 1024) throw new BadRequestException('Image must be under 5MB');
@@ -305,15 +373,9 @@ export class UsersService {
     });
   }
 
-  // ── Avatar upload from a base64 data URL — used at registration,
-  // where RegisterPage.tsx already crops/shrinks the image in the
-  // browser and sends it as a raw `data:image/...` string rather
-  // than a multipart file upload. Deliberately swallows its own
-  // errors (logs and returns) rather than throwing: a broken or
-  // oversized image here must never turn a successful account
-  // creation into a failed registration response. Called from
-  // AuthService.register() right after the user + wallet are
-  // committed.
+  // ── Avatar upload from a base64 data URL — used at registration.
+  // Deliberately swallows its own errors: a broken or oversized image
+  // must never turn a successful account creation into a failure.
   async uploadAvatarFromDataUrl(userId: string, dataUrl: string) {
     if (!dataUrl?.startsWith('data:image/')) return;
     try {
@@ -392,13 +454,6 @@ export class UsersService {
   }
 
   // ── Reputation score adjustment (clamped 0-1000) ───────────
-  // FIX: reputationScore was being incremented/decremented directly
-  // wherever it changed, with no bounds — nothing stopped it going
-  // negative or past 1000, even though the frontend Trust Score card
-  // is built entirely around a fixed 0-1000 scale with 5 tiers. This
-  // clamps every change with a raw SQL LEAST/GREATEST so it stays
-  // atomic even when called from inside an existing transaction (pass
-  // `tx` in that case; omit it to run standalone).
   async adjustReputationScore(userId: string, delta: number, tx?: any) {
     const db = tx ?? this.prisma;
     await db.$executeRaw`UPDATE users SET "reputationScore" = LEAST(1000, GREATEST(0, "reputationScore" + ${delta})) WHERE id = ${userId}`;
@@ -407,10 +462,8 @@ export class UsersService {
   // ── Badges ─────────────────────────────────────────────────
 
   // Award a single badge type if the user doesn't already have it.
-  // Relies on the existing @@unique([userId, type]) constraint on
-  // UserBadge — createMany + skipDuplicates makes this safe to call
-  // concurrently without a race condition. Returns true if this call
-  // is the one that actually awarded it (so the caller can notify).
+  // createMany + skipDuplicates makes this safe to call concurrently.
+  // Returns true if this call is the one that actually awarded it.
   async awardBadgeIfMissing(userId: string, type: string, tx?: any): Promise<boolean> {
     const db = tx ?? this.prisma;
     const result = await db.userBadge.createMany({
@@ -429,14 +482,9 @@ export class UsersService {
     return awarded;
   }
 
-  // Central place that checks the badges whose conditions can be
-  // evaluated from a single user's own data (streak, total contributed,
-  // account age, contribution count). Call this after any action that
-  // could unlock one of these — a paid contribution, a claimed streak,
-  // joining a group. Badges with conditions spanning MULTIPLE users or
-  // a specific group/cycle (PERFECT_CYCLE, EARLY_SUPPORTER, TOP_SAVER)
-  // are handled at their own call sites instead — see groups.module.ts
-  // and awardTopSaverBadges() below.
+  // Checks the badges whose conditions can be evaluated from a single
+  // user's own data. PERFECT_CYCLE / EARLY_SUPPORTER / TOP_SAVER are
+  // handled at their own call sites (groups.module.ts, the daily cron).
   async checkAndAwardBadges(userId: string, tx?: any): Promise<string[]> {
     const db = tx ?? this.prisma;
     const user = await db.user.findUnique({
@@ -465,21 +513,12 @@ export class UsersService {
     return newlyAwarded;
   }
 
-  // Call this from wherever KYC verification flips a user to VERIFIED
-  // (kyc.module.ts) to award the "Reliable" badge. Not wired up
-  // automatically here since that module wasn't available to edit —
-  // add `await this.usersService.awardVerifiedBadge(userId)` right
-  // after the status update in that flow (needs UsersModule imported
-  // there, same pattern as GroupsModule).
+  // Call from wherever KYC flips a user to VERIFIED (kyc.module.ts).
   async awardVerifiedBadge(userId: string) {
     return this.awardBadgeIfMissing(userId, 'VERIFIED');
   }
 
-  // TOP_SAVER — "top 10% of all contributors" is inherently a
-  // cross-user comparison, so it can't be checked at the moment any
-  // one person contributes. Recomputed daily instead: harmless no-op
-  // for anyone who already has it (skipDuplicates), and anyone whose
-  // ranking rises into the top 10% picks it up within a day.
+  // TOP_SAVER — cross-user comparison, recomputed daily.
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async awardTopSaverBadges() {
     const totalActive = await this.prisma.user.count({ where: { status: 'ACTIVE' } });
@@ -590,7 +629,7 @@ export class UsersController {
   @Get('me')
   @ApiOperation({ summary: 'Get own profile' })
   getMe(@Req() req: any) {
-    return this.usersService.getFullProfileById(req.user.id);
+    return this.usersService.getFullProfileById(req.user.id, req.user.id);
   }
 
   @Patch('me')
@@ -605,8 +644,6 @@ export class UsersController {
     return this.usersService.getUserBadges(req.user.id);
   }
 
-  // NEW — lets the Profile page offer a "change photo" button later.
-  // Not called from anywhere in the frontend yet.
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('file'))
   @ApiOperation({ summary: 'Upload or replace own profile picture' })
@@ -630,9 +667,9 @@ export class UsersController {
   }
 
   @Get(':id/profile')
-  @ApiOperation({ summary: 'Get full profile by user ID' })
-  getProfileById(@Param('id') id: string) {
-    return this.usersService.getFullProfileById(id);
+  @ApiOperation({ summary: 'Get full profile by user ID (private fields only for your own)' })
+  getProfileById(@Req() req: any, @Param('id') id: string) {
+    return this.usersService.getFullProfileById(id, req.user.id);
   }
 
   @Patch(':id')

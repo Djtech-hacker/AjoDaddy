@@ -1,5 +1,169 @@
+// import { useEffect, useRef, useState } from 'react'
+// import { motion, useReducedMotion } from 'framer-motion'
+
+// interface CinematicLoaderProps {
+//   onComplete?: () => void
+//   duration?: number
+// }
+
+// const LOGO_URL =
+//   'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
+
+// /**
+//  * AjoDaddy loader
+//  * Visual idea: a calm contribution cycle around a shared pool of savings.
+//  * Kept deliberately simple: no particles, network lines, gradients, or 3D effects.
+//  */
+// export function CinematicLoader({
+//   onComplete,
+//   duration = 1800,
+// }: CinematicLoaderProps) {
+//   const [progress, setProgress] = useState(0)
+//   const [exiting, setExiting] = useState(false)
+//   const onCompleteRef = useRef(onComplete)
+//   const reduceMotion = useReducedMotion()
+
+//   useEffect(() => {
+//     onCompleteRef.current = onComplete
+//   }, [onComplete])
+
+//   useEffect(() => {
+//     let raf = 0
+//     let exitTimer: ReturnType<typeof setTimeout> | undefined
+//     let doneTimer: ReturnType<typeof setTimeout> | undefined
+//     let start = 0
+//     let finished = false
+//     let cancelled = false
+
+//     const finish = () => {
+//       if (finished || cancelled) return
+//       finished = true
+//       setProgress(1)
+//       exitTimer = setTimeout(() => {
+//         if (cancelled) return
+//         setExiting(true)
+//         doneTimer = setTimeout(() => {
+//           if (!cancelled) onCompleteRef.current?.()
+//         }, reduceMotion ? 0 : 220)
+//       }, reduceMotion ? 0 : 120)
+//     }
+
+//     if (reduceMotion) {
+//       setProgress(1)
+//       finish()
+//     } else {
+//       const tick = (now: number) => {
+//         if (!start) start = now
+//         const raw = Math.min((now - start) / Math.max(duration, 1), 1)
+//         // Ease out gently; the loader should feel calm rather than theatrical.
+//         const eased = 1 - Math.pow(1 - raw, 3)
+//         setProgress(eased)
+
+//         if (raw >= 1) {
+//           finish()
+//           return
+//         }
+//         raf = requestAnimationFrame(tick)
+//       }
+//       raf = requestAnimationFrame(tick)
+//     }
+
+//     return () => {
+//       cancelled = true
+//       cancelAnimationFrame(raf)
+//       if (exitTimer) clearTimeout(exitTimer)
+//       if (doneTimer) clearTimeout(doneTimer)
+//     }
+//   }, [duration, reduceMotion])
+
+//   const circumference = 2 * Math.PI * 39
+
+//   return (
+//     <motion.div
+//       role="status"
+//       aria-label="Loading AjoDaddy"
+//       aria-live="polite"
+//       className="fixed inset-0 z-[9999] flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#F8F9FA] px-6"
+//       initial={{ opacity: 1 }}
+//       animate={{ opacity: exiting ? 0 : 1 }}
+//       transition={{ duration: reduceMotion ? 0 : 0.22, ease: 'easeOut' }}
+//     >
+//       <div className="flex w-full max-w-[300px] flex-col items-center">
+//         <motion.img
+//           src={LOGO_URL}
+//           alt="AjoDaddy"
+//           className="mb-12 h-12 w-auto max-w-[220px] object-contain"
+//           initial={reduceMotion ? false : { opacity: 0, y: 5 }}
+//           animate={{ opacity: 1, y: 0 }}
+//           transition={{ duration: reduceMotion ? 0 : 0.35, ease: 'easeOut' }}
+//         />
+
+//         {/* A single circular stroke represents the repeating Ajo contribution cycle. */}
+//         <div className="relative mb-7 flex h-[112px] w-[112px] items-center justify-center">
+//           <svg
+//             viewBox="0 0 100 100"
+//             className="absolute inset-0 h-full w-full -rotate-90"
+//             aria-hidden="true"
+//           >
+//             <circle
+//               cx="50"
+//               cy="50"
+//               r="39"
+//               fill="none"
+//               stroke="#DDEBE3"
+//               strokeWidth="3"
+//             />
+//             <motion.circle
+//               cx="50"
+//               cy="50"
+//               r="39"
+//               fill="none"
+//               stroke="#0B6E4F"
+//               strokeWidth="3"
+//               strokeLinecap="round"
+//               strokeDasharray={circumference}
+//               initial={{ strokeDashoffset: circumference }}
+//               animate={{
+//                 strokeDashoffset: circumference * (1 - progress),
+//               }}
+//               transition={{ duration: 0.12, ease: 'linear' }}
+//             />
+//           </svg>
+
+//           {/* A simple stack of contributions: intentionally flat, not an illustration. */}
+//           <div className="relative flex h-[58px] w-[58px] flex-col items-center justify-center">
+//             <span className="absolute top-[7px] h-[27px] w-[43px] rounded-full border-[2px] border-[#14AE5C] bg-[#E7F5EC]" />
+//             <span className="absolute top-[15px] h-[27px] w-[43px] rounded-full border-[2px] border-[#0B6E4F] bg-[#F8F9FA]" />
+//             <span className="relative z-10 flex h-[27px] w-[43px] items-center justify-center rounded-full border-[2px] border-[#0B6E4F] bg-white text-[16px] font-semibold leading-none text-[#0B6E4F]">
+//               ₦
+//             </span>
+//           </div>
+//         </div>
+
+//         <p className="text-center text-[15px] font-semibold tracking-[-0.02em] text-[#173B2B]">
+//           Bringing your Ajo together
+//         </p>
+//         <p className="mt-2 text-center text-[12px] font-medium text-[#718078]">
+//           Your circle of savings, in sync.
+//         </p>
+
+//         <div
+//           className="mt-8 h-[3px] w-[132px] overflow-hidden rounded-full bg-[#E2EAE5]"
+//           aria-hidden="true"
+//         >
+//           <motion.div
+//             className="h-full rounded-full bg-[#14AE5C]"
+//             style={{ width: `${Math.round(progress * 100)}%` }}
+//           />
+//         </div>
+//       </div>
+//     </motion.div>
+//   )
+// }
+
+
 import { useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 
 interface CinematicLoaderProps {
   onComplete?: () => void
@@ -8,306 +172,292 @@ interface CinematicLoaderProps {
 
 const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1785357030/real_logo_s3jtjp.png'
 
-const MESSAGES = [
-  'Preparing your space',
-  'Securing your wallet',
-  'Syncing your groups',
-  'Ready',
-]
+// ── Switch the whole look here: 'light' or 'dark' ──
+const MODE = 'light' as 'light' | 'dark'
 
-// Rising staircase: each bar is one contribution, the last one is the payout
-const BARS = [22, 30, 38, 46, 54, 62, 70, 78, 86, 100]
+const THEMES = {
+  light: {
+    background:   '#F8F9FA',
+    track:        '#DCE6E0',
+    emptyNode:    '#E6EDE9',
+    emptyIcon:    '#B3C1B9',
+    contribution: '#14AE5C',
+    coinCenter:   '#0B6E4F',
+    payout:       '#F2B134',
+    payoutIcon:   '#0B6E4F',
+    text:         '#0B6E4F',
+    muted:        '#7A8A82',
+  },
+  dark: {
+    background:   '#0B1D16',
+    track:        'rgba(255,255,255,0.10)',
+    emptyNode:    'rgba(255,255,255,0.10)',
+    emptyIcon:    'rgba(255,255,255,0.30)',
+    contribution: '#14AE5C',
+    coinCenter:   '#0F7F57',
+    payout:       '#A8E03A',
+    payoutIcon:   '#0B1D16',
+    text:         '#FFFFFF',
+    muted:        'rgba(255,255,255,0.45)',
+  },
+}
+const THEME = THEMES[MODE]
+
+const COIN_GOLD      = '#F2B134'
+const COIN_GOLD_DARK = '#C98A12'
+
+// The savings circle
+const MEMBERS      = 8
+const CONTRIBUTION = 2000 // ₦ per member, shown in the pool counter
+
+// SVG geometry (viewBox is 200 x 200)
+const VIEW     = 200
+const CENTER   = 100
+const RADIUS   = 78
+const NODE_R   = 14
+const CENTER_R = 28
+const COIN_R   = 6
 
 const EASE = [0.16, 1, 0.3, 1] as [number, number, number, number]
+const EXIT_MS = 450
 
-// ── Living background: drifting network + payment pulses + embers ──
-function LiveBackground() {
-  const ref = useRef<HTMLCanvasElement>(null)
+// Member 0 sits at 12 o'clock (this is who gets the payout), the rest go clockwise
+const NODES = Array.from({ length: MEMBERS }, (_, i) => {
+  const angle = -Math.PI / 2 + (i / MEMBERS) * Math.PI * 2
+  return {
+    cx: CENTER + RADIUS * Math.cos(angle),
+    cy: CENTER + RADIUS * Math.sin(angle),
+  }
+})
 
-  useEffect(() => {
-    const canvas = ref.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !ctx) return
-
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    let w = 0, h = 0, raf = 0, last = 0, spawnAt = 0
-    const LINK = 150
-
-    type Node  = { x: number; y: number; vx: number; vy: number; r: number }
-    type Pulse = { a: number; b: number; t: number; speed: number }
-    type Ember = { x: number; y: number; vy: number; vx: number; r: number; life: number; max: number }
-
-    let nodes: Node[]   = []
-    let pulses: Pulse[] = []
-    let embers: Ember[] = []
-
-    const seed = () => {
-      const count = Math.min(Math.round((w * h) / 17000), 70)
-      nodes = Array.from({ length: count }, () => ({
-        x: Math.random() * w, y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.22, vy: (Math.random() - 0.5) * 0.22,
-        r: 1 + Math.random() * 1.4,
-      }))
-      pulses = []
-      embers = []
-    }
-
-    const resize = () => {
-      const r = canvas.getBoundingClientRect()
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
-      w = r.width; h = r.height
-      canvas.width = w * dpr; canvas.height = h * dpr
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      seed()
-      if (reduce) frame(16, true)
-    }
-
-    const spawnEmber = () => {
-      embers.push({
-        x: Math.random() * w, y: h + 10,
-        vy: -(0.25 + Math.random() * 0.45), vx: (Math.random() - 0.5) * 0.15,
-        r: 0.8 + Math.random() * 1.6, life: 0, max: 260 + Math.random() * 220,
-      })
-    }
-
-    const frame = (dt: number, still = false) => {
-      ctx.clearRect(0, 0, w, h)
-      const step = dt / 16.7
-
-      // move nodes
-      if (!still) {
-        for (const n of nodes) {
-          n.x += n.vx * step; n.y += n.vy * step
-          if (n.x < -10) n.x = w + 10; else if (n.x > w + 10) n.x = -10
-          if (n.y < -10) n.y = h + 10; else if (n.y > h + 10) n.y = -10
-        }
-      }
-
-      // links
-      ctx.lineWidth = 1
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y
-          const d = Math.hypot(dx, dy)
-          if (d < LINK) {
-            ctx.strokeStyle = `rgba(46,150,90,${(1 - d / LINK) * 0.3})`
-            ctx.beginPath(); ctx.moveTo(nodes[i].x, nodes[i].y); ctx.lineTo(nodes[j].x, nodes[j].y); ctx.stroke()
-          }
-        }
-      }
-
-      // nodes
-      for (const n of nodes) {
-        ctx.fillStyle = 'rgba(180,235,200,0.55)'
-        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill()
-      }
-
-      if (still) return
-
-      // spawn payment pulses along live links
-      spawnAt -= dt
-      if (spawnAt <= 0 && nodes.length > 2) {
-        spawnAt = 380 + Math.random() * 420
-        for (let tries = 0; tries < 12; tries++) {
-          const a = Math.floor(Math.random() * nodes.length)
-          const b = Math.floor(Math.random() * nodes.length)
-          if (a !== b && Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y) < LINK) {
-            pulses.push({ a, b, t: 0, speed: 0.012 + Math.random() * 0.012 }); break
-          }
-        }
-      }
-
-      // draw pulses
-      pulses = pulses.filter(p => {
-        p.t += p.speed * step
-        if (p.t >= 1) return false
-        const A = nodes[p.a], B = nodes[p.b]
-        if (!A || !B || Math.hypot(A.x - B.x, A.y - B.y) > LINK + 20) return false
-        const x = A.x + (B.x - A.x) * p.t, y = A.y + (B.y - A.y) * p.t
-        ctx.fillStyle = 'rgba(168,224,58,0.22)'
-        ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill()
-        ctx.fillStyle = '#E6FF9A'
-        ctx.beginPath(); ctx.arc(x, y, 1.8, 0, Math.PI * 2); ctx.fill()
-        return true
-      })
-
-      // embers rising
-      if (embers.length < 22 && Math.random() < 0.12) spawnEmber()
-      embers = embers.filter(e => {
-        e.life += step; e.x += e.vx * step; e.y += e.vy * step
-        if (e.life > e.max || e.y < -10) return false
-        const a = Math.sin((e.life / e.max) * Math.PI) * 0.7
-        ctx.fillStyle = `rgba(168,224,58,${a})`
-        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill()
-        return true
-      })
-    }
-
-    const loop = (now: number) => {
-      const dt = last ? Math.min(now - last, 50) : 16
-      last = now
-      frame(dt)
-      raf = requestAnimationFrame(loop)
-    }
-
-    resize()
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas)
-    if (!reduce) raf = requestAnimationFrame(loop)
-
-    return () => { cancelAnimationFrame(raf); ro.disconnect() }
-  }, [])
-
-  return <canvas ref={ref} aria-hidden className="absolute inset-0 w-full h-full pointer-events-none" />
-}
-
-// ── Loader ────────────────────────────────────────────────────
-export function CinematicLoader({ onComplete, duration = 3200 }: CinematicLoaderProps) {
-  const onCompleteRef = useRef(onComplete)
-  onCompleteRef.current = onComplete // timer never restarts when the parent re-renders
-
-  const [progress, setProgress] = useState(0) // 0..1
-  const [exiting, setExiting]   = useState(false)
-
-  useEffect(() => {
-    let raf = 0, start = 0, finished = false
-    let exitTimer = 0, doneTimer = 0
-
-    const loop = (now: number) => {
-      if (!start) start = now
-      const raw   = Math.min((now - start) / duration, 1)
-      const eased = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2
-      setProgress(eased)
-
-      if (raw >= 1 && !finished) {
-        finished = true
-        exitTimer = window.setTimeout(() => {
-          setExiting(true)
-          doneTimer = window.setTimeout(() => onCompleteRef.current?.(), 700)
-        }, 350)
-        return
-      }
-      raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
-
-    return () => { cancelAnimationFrame(raf); clearTimeout(exitTimer); clearTimeout(doneTimer) }
-  }, [duration])
-
-  const pct      = Math.round(progress * 100)
-  const msgIndex = Math.min(Math.floor(progress * MESSAGES.length), MESSAGES.length - 1)
-
+// Small person icon (head + shoulders) drawn around a point
+function PersonIcon({ cx, cy, color }: { cx: number; cy: number; color: string }) {
   return (
-    <motion.div
-      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center overflow-hidden select-none"
-      style={{ background: 'linear-gradient(120deg, #060D0A 0%, #0B1F18 60%, #123D2A 100%)' }}
-      initial={{ opacity: 1 }}
-      animate={{ opacity: exiting ? 0 : 1, y: exiting ? -16 : 0 }}
-      transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
-    >
-      {/* aurora glows, slowly drifting */}
-      <motion.div
-        className="absolute -bottom-40 -left-32 w-[720px] h-[720px] pointer-events-none"
-        style={{ background: 'radial-gradient(closest-side, rgba(27,92,60,0.55), transparent)' }}
-        animate={{ x: [0, 90, 0], y: [0, -50, 0], scale: [1, 1.12, 1] }}
-        transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
+    <g fill={color}>
+      <circle cx={cx} cy={cy - 3.4} r={3.6} />
+      <path
+        d={`M ${cx - 6.5} ${cy + 7.5}
+            C ${cx - 6.5} ${cy + 2.8}, ${cx - 3.6} ${cy + 1.2}, ${cx} ${cy + 1.2}
+            C ${cx + 3.6} ${cy + 1.2}, ${cx + 6.5} ${cy + 2.8}, ${cx + 6.5} ${cy + 7.5} Z`}
       />
-      <motion.div
-        className="absolute -top-44 -right-32 w-[620px] h-[620px] pointer-events-none"
-        style={{ background: 'radial-gradient(closest-side, rgba(168,224,58,0.12), transparent)' }}
-        animate={{ x: [0, -70, 0], y: [0, 60, 0], scale: [1, 1.18, 1] }}
-        transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
-      />
-      <motion.div
-        className="absolute top-1/3 left-1/3 w-[480px] h-[480px] pointer-events-none"
-        style={{ background: 'radial-gradient(closest-side, rgba(46,150,90,0.22), transparent)' }}
-        animate={{ x: [0, 120, -40, 0], y: [0, 40, -60, 0], opacity: [0.5, 1, 0.6, 0.5] }}
-        transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
-      />
-
-      {/* fine dot grid */}
-      <div className="absolute inset-0 pointer-events-none opacity-60"
-        style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)', backgroundSize: '22px 22px' }} />
-
-      {/* drifting network, payment pulses, embers */}
-      <LiveBackground />
-
-      {/* light sweeps across the screen */}
-      <motion.div
-        aria-hidden
-        className="absolute inset-y-0 w-[32%] pointer-events-none"
-        style={{ background: 'linear-gradient(100deg, transparent, rgba(168,224,58,0.05), transparent)' }}
-        initial={{ x: '-40vw' }}
-        animate={{ x: '130vw' }}
-        transition={{ duration: 6, repeat: Infinity, repeatDelay: 1.5, ease: 'linear' }}
-      />
-
-      {/* vignette keeps the centre clean */}
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: 'radial-gradient(ellipse at center, transparent 35%, rgba(3,8,6,0.75) 100%)' }} />
-
-      <div className="relative z-10 w-full max-w-[340px] px-6 flex flex-col items-center">
-        <motion.img
-          src={LOGO_URL}
-          alt="AjoDaddy"
-          className="h-16 sm:h-20 w-auto object-contain"
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.9, ease: EASE }}
-        />
-
-        {/* rising bars */}
-        <div className="mt-12 w-full h-24 flex items-end gap-[7px]" aria-hidden>
-          {BARS.map((h, i) => {
-            const fill   = Math.min(Math.max(progress * BARS.length - i, 0), 1)
-            const isLast = i === BARS.length - 1
-            return (
-              <div key={i} className="flex-1 relative rounded-[3px] overflow-hidden bg-white/[0.06]"
-                style={{ height: `${h}%` }}>
-                <div
-                  className="absolute inset-0 origin-bottom rounded-[3px]"
-                  style={{
-                    transform: `scaleY(${fill})`,
-                    background: isLast
-                      ? 'linear-gradient(180deg, #E6FF9A 0%, #A8E03A 100%)'
-                      : 'linear-gradient(180deg, #2E965A 0%, #1B5C3C 100%)',
-                    boxShadow: isLast && fill > 0.98 ? '0 0 24px rgba(168,224,58,0.55)' : 'none',
-                    transition: 'box-shadow 0.4s ease',
-                  }}
-                />
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="mt-6 w-full flex items-baseline justify-between">
-          <p key={msgIndex} className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-white/50">
-            {MESSAGES[msgIndex]}
-          </p>
-          <p className="text-[13px] font-mono tabular-nums text-white/70">
-            {String(pct).padStart(2, '0')}<span className="text-white/30">%</span>
-          </p>
-        </div>
-
-        <div className="mt-3 w-full h-px bg-white/10 relative overflow-hidden">
-          <div className="absolute inset-y-0 left-0"
-            style={{
-              width: `${progress * 100}%`,
-              background: 'linear-gradient(90deg, rgba(168,224,58,0.2), #A8E03A)',
-            }} />
-        </div>
-      </div>
-
-      <motion.p
-        className="absolute bottom-10 text-[10px] font-semibold uppercase tracking-[0.3em] text-white/30"
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-        transition={{ delay: 0.6, duration: 0.8 }}
-      >
-        Save Together · Grow Together
-      </motion.p>
-    </motion.div>
+    </g>
   )
 }
 
+export function CinematicLoader({ onComplete, duration = 2800 }: CinematicLoaderProps) {
+  const reduce = useReducedMotion()
 
+  const onCompleteRef = useRef(onComplete)
+  onCompleteRef.current = onComplete // timers never restart when the parent re-renders
 
+  const [exiting, setExiting] = useState(false)
+  const [paid, setPaid] = useState(reduce ? MEMBERS : 0) // members who have contributed so far
+
+  // Reduced motion: show the finished circle and leave quickly
+  const total = reduce ? Math.min(duration, 700) : duration
+
+  // Timeline in seconds, everything scales with `duration`
+  const d          = total / 1000
+  const fillStart  = d * 0.16   // line leaves the top
+  const fillWindow = d * 0.46   // time for the line to go all the way round
+  const coinDelay  = d * 0.04   // member fills, then the coin leaves
+  const travel     = d * 0.16   // coin flight to the pool
+  const payoutAt   = d * 0.79   // pool pays the member at the top
+  const payoutFly  = d * 0.14
+
+  const fillAt    = (i: number) => fillStart + (i / MEMBERS) * fillWindow
+  const arriveAt  = (i: number) => fillAt(i) + coinDelay + travel
+
+  useEffect(() => {
+    const timers: number[] = []
+
+    if (!reduce) {
+      // Pool counter goes up the moment each coin lands
+      for (let i = 0; i < MEMBERS; i++) {
+        timers.push(window.setTimeout(() => setPaid(i + 1), arriveAt(i) * 1000))
+      }
+    }
+
+    timers.push(window.setTimeout(() => setExiting(true), total))
+    timers.push(window.setTimeout(() => onCompleteRef.current?.(), total + EXIT_MS))
+
+    return () => timers.forEach(clearTimeout)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total, reduce])
+
+  return (
+    <motion.div
+      role="status"
+      aria-live="polite"
+      aria-label="Loading AjoDaddy"
+      className="fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-6 sm:gap-8 select-none"
+      style={{ background: THEME.background }}
+      initial={{ opacity: 1 }}
+      animate={{ opacity: exiting ? 0 : 1 }}
+      transition={{ duration: EXIT_MS / 1000, ease: [0.4, 0, 0.2, 1] }}
+    >
+      <span className="sr-only">Loading AjoDaddy</span>
+
+      <motion.img
+        src={LOGO_URL}
+        alt=""
+        draggable={false}
+        className="h-20 sm:h-24 w-auto object-contain"
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: EASE }}
+      />
+
+      <motion.svg
+        viewBox={`0 0 ${VIEW} ${VIEW}`}
+        className="h-56 w-56 sm:h-64 sm:w-64"
+        aria-hidden
+        initial={reduce ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4, delay: 0.1 }}
+      >
+        {/* empty circle */}
+        <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="none" stroke={THEME.track} strokeWidth={3} />
+
+        {/* line that travels clockwise, member to member */}
+        <g transform={`rotate(-90 ${CENTER} ${CENTER})`}>
+          <motion.circle
+            cx={CENTER} cy={CENTER} r={RADIUS}
+            fill="none" stroke={THEME.contribution}
+            strokeWidth={3} strokeLinecap="round"
+            initial={reduce ? false : { pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ delay: fillStart, duration: fillWindow, ease: 'linear' }}
+          />
+        </g>
+
+        {/* members: empty seat, then filled green when the line reaches them */}
+        {NODES.map((n, i) => (
+          <g key={i}>
+            <circle cx={n.cx} cy={n.cy} r={NODE_R} fill={THEME.emptyNode} />
+            <PersonIcon cx={n.cx} cy={n.cy} color={THEME.emptyIcon} />
+            <motion.g
+              style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
+              initial={reduce ? false : { opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: fillAt(i), duration: 0.35, ease: EASE }}
+            >
+              <circle cx={n.cx} cy={n.cy} r={NODE_R} fill={THEME.contribution} />
+              <PersonIcon cx={n.cx} cy={n.cy} color="#FFFFFF" />
+            </motion.g>
+          </g>
+        ))}
+
+        {/* the shared pool: a naira coin in the middle */}
+        <motion.g
+          style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
+          initial={reduce ? false : { opacity: 0, scale: 0.6 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.2, duration: 0.5, ease: EASE }}
+        >
+          <circle cx={CENTER} cy={CENTER} r={CENTER_R} fill={THEME.coinCenter} />
+          <circle cx={CENTER} cy={CENTER} r={CENTER_R - 5} fill="none" stroke="#FFFFFF" strokeOpacity={0.35} strokeWidth={1.5} />
+          <text
+            x={CENTER} y={CENTER + 1}
+            textAnchor="middle" dominantBaseline="central"
+            fill="#FFFFFF" fontSize={30} fontWeight={700}
+            fontFamily="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+          >
+            ₦
+          </text>
+        </motion.g>
+
+        {!reduce && (
+          <>
+            {/* a soft ring ripples out each time a contribution lands */}
+            {NODES.map((_, i) => (
+              <motion.circle
+                key={`ripple-${i}`}
+                cx={CENTER} cy={CENTER} r={CENTER_R}
+                fill="none" stroke={THEME.contribution} strokeWidth={2}
+                style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
+                initial={{ opacity: 0, scale: 1 }}
+                animate={{ opacity: [0.5, 0], scale: [1, 1.35] }}
+                transition={{ delay: arriveAt(i), duration: 0.5, ease: 'easeOut' }}
+              />
+            ))}
+
+            {/* each member's coin flies into the pool */}
+            {NODES.map((n, i) => (
+              <motion.g
+                key={`coin-${i}`}
+                initial={{ opacity: 0, x: 0, y: 0 }}
+                animate={{
+                  opacity: [0, 1, 1, 0],
+                  x: CENTER - n.cx,
+                  y: CENTER - n.cy,
+                }}
+                transition={{
+                  delay: fillAt(i) + coinDelay,
+                  opacity: { duration: travel, times: [0, 0.15, 0.8, 1], ease: 'linear' },
+                  x: { duration: travel, ease: [0.5, 0, 0.75, 0.4] },
+                  y: { duration: travel, ease: [0.5, 0, 0.75, 0.4] },
+                }}
+              >
+                <circle cx={n.cx} cy={n.cy} r={COIN_R} fill={COIN_GOLD} stroke={COIN_GOLD_DARK} strokeWidth={1} />
+                <circle cx={n.cx} cy={n.cy} r={COIN_R - 2.2} fill="none" stroke={COIN_GOLD_DARK} strokeOpacity={0.6} strokeWidth={0.8} />
+              </motion.g>
+            ))}
+
+            {/* payout: the pool sends a coin back out to the member whose turn it is */}
+            <motion.g
+              initial={{ opacity: 0, x: 0, y: 0 }}
+              animate={{
+                opacity: [0, 1, 1, 0],
+                x: NODES[0].cx - CENTER,
+                y: NODES[0].cy - CENTER,
+              }}
+              transition={{
+                delay: payoutAt,
+                opacity: { duration: payoutFly, times: [0, 0.15, 0.8, 1], ease: 'linear' },
+                x: { duration: payoutFly, ease: EASE },
+                y: { duration: payoutFly, ease: EASE },
+              }}
+            >
+              <circle cx={CENTER} cy={CENTER} r={COIN_R + 2} fill={COIN_GOLD} stroke={COIN_GOLD_DARK} strokeWidth={1.2} />
+              <circle cx={CENTER} cy={CENTER} r={COIN_R - 1} fill="none" stroke={COIN_GOLD_DARK} strokeOpacity={0.6} strokeWidth={0.9} />
+            </motion.g>
+          </>
+        )}
+
+        {/* member at the top receives the payout and turns gold (or lime on dark) */}
+        <motion.g
+          style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
+          initial={reduce ? false : { opacity: 0, scale: 1 }}
+          animate={{ opacity: 1, scale: reduce ? 1 : [1, 1.25, 1.1] }}
+          transition={{ delay: payoutAt + payoutFly * 0.8, duration: 0.5, ease: EASE }}
+        >
+          <circle cx={NODES[0].cx} cy={NODES[0].cy} r={NODE_R} fill={THEME.payout} />
+          <PersonIcon cx={NODES[0].cx} cy={NODES[0].cy} color={THEME.payoutIcon} />
+        </motion.g>
+      </motion.svg>
+
+      {/* pool counter: goes up by one contribution each time a coin lands */}
+      <div className="flex flex-col items-center gap-1">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-[0.22em]"
+          style={{ color: THEME.muted }}
+        >
+          Ajo pool
+        </span>
+        <div className="h-10 overflow-hidden">
+          <motion.span
+            key={paid}
+            className="block text-3xl font-semibold tabular-nums leading-10"
+            style={{ color: THEME.text }}
+            initial={reduce || paid === 0 ? false : { y: 12, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: 0.25, ease: EASE }}
+          >
+            ₦{(paid * CONTRIBUTION).toLocaleString('en-NG')}
+          </motion.span>
+        </div>
+      </div>
+    </motion.div>
+  )
+}

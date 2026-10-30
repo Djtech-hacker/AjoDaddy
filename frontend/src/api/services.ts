@@ -99,13 +99,14 @@ export const chatApi = {
 
 // ── KYC ───────────────────────────────────────────────────────
 export const kycApi = {
-  getStatus:      ()                              => api.get('/kyc/status'),
-  verifyNin:      (nin: string)                   => api.post('/kyc/verify-nin', { nin }),
-  verifyBvn:      (bvn: string)                   => api.post('/kyc/verify-bvn', { bvn }),
-  submitFacePhoto:(facePhotoUrl: string)          => api.post('/kyc/submit-face', { facePhotoUrl }),
-  getDebts:       ()                              => api.get('/kyc/debts'),
-  checkDebts:     ()                              => api.get('/kyc/check-debts'),
-  settleDebt:     (debtId: string)                => api.post(`/kyc/debts/${debtId}/settle`),
+  getStatus:      ()                                    => api.get('/kyc/status'),
+  verifyNin:      (nin: string)                         => api.post('/kyc/verify-nin', { nin }),
+  verifyBvn:      (bvn: string)                         => api.post('/kyc/verify-bvn', { bvn }),
+  startLiveness:  ()                                    => api.post('/kyc/liveness/start'),
+  submitFace:     (image: string, sessionToken: string) => api.post('/kyc/submit-face', { image, sessionToken }),
+  getDebts:       ()                                    => api.get('/kyc/debts'),
+  checkDebts:     ()                                    => api.get('/kyc/check-debts'),
+  settleDebt:     (debtId: string)                      => api.post(`/kyc/debts/${debtId}/settle`),
 }
 
 // ── Customer Service ──────────────────────────────────────────
@@ -154,7 +155,7 @@ export const adminApi = {
   // KYC
   getPendingKyc:      (status?: string)                                                   => api.get('/admin/kyc/pending', { params: status ? { status } : {} }),
   approveKyc:         (userId: string, facePhotoUrl?: string)                             => api.patch(`/admin/kyc/${userId}/approve`, { facePhotoUrl }),
-  rejectKyc:          (userId: string, reason: string, facePhotoUrl?: string)             => api.patch(`/admin/kyc/${userId}/reject`, { reason, facePhotoUrl }),
+  rejectKyc:          (userId: string, reason: string, facePhotoUrl?: string)             => api.post(`/kyc/admin/reject/${userId}`, { reason, facePhotoUrl }),
   // Super Admin only — reveal full NIN/BVN (password + face photo audit)
   revealUserIdentity: (userId: string, password: string, facePhotoUrl?: string)           => api.post(`/kyc/admin/reveal/${userId}`, { password, facePhotoUrl }),
     // ── Escalated ticket thread (Admin reply flow) ──────────────

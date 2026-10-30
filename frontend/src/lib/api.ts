@@ -7,11 +7,27 @@ import { useMaintenanceStore } from '@/stores/maintenanceStore'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+// Default wait. The backend talks to a remote database, so a request can
+// legitimately take well over 15s on a slow connection.
+const DEFAULT_TIMEOUT_MS = 30000
+
+// These endpoints do several database writes in a row. If the browser gives up
+// before the server finishes, the user sees "failed" even though it worked
+// (that is how a second register attempt ended in "Phone number already registered").
+const SLOW_ENDPOINTS = [
+  '/auth/register',
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/send-phone-otp',
+  '/auth/verify-phone-otp',
+]
+const SLOW_TIMEOUT_MS = 60000
+
 export const api = axios.create({
   baseURL:         BASE_URL,
   withCredentials: true,
   headers:         { 'Content-Type': 'application/json' },
-  timeout:         15000,
+  timeout:         DEFAULT_TIMEOUT_MS,
 })
 
 // ── Lazy-load the store to break the circular import ─────────
@@ -30,6 +46,12 @@ import('@/stores/authStore').then((m: any) => { _authStore = m.useAuthStore })
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = _authStore?.getState().accessToken
   if (token) config.headers.Authorization = `Bearer ${token}`
+
+  // Give slow multi-step endpoints more time. Never lowers a timeout a caller
+  // already set higher (e.g. withdrawals use 60s).
+  if (SLOW_ENDPOINTS.some(p => config.url?.includes(p))) {
+    config.timeout = Math.max(config.timeout ?? 0, SLOW_TIMEOUT_MS)
+  }
 
   // Any successful request means the platform isn't down — clear a
   // stale maintenance flag if one was set (e.g. admin just turned it off).
@@ -107,7 +129,7 @@ api.interceptors.response.use(
       const { data } = await axios.post(
         `${BASE_URL}/auth/refresh`,
         {},
-        { withCredentials: true },
+        { withCredentials: true, timeout: SLOW_TIMEOUT_MS },
       )
 
       const newToken = data.data?.accessToken ?? data.accessToken

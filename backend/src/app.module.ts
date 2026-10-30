@@ -23,6 +23,9 @@ import { validate } from './config/env.validation';
 import { KycModule } from './kyc/kyc.module';
 import { GraceModule } from './grace/grace.module';
 import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { VendorsModule } from './vendors/vendors.module';
+import { SmallSmallModule } from './small-small/small-small.module';
 
 @Module({
   imports: [
@@ -56,6 +59,11 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
     SupportModule,
     DisputesModule,
     BankAccountsModule,
+
+    // ── Pay Small Small ──
+    CloudinaryModule,
+    VendorsModule,
+    SmallSmallModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

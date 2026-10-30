@@ -1,5 +1,10 @@
 // ============================================================
-// NOTIFICATIONS MODULE — In-app + Email (Resend) + Realtime
+// NOTIFICATIONS SERVICE — In-app + Email (Resend) + Realtime
+// ============================================================
+// CHANGE: create() now accepts `priority` ('NORMAL' | 'IMPORTANT') and saves it,
+// and sends it with the live socket event, so the app can highlight important
+// notifications (money in or out, a customer starting a plan, refunds, approvals).
+// Everything else is exactly as before.
 // ============================================================
 
 import {
@@ -18,6 +23,7 @@ interface CreateNotificationParams {
   title:   string;
   body:    string;
   data?:   any;
+  priority?: 'NORMAL' | 'IMPORTANT';
   sendEmail?: boolean;
   emailSubject?: string;
   emailHtml?:    string;
@@ -39,6 +45,8 @@ export class NotificationsService {
   setSocketServer(server: any) { this.socketServer = server; }
 
   async create(params: CreateNotificationParams) {
+    const priority = params.priority === 'IMPORTANT' ? 'IMPORTANT' : 'NORMAL';
+
     const notification = await this.prisma.notification.create({
       data: {
         userId: params.userId,
@@ -46,6 +54,7 @@ export class NotificationsService {
         title:  params.title,
         body:   params.body,
         data:   params.data || {},
+        priority: priority as any,
       },
     });
 
@@ -56,6 +65,7 @@ export class NotificationsService {
         title:     notification.title,
         body:      notification.body,
         data:      notification.data,
+        priority:  notification.priority,
         createdAt: notification.createdAt,
       });
     }
@@ -81,7 +91,7 @@ export class NotificationsService {
         subject,
         html,
       });
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Failed to send email to ${user.email}:`, err.message);
     }
   }

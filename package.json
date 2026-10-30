@@ -1,7 +1,10 @@
 {
   "name": "paypaddy-monorepo",
   "private": true,
-  "workspaces": ["backend", "frontend"],
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
     "dev:backend": "cd backend && npm run start:dev",
     "dev:frontend": "cd frontend && npm run dev",
@@ -10,5 +13,8 @@
     "db:migrate": "cd backend && npx prisma migrate dev",
     "db:generate": "cd backend && npx prisma generate",
     "db:studio": "cd backend && npx prisma studio"
+  },
+  "dependencies": {
+    "@vladmandic/face-api": "^1.7.15"
   }
 }

@@ -33,7 +33,8 @@ const NAV = [
   { to: '/dashboard', label: 'Overview', icon: I(<><rect x="1" y="1" width="6" height="6" rx="1.5" {...S}/><rect x="9" y="1" width="6" height="6" rx="1.5" {...S}/><rect x="1" y="9" width="6" height="6" rx="1.5" {...S}/><rect x="9" y="9" width="6" height="6" rx="1.5" {...S}/></>) },
   { to: '/groups', label: 'My Groups', icon: I(<><circle cx="5.5" cy="5" r="2.2" {...S}/><circle cx="10.5" cy="5" r="2.2" {...S}/><path d="M1 13c0-2.21 2.015-4 4.5-4s4.5 1.79 4.5 4" {...S} strokeLinecap="round"/><path d="M10.5 9c2.485 0 4.5 1.79 4.5 4" {...S} strokeLinecap="round"/></>) },
   { to: '/wallet', label: 'Wallet', icon: I(<><rect x="1" y="4" width="14" height="9" rx="2" {...S}/><path d="M1 7h14" {...S}/><path d="M4 2.5h8" {...S} strokeLinecap="round"/><circle cx="11.5" cy="10" r="1" fill="currentColor"/></>) },
-  { to: '/profile', label: 'Profile', icon: I(<><circle cx="8" cy="5.5" r="2.8" {...S}/><path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" {...S} strokeLinecap="round"/></>) },
+    { to: '/shop', label: 'Shop', icon: I(<><path d="M2.5 5h11l-.8 8.2a1 1 0 01-1 .8H4.3a1 1 0 01-1-.8L2.5 5z" {...S} strokeLinejoin="round"/><path d="M5.5 5V4a2.5 2.5 0 015 0v1" {...S} strokeLinecap="round"/></>) },
+    { to: '/profile', label: 'Profile', icon: I(<><circle cx="8" cy="5.5" r="2.8" {...S}/><path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" {...S} strokeLinecap="round"/></>) },
   { to: '/support', label: 'Contact Support', icon: I(<><circle cx="8" cy="8" r="6.5" {...S}/><circle cx="8" cy="8" r="2.5" {...S}/><path d="M3.6 3.6l2.3 2.3M12.4 3.6l-2.3 2.3M3.6 12.4l2.3-2.3M12.4 12.4l-2.3-2.3" {...S}/></>) },
 ]
 

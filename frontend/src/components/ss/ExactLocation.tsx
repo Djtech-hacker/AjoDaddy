@@ -82,15 +82,20 @@ export function useExactLocation() {
 // For production traffic use your own geocoder or the Google Geocoding API.
 export async function reverseGeocode(lat: number, lng: number): Promise<GeoAddress | null> {
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&lat=${lat}&lon=${lng}`, {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18&lat=${lat}&lon=${lng}`, {
       headers: { 'Accept-Language': 'en' },
     })
     if (!res.ok) return null
-    const a = (await res.json())?.address ?? {}
+    const data = await res.json()
+    const a = data?.address ?? {}
     const street = [a.house_number, a.road].filter(Boolean).join(' ')
+    const area = a.neighbourhood || a.suburb || a.quarter || a.residential || a.hamlet || a.city_district || ''
+    const city = a.city || a.town || a.village || a.county || a.suburb || ''
+    // Map data for many Nigerian streets is thin. Use the street if it exists, else the nearest named place.
+    const nearest = String(data?.name || '').trim() || String(data?.display_name || '').split(',')[0].trim()
     return {
-      address: street || a.neighbourhood || a.suburb || '',
-      city: a.suburb || a.city_district || a.city || a.town || a.village || '',
+      address: street || area || nearest,
+      city,
       state: String(a.state || '').replace(/ State$/i, ''),
     }
   } catch {

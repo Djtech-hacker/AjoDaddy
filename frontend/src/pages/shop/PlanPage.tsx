@@ -351,7 +351,7 @@ export default function PlanPage() {
                       <input id="ss-a-name" value={addr.name} maxLength={80} onChange={e => setAddr({ ...addr, name: e.target.value })} /></div>
                     <div className="ss-field"><label htmlFor="ss-a-phone">Phone number</label>
                       <input id="ss-a-phone" inputMode="tel" value={addr.phone} maxLength={20} onChange={e => setAddr({ ...addr, phone: e.target.value })} /></div>
-                    <div className="ss-field"><label htmlFor="ss-a-addr">Street address</label>
+                    <div className="ss-field"><label htmlFor="ss-a-addr">House number and street</label>
                       <input id="ss-a-addr" value={addr.address} maxLength={200} onChange={e => setAddr({ ...addr, address: e.target.value })} /></div>
                     <div className="ss-field"><label htmlFor="ss-a-city">City or area</label>
                       <input id="ss-a-city" value={addr.city} maxLength={60} onChange={e => setAddr({ ...addr, city: e.target.value })} /></div>
@@ -372,6 +372,17 @@ export default function PlanPage() {
                       }))}
                     />
 
+                    {!addrOk && (
+                      <p className="ss-hint">
+                        To save, fill in: {[
+                          addr.name.trim().length <= 1 && "receiver's name",
+                          addr.phone.trim().length < 7 && 'phone number',
+                          addr.address.trim().length < 5 && 'house number and street',
+                          !addr.city.trim() && 'city or area',
+                          !addr.state.trim() && 'state',
+                        ].filter(Boolean).join(', ')}.
+                      </p>
+                    )}
                     <div className="ss-row end">
                       {plan.deliveryAddress && <button type="button" className="ss-btn ghost" onClick={() => setAddrOpen(false)}>Cancel</button>}
                       <button type="button" className="ss-btn" disabled={!addrOk || addrBusy} onClick={saveAddress}>{addrBusy ? 'Saving…' : 'Save address'}</button>

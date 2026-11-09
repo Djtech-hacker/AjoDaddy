@@ -20,6 +20,9 @@ import dayjs from 'dayjs'
 // Change this if your identity-verification page lives at a different route (check App.tsx)
 const KYC_ROUTE = '/verify-identity'
 
+// TAREVA logo shown at the top of a printed receipt
+const RECEIPT_LOGO = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
+
 const fundSchema = z.object({ amount: z.coerce.number().min(100, 'Minimum ₦100'), provider: z.enum(['paystack']) })
 type FundData = z.infer<typeof fundSchema>
 
@@ -66,12 +69,21 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
   const [issueText, setIssueText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [sent, setSent] = useState(false)
+  const [busyAction, setBusyAction] = useState<'' | 'pdf' | 'img'>('')
 
   useEffect(() => { setReporting(false); setIssueText(''); setSent(false) }, [tx?.id])
 
   if (!tx) return null
   const isCredit = TX_CREDIT.has(tx.type)
   const meta = (tx as any).metadata || {}
+  // what this money was for: the group, the product or plan, or the bank for a withdrawal
+  const purpose = (() => {
+    const desc = (tx as any).description as string | undefined
+    if (meta.groupName) return (tx.type === 'PAYOUT' ? 'Payout from group: ' : 'Contribution to group: ') + meta.groupName
+    if (tx.type === 'WITHDRAWAL' && meta.bankName) return 'Withdrawal to ' + meta.bankName
+    if (desc) return desc
+    return describe(tx)
+  })()
   const maskAcc = (a: string) => a ? a.slice(0,3) + '****' + a.slice(-3) : '—'
   const accountDisplay = meta.accountLast4 ? `••••${meta.accountLast4}` : meta.accountNumber ? maskAcc(meta.accountNumber) : '—'
   const feeVal = tx.fee ? Number(tx.fee) : 0
@@ -79,6 +91,8 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
     { label: 'Transaction ID', val: tx.id },
     { label: 'Reference',      val: tx.reference || '—' },
     { label: 'Type',           val: tx.type.replace(/_/g,' ') },
+    { label: 'For',            val: purpose },
+    ...(meta.orderNumber ? [{ label: 'Plan number', val: String(meta.orderNumber) }] : []),
     { label: 'Amount',         val: `${isCredit ? '+' : '-'}₦${tx.amount.toLocaleString()}` },
     { label: 'Status',         val: tx.status },
     { label: 'Date & time',    val: dayjs(tx.createdAt).format('MMM D, YYYY h:mm A') },
@@ -89,6 +103,212 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
       { label: 'Fee',            val: feeVal ? `₦${feeVal.toLocaleString()}` : '₦0' },
     ] : []),
   ]
+
+  // ── Receipts: print as PDF or save as an image. Each one carries a verification link ──
+  // Ask the server for this receipt's verification code. Without it, no receipt is issued.
+  const getVerify = async (): Promise<{ code: string; url: string } | null> => {
+    try {
+      const res = await api.get('/receipts/' + tx.id + '/code')
+      const body: any = res.data
+      const d = body?.data ?? body
+      if (!d?.code) throw new Error('no code')
+      return { code: d.code, url: window.location.origin + '/verify-receipt/' + d.code }
+    } catch {
+      showToast('Could not create a verifiable receipt. Check your connection and try again.', 'error')
+      return null
+    }
+  }
+
+  const statusText = tx.status === 'COMPLETED' ? 'Successful' : tx.status.charAt(0) + tx.status.slice(1).toLowerCase()
+  const moneyText = (isCredit ? '+' : '-') + '₦' + tx.amount.toLocaleString()
+  const VERIFY_NOTE = 'Only trust this receipt if every detail on that page matches it. Receipts can be copied or edited, so always check before handing over goods or money.'
+
+  const printReceipt = async () => {
+    if (busyAction) return
+    setBusyAction('pdf')
+    const v = await getVerify()
+    if (!v) { setBusyAction(''); return }
+
+    const esc = (x: any) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    const rowsHtml = rows.map(r => '<tr><td class="l">' + esc(r.label) + '</td><td class="v">' + esc(r.val) + '</td></tr>').join('')
+    const html =
+      '<!doctype html><html><head><meta charset="utf-8"><title>TAREVA receipt</title><style>' +
+      '@page{size:A4;margin:16mm}' +
+      '*{box-sizing:border-box}' +
+      'body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+      '.wm{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:110px;font-weight:800;letter-spacing:10px;color:rgba(27,92,60,0.09);white-space:nowrap;z-index:0;pointer-events:none}' +
+      '.page{position:relative;z-index:1;max-width:560px;margin:0 auto}' +
+      '.logo{text-align:center;margin-bottom:8px}.logo img{height:90px;width:auto}' +
+      'h1{text-align:center;font-size:18px;margin:6px 0 18px;color:#1B5C3C}' +
+      '.amt{text-align:center;margin-bottom:18px}.amt small{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#888}.amt b{font-size:34px}' +
+      '.st{display:inline-block;margin-top:6px;padding:3px 10px;border-radius:99px;background:#E7F5EC;color:#1B5C3C;font-size:12px;font-weight:600}' +
+      'table{width:100%;border-collapse:collapse}td{padding:9px 4px;border-bottom:1px solid #e5e5e5;font-size:13px;vertical-align:top}' +
+      '.l{color:#777;width:38%}.v{text-align:right;font-weight:600;word-break:break-all}' +
+      '.ver{margin-top:22px;padding:12px 14px;border:1px dashed #1B5C3C;border-radius:8px;font-size:11px;color:#333;line-height:1.6}.u{color:#1B5C3C;font-weight:700;word-break:break-all}' +
+      '.foot{margin-top:18px;text-align:center;font-size:11px;color:#888;line-height:1.6}' +
+      '</style></head><body>' +
+      '<div class="wm">TAREVA</div><div class="page">' +
+      '<div class="logo"><img id="lg" src="' + RECEIPT_LOGO + '" alt="TAREVA"></div>' +
+      '<h1>Transaction receipt</h1>' +
+      '<div class="amt"><small>' + (isCredit ? 'Money in' : 'Money out') + '</small><b>' + esc(moneyText) + '</b><br><span class="st">' + esc(statusText) + '</span></div>' +
+      '<table>' + rowsHtml + '</table>' +
+      '<div class="ver"><b>Verify this receipt</b><br>Open this link to see the real record in TAREVA:<br><span class="u">' + esc(v.url) + '</span><br>' + esc(VERIFY_NOTE) + '</div>' +
+      '<div class="foot">Generated on ' + esc(dayjs().format('MMM D, YYYY h:mm A')) + '.<br>Issued electronically by TAREVA.</div>' +
+      '</div></body></html>'
+
+    const frame = document.createElement('iframe')
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+    document.body.appendChild(frame)
+    const doc = frame.contentWindow?.document
+    if (!doc) { showToast('Could not open the print view', 'error'); frame.remove(); setBusyAction(''); return }
+    doc.open(); doc.write(html); doc.close()
+
+    let done = false
+    const go = () => {
+      if (done) return
+      done = true
+      try { frame.contentWindow?.focus(); frame.contentWindow?.print() }
+      catch { showToast('Could not print this receipt', 'error') }
+      setBusyAction('')
+      setTimeout(() => frame.remove(), 60000)
+    }
+    // wait for the logo so it is on the page when printing
+    const img = doc.getElementById('lg') as HTMLImageElement | null
+    if (img && !img.complete) { img.onload = go; img.onerror = go; setTimeout(go, 4000) }
+    else setTimeout(go, 300)
+  }
+
+  const loadImage = (src: string): Promise<HTMLImageElement | null> =>
+    new Promise(resolve => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => resolve(img)
+      img.onerror = () => resolve(null)
+      img.src = src
+    })
+
+  const saveReceiptImage = async () => {
+    if (busyAction) return
+    setBusyAction('img')
+    const v = await getVerify()
+    if (!v) { setBusyAction(''); return }
+    try {
+      const W = 800, PAD = 48, SCALE = 2, LABEL_W = 210, ROW_LH = 26
+      const FONT = 'Arial, Helvetica, sans-serif'
+      const VALUE_MAX = W - PAD * 2 - LABEL_W
+      const mctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
+
+      // split text into lines that fit a width (long ids are broken so nothing runs off the page)
+      const wrap = (ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] => {
+        const out: string[] = []
+        let line = ''
+        for (const w of String(text).split(' ')) {
+          const test = line ? line + ' ' + w : w
+          if (ctx.measureText(test).width <= maxW) { line = test; continue }
+          if (line) { out.push(line); line = '' }
+          if (ctx.measureText(w).width <= maxW) { line = w; continue }
+          let chunk = ''
+          for (const ch of w) {
+            if (ctx.measureText(chunk + ch).width > maxW && chunk) { out.push(chunk); chunk = ch } else chunk += ch
+          }
+          line = chunk
+        }
+        if (line) out.push(line)
+        return out.length ? out : ['']
+      }
+      const box = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+        ctx.beginPath()
+        ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+        ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+        ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+        ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath()
+      }
+
+      // measure first so the picture is exactly as tall as it needs to be
+      mctx.font = 'bold 20px ' + FONT
+      const blocks = rows.map(r => ({ label: r.label, lines: wrap(mctx, String(r.val), VALUE_MAX) }))
+      mctx.font = 'bold 16px ' + FONT
+      const urlLines = wrap(mctx, v.url, W - PAD * 2 - 32)
+      mctx.font = '14px ' + FONT
+      const noteLines = wrap(mctx, VERIFY_NOTE, W - PAD * 2 - 32)
+      const rowsH = blocks.reduce((h, b) => h + b.lines.length * ROW_LH + 20, 0)
+      const boxTop = 360 + rowsH + 30
+      const noteY0 = boxTop + 56 + (urlLines.length - 1) * 22 + 28
+      const boxH = (noteY0 - boxTop) + (noteLines.length - 1) * 20 + 18
+      const H = boxTop + boxH + 64
+
+      const canvas = document.createElement('canvas')
+      canvas.width = W * SCALE
+      canvas.height = H * SCALE
+      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D
+      ctx.scale(SCALE, SCALE)
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, W, H)
+
+      // TAREVA watermark behind everything
+      ctx.save()
+      ctx.translate(W / 2, H / 2); ctx.rotate(-Math.PI / 6)
+      ctx.font = 'bold 150px ' + FONT; ctx.fillStyle = 'rgba(27,92,60,0.09)'
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText('TAREVA', 0, 0)
+      ctx.restore()
+      ctx.textBaseline = 'alphabetic'
+
+      // logo at the top
+      const logo = await loadImage(RECEIPT_LOGO)
+      if (logo) { const lh = 100; const lw = (logo.width / logo.height) * lh; ctx.drawImage(logo, (W - lw) / 2, 28, lw, lh) }
+      else { ctx.font = 'bold 40px ' + FONT; ctx.fillStyle = '#1B5C3C'; ctx.textAlign = 'center'; ctx.fillText('TAREVA', W / 2, 90) }
+
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#1B5C3C'; ctx.font = 'bold 22px ' + FONT; ctx.fillText('Transaction receipt', W / 2, 172)
+      ctx.fillStyle = '#888888'; ctx.font = '600 14px ' + FONT; ctx.fillText(isCredit ? 'MONEY IN' : 'MONEY OUT', W / 2, 214)
+      ctx.fillStyle = '#111111'; ctx.font = 'bold 46px ' + FONT; ctx.fillText(moneyText, W / 2, 268)
+      ctx.font = '600 15px ' + FONT
+      const pw = ctx.measureText(statusText).width + 28
+      ctx.fillStyle = '#E7F5EC'; box(ctx, (W - pw) / 2, 286, pw, 30, 15); ctx.fill()
+      ctx.fillStyle = '#1B5C3C'; ctx.fillText(statusText, W / 2, 307)
+
+      // the details
+      let y = 360
+      ctx.strokeStyle = '#e5e5e5'; ctx.lineWidth = 1
+      for (const b of blocks) {
+        ctx.textAlign = 'left'; ctx.fillStyle = '#777777'; ctx.font = '16px ' + FONT
+        ctx.fillText(b.label, PAD, y + 26)
+        ctx.textAlign = 'right'; ctx.fillStyle = '#111111'; ctx.font = 'bold 20px ' + FONT
+        b.lines.forEach((ln, i) => ctx.fillText(ln, W - PAD, y + 26 + i * ROW_LH))
+        y += b.lines.length * ROW_LH + 20
+        ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke()
+      }
+
+      // how to verify it
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = '#1B5C3C'; ctx.lineWidth = 1.5
+      box(ctx, PAD, boxTop, W - PAD * 2, boxH, 10); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.textAlign = 'left'
+      ctx.fillStyle = '#1B5C3C'; ctx.font = 'bold 17px ' + FONT; ctx.fillText('Verify this receipt', PAD + 16, boxTop + 30)
+      ctx.font = 'bold 16px ' + FONT
+      urlLines.forEach((ln, i) => ctx.fillText(ln, PAD + 16, boxTop + 56 + i * 22))
+      ctx.fillStyle = '#333333'; ctx.font = '14px ' + FONT
+      noteLines.forEach((ln, i) => ctx.fillText(ln, PAD + 16, noteY0 + i * 20))
+
+      ctx.textAlign = 'center'; ctx.fillStyle = '#888888'; ctx.font = '13px ' + FONT
+      ctx.fillText('Generated on ' + dayjs().format('MMM D, YYYY h:mm A') + ' · Issued electronically by TAREVA', W / 2, boxTop + boxH + 38)
+
+      const blob: Blob | null = await new Promise(resolve => canvas.toBlob(b => resolve(b), 'image/png'))
+      if (!blob) throw new Error('no image')
+      const href = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = href
+      a.download = 'TAREVA-receipt-' + String(tx.reference || tx.id).slice(-8) + '.png'
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(href), 10000)
+      showToast('Receipt image saved', 'success')
+    } catch {
+      showToast('Could not save the image. Try Print or PDF instead.', 'error')
+    } finally {
+      setBusyAction('')
+    }
+  }
 
   const submitIssue = async () => {
     if (!issueText.trim()) { showToast('Tell us what happened first', 'error'); return }
@@ -128,6 +348,21 @@ function ReceiptModal({ tx, onClose }: { tx: Transaction | null; onClose: () => 
             </div>
           ))}
         </div>
+        {!sent && !reporting && (
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" disabled={!!busyAction} onClick={printReceipt}
+                className="h-10 rounded-lg border border-black/[0.1] bg-white text-[12px] font-semibold text-dim hover:bg-warm disabled:opacity-60 transition-colors">
+                {busyAction === 'pdf' ? 'Preparing…' : 'Print / save PDF'}
+              </button>
+              <button type="button" disabled={!!busyAction} onClick={saveReceiptImage}
+                className="h-10 rounded-lg border border-black/[0.1] bg-white text-[12px] font-semibold text-dim hover:bg-warm disabled:opacity-60 transition-colors">
+                {busyAction === 'img' ? 'Saving…' : 'Save as image'}
+              </button>
+            </div>
+            <p className="text-[11px] text-mist text-center">Every receipt has a link anyone can open to check it is real.</p>
+          </div>
+        )}
         {sent ? (
           <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4 text-center">
             <p className="text-[13px] font-semibold text-emerald-700">Report sent</p>
@@ -605,7 +840,7 @@ export default function WalletPage() {
 
   return (
     <DashboardLayout title="Wallet" subtitle="Manage your funds securely">
-      <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
+      <div className="w-full max-w-6xl mx-auto p-4 pb-24 sm:p-6 sm:pb-6 space-y-4">
 
         <DebtsSection onSettled={() => refetchWallet()}/>
 
@@ -647,7 +882,7 @@ export default function WalletPage() {
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/40">Total wallet balance</p>
                   <div className="flex items-center gap-2 mt-2">
-                    <p className="text-[40px] sm:text-[48px] leading-none font-semibold tracking-tight text-white tabular-nums">
+                    <p className="text-[30px] sm:text-[48px] leading-none font-semibold tracking-tight text-white tabular-nums">
                       {balanceHidden
                         ? '••••••'
                         : <><span className="text-white/45 font-normal mr-1">₦</span>{naira(balance)}</>}
@@ -679,9 +914,9 @@ export default function WalletPage() {
               { label: 'Pending lock', val: mask(`₦${locked.toLocaleString()}`), sub: 'Held for group cycles' },
               { label: 'Total funded', val: mask(`₦${totalFunded.toLocaleString()}`), sub: 'Deposited to date' },
             ].map(m => (
-              <div key={m.label} className="p-4 sm:p-5">
+              <div key={m.label} className="p-3 sm:p-5 min-w-0">
                 <p className={LABEL}>{m.label}</p>
-                <p className="text-[18px] sm:text-[22px] font-semibold tracking-tight text-ink tabular-nums mt-2 leading-none">{m.val}</p>
+                <p className="text-[14px] sm:text-[22px] font-semibold tracking-tight text-ink tabular-nums mt-2 leading-none break-words">{m.val}</p>
                 <p className="text-[11px] text-mist mt-2 hidden sm:block">{m.sub}</p>
               </div>
             ))}
@@ -722,6 +957,29 @@ export default function WalletPage() {
               <p className="text-[11.5px] text-mist mt-1">Fund your wallet to get started.</p>
             </div>
           ) : (
+            <>
+            {/* phones: one card per transaction */}
+            <div className="sm:hidden divide-y divide-black/[0.05]">
+              {transactions.map(tx => {
+                const credit = TX_CREDIT.has(tx.type)
+                return (
+                  <button key={tx.id} type="button" onClick={() => setReceiptTx(tx)}
+                    className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-warm/50 transition-colors">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-ink truncate">{describe(tx)}</p>
+                      <p className="text-[11px] text-mist mt-0.5">{dayjs(tx.createdAt).format('MMM D, YYYY · h:mm A')}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className={`text-[13px] font-semibold tabular-nums ${credit ? 'text-emerald-700' : 'text-ink'}`}>{credit ? '+' : '-'}₦{tx.amount.toLocaleString()}</p>
+                      <div className="mt-1"><StatusPill status={tx.status}/></div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* tablet and desktop: the table */}
+            <div className="hidden sm:block">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px]">
                 <thead className="bg-warm/60">
@@ -752,6 +1010,8 @@ export default function WalletPage() {
                 </tbody>
               </table>
             </div>
+            </div>
+            </>
           )}
 
           {!showAll && pagination && pagination.totalPages > 1 && (

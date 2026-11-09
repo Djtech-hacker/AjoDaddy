@@ -294,8 +294,12 @@ function ApplicationPanel({ id, isAdmin, onClose, onChanged }: { id: string; isA
               <p className="ss-lbl" style={{ marginTop: 14 }}>Final decision</p>
               {!isAdmin && <p className="ss-hint">Approving and rejecting is for admins. Asking for more information is open to you.</p>}
               <div className="ss-quick">
-                <button type="button" className="ss-btn sm" disabled={busy} onClick={() => { setOverride(false); setDecision('APPROVE') }}>Approve</button>
+                {isAdmin && (
+                  <>
+                    <button type="button" className="ss-btn sm" disabled={busy} onClick={() => { setOverride(false); setDecision('APPROVE') }}>Approve</button>
                 <button type="button" className="ss-btn danger sm" disabled={busy} onClick={() => setDecision('REJECT')}>Reject</button>
+                  </>
+                )}
                 <button type="button" className="ss-btn ghost sm" disabled={busy} onClick={() => setDecision('NEEDS_MORE_INFO')}>Ask for more information</button>
               </div>
             </div>

@@ -4,10 +4,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { chatApi } from '@/api/smallSmall'
 import { errMsg, unwrap } from '@/components/ss/ssShared'
+import SsReportModal from '@/components/ss/SsReportModal'
 
 type Msg = { id: string; mine: boolean; senderName: string; content: string | null; isDeleted: boolean; createdAt: string }
 type ChatData = {
-  thread: { id: string; isOpen: boolean; otherName: string; productName: string; orderNumber: string }
+  thread: { id: string; isOpen: boolean; iAmCustomer: boolean; otherName: string; productName: string; orderNumber: string | null }
   messages: Msg[]
 }
 
@@ -23,6 +24,7 @@ export default function SsChat({ threadId, height = 420 }: { threadId: string; h
   const [error, setError] = useState('')
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const shownCount = useRef(0)
 
@@ -84,11 +86,20 @@ export default function SsChat({ threadId, height = 420 }: { threadId: string; h
   return (
     <div style={{ border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', background: '#fff' }}>
       {data && (
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid #E5E7EB', background: '#F9FAFB' }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{data.thread.otherName}</div>
-          <div style={{ fontSize: 12, color: '#6B7280' }}>{data.thread.productName} · {data.thread.orderNumber}</div>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid #E5E7EB', background: '#F9FAFB', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{data.thread.otherName}</div>
+            <div style={{ fontSize: 12, color: '#6B7280' }}>{data.thread.productName}{data.thread.orderNumber ? ` · ${data.thread.orderNumber}` : ''}</div>
+          </div>
+          {data.thread.iAmCustomer && (
+            <button type="button" className="ss-btn ghost sm" onClick={() => setReportOpen(true)}>🚩 Report vendor</button>
+          )}
         </div>
       )}
+
+      <div style={{ padding: '8px 14px', background: '#FFFBEB', borderBottom: '1px solid #FDE68A', fontSize: 12, color: '#92400E', lineHeight: 1.45 }}>
+        <b>Keep your chat in TAREVA.</b> Please do not move to WhatsApp or other apps. If something goes wrong, we can only help with what is said here.
+      </div>
 
       <div ref={listRef} style={{ height, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 8, background: '#F3F4F6' }}>
         {data && data.messages.length === 0 && (
@@ -113,6 +124,8 @@ export default function SsChat({ threadId, height = 420 }: { threadId: string; h
       </div>
 
       {error && <div className="ss-note err" role="alert" style={{ margin: 10 }}>{error}</div>}
+
+      {reportOpen && <SsReportModal threadId={threadId} vendorName={data?.thread.otherName} onClose={() => setReportOpen(false)} />}
 
       {data && !data.thread.isOpen ? (
         <p style={{ padding: 12, fontSize: 13, color: '#6B7280', margin: 0 }}>This chat is closed.</p>

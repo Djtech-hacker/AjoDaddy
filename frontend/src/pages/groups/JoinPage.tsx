@@ -132,10 +132,19 @@ export default function JoinPage() {
             <p className="text-[12px] text-mist pt-1">Your NIN and BVN verification prevents opening another account to avoid repayment. Only join if you're confident you can complete every scheduled payment.</p>
           </div>
 
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-[13px] font-semibold text-red-700 mb-1">Join at your own risk</p>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2.5">
+            <p className="text-[13px] font-semibold text-red-700">Notice</p>
             <p className="text-[12px] text-red-600 leading-relaxed">
-              This is a known risk in every rotating savings circle: a member paid out early in the rotation can stop contributing afterward and walk away with the pot. Our protections (48hr grace period, automatic removal, debt tracking, NIN/BVN verification) make it harder to get away with, but can't guarantee you'll get your money back. Only join groups with people you trust.
+              <strong>Keep your chat in TAREVA.</strong> Please keep all your conversations with group members inside the app, so that if something goes wrong
+              we can see what happened and help you. We may not be able to help with things said in other apps.
+            </p>
+            <p className="text-[12px] text-red-600 leading-relaxed">
+              <strong>Join private groups with people you know.</strong> For your safety, join private groups made up of people you know and trust, such as family,
+              friends or colleagues. It is much safer than joining a group of strangers.
+            </p>
+            <p className="text-[12px] text-red-600 leading-relaxed">
+              This is a known risk in every rotating savings circle: a member paid out early in the rotation can stop contributing afterward and walk away with the pot.
+              Our protections (48hr grace period, automatic removal, debt tracking, NIN/BVN verification) make it harder to get away with, but can't guarantee you'll get your money back.
             </p>
           </div>
 
@@ -149,8 +158,7 @@ export default function JoinPage() {
             <button onClick={() => navigate('/groups')} className={`${BTN_SECONDARY} flex-1 !h-10`}>Cancel</button>
             <button onClick={handleAcceptAndJoin} disabled={!checked} className={`${BTN_PRIMARY} flex-1 !h-10`}>Accept & join</button>
           </div>
-        </div>hi
-        
+        </div>
       </div>
     </Backdrop>
   )

@@ -151,6 +151,8 @@ enum NotificationType {
   SS_OUT_OF_STOCK
   SS_NEW_MESSAGE
   SS_DISPUTE_OPENED
+  SS_ORDER_DISPATCHED
+  SS_ORDER_DELIVERED
 
   // ── Vendor onboarding ────────────────────────
   VENDOR_APPLICATION_SUBMITTED
@@ -1319,6 +1321,7 @@ model SsProduct {
   orders    SsOrder[]
   stockLogs SsStockLog[]
   notes     SsNote[]
+  chatThreads SsChatThread[]
 
   @@index([vendorId])
   @@index([status])
@@ -1361,6 +1364,12 @@ enum SsInstallmentStatus {
   PENDING
   PAID
   OVERDUE
+}
+
+enum SsFulfillment {
+  PENDING
+  DISPATCHED
+  DELIVERED
 }
 
 model SsOrder {
@@ -1406,6 +1415,32 @@ model SsOrder {
   refundedAt               DateTime?
   defaultedAt              DateTime?
   cancelledReason          String?
+
+  // delivery, after the customer has finished paying
+  fulfillmentStatus        SsFulfillment @default(PENDING)
+  dispatchedAt             DateTime?
+  courier                  String?
+  trackingNumber           String?
+  dispatchNote             String?
+  deliveredAt              DateTime?
+
+  // where to deliver (the customer fills this in) and the GIG Logistics booking
+  deliveryName             String?
+  deliveryPhone            String?
+  deliveryAddress          String?
+  deliveryCity             String?
+  deliveryState            String?
+  deliveryFee              BigInt? // what GIG charges (kobo)
+  deliveryCompanyFee       BigInt? // our 2% on top (kobo)
+  gigWaybill               String?
+  gigStatus                String?
+  gigSimulated             Boolean       @default(false)
+  deliveryMethod           String? // DELIVERY (GIG brings it) or PICKUP (customer collects from the vendor)
+  deliveryOptionId         String?
+  deliveryCarrier          String?
+  deliveryLat              Float?
+  deliveryLng              Float?
+  pickupLocation           String?
   createdAt                DateTime      @default(now())
   updatedAt                DateTime      @updatedAt
 
@@ -1425,6 +1460,7 @@ model SsOrder {
   @@index([status])
   @@index([status, nextDueDate])
   @@index([deadlineAt])
+  @@index([vendorId, productId, status])
   @@map("ss_orders")
 }
 
@@ -1549,22 +1585,25 @@ model SsNote {
   @@map("ss_notes")
 }
 
-// ── Chat between customer and vendor (one thread per order) ─
+// ── Chat between customer and vendor (can start before buying; attached to the plan once they buy) ─
 
 model SsChatThread {
   id            String    @id @default(uuid())
-  orderId       String    @unique
+  orderId       String?   @unique
+  productId     String?
   customerId    String
   vendorId      String
   isOpen        Boolean   @default(true)
   lastMessageAt DateTime?
   createdAt     DateTime  @default(now())
 
-  order    SsOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order    SsOrder?        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product  SsProduct?      @relation(fields: [productId], references: [id], onDelete: Cascade)
   messages SsChatMessage[]
 
   @@index([customerId])
   @@index([vendorId])
+  @@index([productId, customerId])
   @@map("ss_chat_threads")
 }
 

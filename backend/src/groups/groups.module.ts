@@ -632,6 +632,11 @@ export class GroupsService {
     await this.prisma.executeTransaction(async (tx) => {
       const updated = await tx.$executeRaw`UPDATE groups SET status = 'ACTIVE', "currentCycle" = 1, "nextContributionDate" = ${dueDate}, "updatedAt" = NOW() WHERE id = ${groupId} AND status = 'DRAFT'`;
       if (updated === 0) throw new BadRequestException('Group was already started');
+      const rotations = Math.max(1, Math.round(group.totalCycles / group.maxMembers));
+await tx.group.update({
+  where: { id: groupId },
+  data: { maxMembers: memberCount, totalCycles: memberCount * rotations },
+});
       await tx.groupCycle.upsert({ where: { groupId_cycleNumber: { groupId, cycleNumber: 1 } }, create: { groupId, cycleNumber: 1, startDate: new Date(), endDate: dueDate }, update: { startDate: new Date() } });
       await tx.$executeRaw`INSERT INTO contributions (id, "groupId", "userId", "cycleNumber", amount, "dueDate", status, "createdAt", "updatedAt") SELECT gen_random_uuid(), ${groupId}, gm."userId", 1, ${group.contributionAmount}, ${dueDate}, 'PENDING', NOW(), NOW() FROM group_members gm WHERE gm."groupId" = ${groupId} AND gm.status = 'ACTIVE' ON CONFLICT ("groupId", "userId", "cycleNumber") DO UPDATE SET "dueDate" = EXCLUDED."dueDate", status = 'PENDING', "updatedAt" = NOW()`;
       const cycle1Recipient = members.find(m => m.payoutPosition === 1);

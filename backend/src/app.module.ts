@@ -26,9 +26,11 @@ import { BankAccountsModule } from './bank-accounts/bank-accounts.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { VendorsModule } from './vendors/vendors.module';
 import { SmallSmallModule } from './small-small/small-small.module';
+import { ReceiptsModule } from './receipts/receipts.module';
 
 @Module({
   imports: [
+    ReceiptsModule,
     KycModule,
     GraceModule,
 

@@ -1,0 +1,28 @@
+// Adds the courier the customer picked to model SsOrder
+// Run from the BACKEND folder:   node patch-schema-carrier.cjs     then:   npx prisma db push   and   npx prisma generate
+// (Run patch-schema-pickup.cjs first if you have not already.)
+const fs = require('fs')
+const file = 'prisma/schema.prisma'
+if (!fs.existsSync(file)) { console.log('!!  cannot find ' + file + ' (open CMD in the backend folder)'); process.exit(1) }
+let s = fs.readFileSync(file, 'utf8')
+fs.writeFileSync(file + '.bak5', s)
+
+if (s.includes('deliveryOptionId')) {
+  console.log('ok   courier fields (already there)')
+} else {
+  const start = s.indexOf('model SsOrder {')
+  const end = start === -1 ? -1 : s.indexOf('\n}\n', start)
+  const block = start === -1 ? '' : s.slice(start, end)
+  const m = /\n[ \t]*deliveryMethod[ \t]+String\?[^\n]*/.exec(block)
+  if (!m) {
+    console.log('!!   could not find deliveryMethod in SsOrder. Run patch-schema-pickup.cjs first.')
+    process.exit(1)
+  }
+  const at = start + m.index + m[0].length
+  const fields = '\n  deliveryOptionId         String? // the courier choice the customer picked\n  deliveryCarrier          String? // its name, e.g. GIG Logistics'
+  s = s.slice(0, at) + fields + s.slice(at)
+  console.log('ok   courier fields added to SsOrder')
+}
+fs.writeFileSync(file, s)
+console.log('\nSaved. Backup: ' + file + '.bak5')
+console.log('Next: stop the backend, then run   npx prisma db push   and   npx prisma generate')

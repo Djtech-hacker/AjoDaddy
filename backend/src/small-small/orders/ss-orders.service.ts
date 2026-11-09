@@ -15,11 +15,15 @@
 //
 // The daily checks (auto-debit, missed payments, deadline) reuse applyPaymentInTx()
 // and refundInTx() from here, and are added in the next step.
+//
+// DELIVERY: once a customer has finished paying (status COMPLETED) the vendor marks
+// the goods as dispatched (courier + tracking), and the customer confirms receipt.
 
 import {
   Injectable, BadRequestException, ConflictException, ForbiddenException,
   NotFoundException, ServiceUnavailableException, Logger,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { SsEscrowService } from '../escrow/ss-escrow.service';
@@ -28,14 +32,22 @@ import { generateReferenceNumber, looksLikeReferenceNumber } from '../utils/refe
 import { buildSchedule, resolveIntervalDays, MIN_FIRST_PAYMENT_KOBO } from '../utils/ss-schedule.util';
 import { refundAllowed, refundBreakdown, payoutDue, percentPaid } from '../utils/ss-money.util';
 import { PreviewPlanDto, StartPlanDto, PayOrderDto } from './dto/orders.dto';
+import { DispatchOrderDto, DeliveryAddressDto } from './dto/dispatch.dto';
+import { createGigClient, GigAddress } from './gig.client';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PAGE_SIZE = 20;
 const MIN_PAYMENT_KOBO = 10_000n; // ₦100
 
-// A database transaction that does ~15 queries over the internet needs more than
+// A database transaction that does ~20 queries over the internet needs more than
 // Prisma's default 5 seconds.
-const TX_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
+const TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
+
+// Our fee on top of what GIG charges for a delivery. 200 = 2%. Change with GIG_COMPANY_FEE_BPS in .env.
+const GIG_COMPANY_FEE_BPS = BigInt(Number(process.env.GIG_COMPANY_FEE_BPS ?? 200));
+// Shown as the "courier" when the customer collects the goods from the vendor
+const PICKUP_LABEL = 'Pickup in person';
+const companyFeeOn = (gigFeeKobo: bigint) => (gigFeeKobo * GIG_COMPANY_FEE_BPS + 5_000n) / 10_000n;
 
 const toKobo  = (naira: number) => BigInt(Math.round(naira * 100));
 const toNaira = (kobo: bigint | number) => Number(kobo) / 100;
@@ -58,6 +70,7 @@ export type SsSettings = {
 @Injectable()
 export class SsOrdersService {
   private readonly logger = new Logger('SsOrdersService');
+  private readonly gig = createGigClient();
 
   constructor(
     private readonly prisma:        PrismaService,
@@ -91,6 +104,17 @@ export class SsOrdersService {
     });
     const ok = rec?.status === 'VERIFIED' && rec?.ninVerified && rec?.bvnVerified && !!rec?.faceScannedAt;
     if (!ok) throw new ForbiddenException('KYC_REQUIRED: Complete identity verification before starting a plan.');
+  }
+
+  // The same transaction PIN the wallet uses. Wrong or missing PIN stops the money moving.
+  async verifyPin(userId: string, pin?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { transactionPinHash: true } });
+    if (!user?.transactionPinHash) {
+      throw new BadRequestException('PIN_REQUIRED: Set your transaction PIN in your wallet first.');
+    }
+    if (!/^\d{4}$/.test(pin || '')) throw new ForbiddenException('Incorrect PIN');
+    const ok = await bcrypt.compare(pin as string, user.transactionPinHash);
+    if (!ok) throw new ForbiddenException('Incorrect PIN');
   }
 
   // Sent after the transaction commits. Failures are logged and ignored.
@@ -162,12 +186,35 @@ export class SsOrdersService {
       startedAt: o.startedAt, deadlineAt: o.deadlineAt, nextDueDate: o.nextDueDate,
       missedCount: o.missedCount, graceExpiresAt: o.graceExpiresAt,
       completedAt: o.completedAt, refundedAt: o.refundedAt,
+      // delivery: only meaningful once the customer has finished paying
+      fulfillmentStatus: o.fulfillmentStatus, dispatchedAt: o.dispatchedAt, courier: o.courier,
+      trackingNumber: o.trackingNumber, dispatchNote: o.dispatchNote, deliveredAt: o.deliveredAt,
+      deliveryMethod: o.deliveryMethod ?? null,
+      deliveryOptionId: o.deliveryOptionId ?? null, deliveryCarrier: o.deliveryCarrier ?? null,
+      deliveryLat: o.deliveryLat ?? null, deliveryLng: o.deliveryLng ?? null,
+      deliveryName: o.deliveryName ?? null, deliveryPhone: o.deliveryPhone ?? null,
+      deliveryAddress: o.deliveryAddress ?? null, deliveryCity: o.deliveryCity ?? null, deliveryState: o.deliveryState ?? null,
+      gigWaybill: o.gigWaybill ?? null, gigStatus: o.gigStatus ?? null, gigSimulated: !!o.gigSimulated,
+      // delivery cost = what GIG charges + our fee
+      deliveryFee: o.deliveryFee != null ? toNaira(o.deliveryFee) : null,
+      deliveryCompanyFee: o.deliveryCompanyFee != null ? toNaira(o.deliveryCompanyFee) : null,
+      deliveryTotal: o.deliveryFee != null ? toNaira(BigInt(o.deliveryFee) + BigInt(o.deliveryCompanyFee ?? 0n)) : null,
     };
     if (forCustomer) {
       out.vendor = { businessName: o.vendor?.vendorProfile?.businessName ?? null };
       out.refundThresholdPercent = o.refundThresholdPercent;
       out.refund = this.refundStatus(o);
       out.chatThreadId = o.chatThread?.id ?? null;
+      // the vendor's pickup address is only shown once they have said the goods are ready for pickup
+      const vp = o.vendor?.vendorProfile;
+      const pickupAt = o.pickupLocation || vp?.address;
+      out.pickupAddress = o.deliveryMethod === 'PICKUP' && o.courier === PICKUP_LABEL && pickupAt
+        ? { name: vp?.businessName ?? null, phone: vp?.phone ?? null, address: pickupAt } : null;
+      out.suggestedAddress = !o.deliveryAddress && o.customer ? {
+        name: `${o.customer.firstName ?? ''} ${o.customer.lastName ?? ''}`.trim(),
+        phone: o.customer.phone ?? '', address: o.customer.streetAddress ?? '',
+        city: o.customer.city ?? '', state: o.customer.state ?? '',
+      } : null;
       if (o.refund) {
         out.refundDetails = {
           paid: toNaira(o.refund.paidAmount), fee: toNaira(o.refund.feeTotal), refunded: toNaira(o.refund.customerRefund),
@@ -228,13 +275,14 @@ export class SsOrdersService {
   // START A PLAN
   // ══════════════════════════════════════════════════════════
 
-  async startPlan(customerId: string, dto: StartPlanDto) {
+  async startPlan(customerId: string, dto: StartPlanDto, pin?: string) {
     const cfg = await this.settings();
     if (cfg.frozen) throw new ServiceUnavailableException('Pay Small Small is temporarily unavailable. Please try again later.');
     if (dto.paymentMode === 'AUTO' && !cfg.autoDebitEnabled) {
       throw new BadRequestException('Automatic payments are not available right now. Choose manual payments.');
     }
     await this.assertKyc(customerId);
+    await this.verifyPin(customerId, pin);
 
     // Same tap sent twice: return the plan that was already created
     const depositKey = `ss-deposit:${customerId}:${dto.idempotencyKey}`;
@@ -300,7 +348,12 @@ export class SsOrdersService {
           data: schedule.installments.map(i => ({ orderId, number: i.number, dueDate: i.dueDate, amount: i.amount })),
         });
       }
-      await tx.ssChatThread.create({ data: { orderId, customerId, vendorId: p.vendorId } });
+      // If they already chatted with the vendor before buying, that conversation continues on the plan
+      const earlier = await tx.ssChatThread.findFirst({
+        where: { productId, customerId, orderId: null }, orderBy: { createdAt: 'desc' }, select: { id: true },
+      });
+      if (earlier) await tx.ssChatThread.update({ where: { id: earlier.id }, data: { orderId } });
+      else await tx.ssChatThread.create({ data: { orderId, productId, customerId, vendorId: p.vendorId } });
 
       // Reserve one unit
       await tx.ssProduct.update({ where: { id: productId }, data: { reservedCount: { increment: 1 } } });
@@ -333,10 +386,11 @@ export class SsOrdersService {
   // PAY (manual). The daily auto-debit calls applyPaymentInTx() directly.
   // ══════════════════════════════════════════════════════════
 
-  async payOrder(customerId: string, orderId: string, dto: PayOrderDto) {
+  async payOrder(customerId: string, orderId: string, dto: PayOrderDto, pin?: string) {
     const cfg = await this.settings();
     if (cfg.frozen) throw new ServiceUnavailableException('Pay Small Small is temporarily unavailable. Please try again later.');
     await this.assertKyc(customerId);
+    await this.verifyPin(customerId, pin);
 
     const events: NotifyEvent[] = [];
     const key = `ss-pay:${customerId}:${dto.idempotencyKey}`;
@@ -407,6 +461,11 @@ export class SsOrdersService {
       let left = p.amount;
       let nextDue: Date | null = null;
       let caughtUp = true;
+      // Work out which installments this payment finishes, and the one it may part-pay.
+      // (A plan can have ~90 installments, and "Pay everything" finishes all of them. Updating them
+      //  one by one took so long over the internet that the whole payment timed out and was cancelled.)
+      const finishedIds: string[] = [];
+      let partial: { id: string; paidAmount: bigint } | null = null;
       for (const i of insts) {
         let status = i.status;
         if (status !== 'PAID' && left > 0n) {
@@ -415,16 +474,21 @@ export class SsOrdersService {
           const paidAmount: bigint = BigInt(i.paidAmount) + add;
           left -= add;
           const full = paidAmount >= BigInt(i.amount);
-          await tx.ssInstallment.update({
-            where: { id: i.id },
-            data: { paidAmount, status: full ? 'PAID' : i.status, paidAt: full ? now : null },
-          });
-          if (full) status = 'PAID';
+          if (full) { finishedIds.push(i.id); status = 'PAID'; }
+          else partial = { id: i.id, paidAmount };
         }
         if (status !== 'PAID') {
           if (!nextDue) nextDue = i.dueDate;
           if (i.dueDate.getTime() <= now.getTime()) caughtUp = false;
         }
+      }
+      // ONE query marks every finished installment as paid in full ...
+      if (finishedIds.length > 0) {
+        await tx.$executeRaw`UPDATE ss_installments SET "paidAmount" = "amount", "status" = 'PAID'::"SsInstallmentStatus", "paidAt" = ${now} WHERE id = ANY(${finishedIds}::text[])`;
+      }
+      // ... and at most one more query records a part payment
+      if (partial) {
+        await tx.ssInstallment.update({ where: { id: partial.id }, data: { paidAmount: partial.paidAmount } });
       }
       data.nextDueDate = nextDue;
       if (caughtUp) data.graceExpiresAt = null;
@@ -613,6 +677,313 @@ export class SsOrdersService {
   }
 
   // ══════════════════════════════════════════════════════════
+  // DELIVERY: the vendor sends the goods, the customer confirms
+  // ══════════════════════════════════════════════════════════
+
+  async dispatchOrder(vendorId: string, orderId: string, dto: DispatchOrderDto, ip?: string) {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, vendorId },
+      include: { product: { select: { name: true } } },
+    });
+    if (!o) throw new NotFoundException('Order not found');
+    if (o.status !== 'COMPLETED') throw new BadRequestException('You can dispatch once the customer has finished paying.');
+    if (o.fulfillmentStatus === 'DELIVERED') throw new BadRequestException('The customer already confirmed they received this order.');
+    if (o.gigWaybill) throw new BadRequestException('This order was booked with GIG, so the details cannot be edited here.');
+
+    const courier = dto.courier.trim();
+    const tracking = dto.trackingNumber?.trim() || null;
+    const first = o.fulfillmentStatus === 'PENDING';
+
+    await this.prisma.ssOrder.update({
+      where: { id: orderId },
+      data: {
+        fulfillmentStatus: 'DISPATCHED',
+        dispatchedAt: first ? new Date() : o.dispatchedAt,
+        courier, trackingNumber: tracking, dispatchNote: dto.note?.trim() || null,
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: vendorId, action: first ? 'SS_ORDER_DISPATCHED' : 'SS_ORDER_DISPATCH_UPDATED',
+        entityType: 'SS_ORDER', entityId: orderId, metadata: { courier, trackingNumber: tracking }, ipAddress: ip,
+      },
+    });
+    await this.sendNotifications([{
+      userId: o.customerId, type: 'SS_ORDER_DISPATCHED',
+      title: first ? 'Your goods are on the way' : 'Delivery details updated',
+      body: `"${o.product.name}" was dispatched via ${courier}${tracking ? ` (tracking ${tracking})` : ''}.`,
+      data: { orderId }, important: true,
+    }]);
+    return { message: first ? 'Marked as dispatched. The customer has been told.' : 'Delivery details updated.' };
+  }
+
+  async confirmDelivered(customerId: string, orderId: string) {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, customerId },
+      include: { product: { select: { name: true } } },
+    });
+    if (!o) throw new NotFoundException('Plan not found');
+    if (o.status !== 'COMPLETED') throw new BadRequestException('You can confirm once you have finished paying.');
+    if (o.fulfillmentStatus === 'DELIVERED') return this.getMyOrder(customerId, orderId);
+    if (o.fulfillmentStatus !== 'DISPATCHED') throw new BadRequestException('The vendor has not marked this order as dispatched yet.');
+
+    await this.prisma.ssOrder.update({ where: { id: orderId }, data: { fulfillmentStatus: 'DELIVERED', deliveredAt: new Date() } });
+    await this.sendNotifications([{
+      userId: o.vendorId, type: 'SS_ORDER_DELIVERED', title: 'Customer received the goods',
+      body: `The customer confirmed they received "${o.product.name}".`, data: { orderId }, important: false,
+    }]);
+    return this.getMyOrder(customerId, orderId);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // GIG LOGISTICS: where to deliver, the price, and booking a rider
+  // ══════════════════════════════════════════════════════════
+
+  // The customer says where the goods should go
+  async setDeliveryAddress(customerId: string, orderId: string, dto: DeliveryAddressDto) {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, customerId }, select: { status: true, fulfillmentStatus: true },
+    });
+    if (!o) throw new NotFoundException('Plan not found');
+    if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
+    await this.prisma.ssOrder.update({
+      where: { id: orderId },
+      data: {
+        deliveryMethod: 'DELIVERY',
+        deliveryOptionId: null, deliveryCarrier: null, // a new address means new prices: they choose again
+        deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
+        deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
+        deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
+        deliveryLng: typeof dto.longitude === 'number' ? dto.longitude : null,
+      },
+    });
+    return this.getMyOrder(customerId, orderId);
+  }
+
+  // The customer chooses: a GIG rider brings it, or they collect it from the vendor
+  async setDeliveryMethod(customerId: string, orderId: string, method: 'DELIVERY' | 'PICKUP') {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, customerId },
+      select: { status: true, fulfillmentStatus: true, vendorId: true, deliveryMethod: true, product: { select: { name: true } } },
+    });
+    if (!o) throw new NotFoundException('Plan not found');
+    if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way, so this cannot change.');
+    if (o.deliveryMethod !== method) {
+      await this.prisma.ssOrder.update({ where: { id: orderId }, data: { deliveryMethod: method } });
+      // only tell the vendor once there is something for them to do
+      if (o.status === 'COMPLETED') {
+        await this.sendNotifications([{
+          userId: o.vendorId, type: 'SYSTEM',
+          title: method === 'PICKUP' ? 'Customer will pick up in person' : 'Customer wants delivery',
+          body: method === 'PICKUP'
+            ? `The customer will collect "${o.product.name}" from you. Tell them when it is ready.`
+            : `The customer wants "${o.product.name}" delivered. They will add their address.`,
+          data: { orderId }, important: false,
+        }]);
+      }
+    }
+    return this.getMyOrder(customerId, orderId);
+  }
+
+  // The vendor says: it is ready, come and collect it
+  async markReadyForPickup(vendorId: string, orderId: string, note: string | undefined, location: string | undefined, ip?: string) {
+    const o = await this.loadForGig(vendorId, orderId);
+    if (o.deliveryMethod !== 'PICKUP') throw new BadRequestException('This customer has not chosen to pick the goods up.');
+    const vp: any = await this.prisma.vendorProfile.findUnique({ where: { userId: vendorId }, select: { address: true } });
+    // the vendor can type where to come; if they leave it empty we use the address on their vendor profile
+    const where = (location || '').trim() || vp?.address;
+    if (!where) throw new BadRequestException('Tell the customer where to come and collect it.');
+
+    const res = await this.prisma.ssOrder.updateMany({
+      where: { id: orderId, vendorId, status: 'COMPLETED', fulfillmentStatus: 'PENDING' },
+      data: {
+        fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: PICKUP_LABEL,
+        trackingNumber: null, dispatchNote: note?.trim() || null, pickupLocation: where,
+      },
+    });
+    if (res.count === 0) throw new ConflictException('This order was already updated.');
+    await this.prisma.auditLog.create({
+      data: { actorId: vendorId, action: 'SS_ORDER_READY_FOR_PICKUP', entityType: 'SS_ORDER', entityId: orderId, metadata: {}, ipAddress: ip },
+    });
+    await this.sendNotifications([{
+      userId: o.customerId, type: 'SS_ORDER_DISPATCHED', title: 'Your goods are ready for pickup',
+      body: `"${o.product.name}" is ready. Open your plan to see where to collect it.`,
+      data: { orderId }, important: true,
+    }]);
+    return { message: 'The customer has been told their goods are ready for pickup.' };
+  }
+
+  private async loadForGig(vendorId: string, orderId: string) {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, vendorId },
+      include: { product: { select: { name: true } } },
+    });
+    if (!o) throw new NotFoundException('Order not found');
+    if (o.status !== 'COMPLETED') throw new BadRequestException('You can send the goods once the customer has finished paying.');
+    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('This order was already sent.');
+    return o;
+  }
+
+  // Pickup = the vendor. Delivery = what the customer entered.
+  private async gigAddresses(o: any): Promise<{ from: GigAddress; to: GigAddress }> {
+    if (o.deliveryMethod === 'PICKUP') throw new BadRequestException('This customer will pick the goods up in person.');
+    if (!o.deliveryAddress || !o.deliveryState || !o.deliveryPhone || !o.deliveryName) {
+      throw new BadRequestException('The customer has not given a delivery address yet. Ask them to add it on their plan page.');
+    }
+    const v: any = await this.prisma.user.findUnique({
+      where: { id: o.vendorId },
+      select: {
+        firstName: true, lastName: true, email: true, phone: true, streetAddress: true, city: true, state: true,
+        vendorProfile: { select: { businessName: true, phone: true, address: true } },
+      },
+    });
+    const pickupAddress = v?.vendorProfile?.address || v?.streetAddress;
+    const pickupPhone = v?.vendorProfile?.phone || v?.phone;
+    if (!pickupAddress || !v?.state || !pickupPhone) {
+      throw new BadRequestException('Add your pickup address, state and phone number to your profile first, so the GIG rider knows where to collect.');
+    }
+    const cu: any = await this.prisma.user.findUnique({ where: { id: o.customerId }, select: { email: true } });
+    return {
+      from: {
+        name: v.vendorProfile?.businessName || `${v.firstName} ${v.lastName}`.trim(),
+        phone: pickupPhone, email: v.email || '', address: pickupAddress, city: v.city || v.state, state: v.state,
+      },
+      to: {
+        name: o.deliveryName, phone: o.deliveryPhone, email: cu?.email || '', address: o.deliveryAddress,
+        city: o.deliveryCity || o.deliveryState, state: o.deliveryState,
+        latitude: typeof o.deliveryLat === 'number' ? o.deliveryLat : undefined,
+        longitude: typeof o.deliveryLng === 'number' ? o.deliveryLng : undefined,
+      },
+    };
+  }
+
+  // The price the vendor sees before booking: GIG's price + our 2%
+  // The couriers on offer for this order, each with its price and our service fee on top
+  private async deliveryOptions(o: any) {
+    const { from, to } = await this.gigAddresses(o);
+    const list = await this.gig.quoteOptions(from, to, BigInt(o.totalPrice), o.product?.name);
+    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo) }));
+    return { from, to, options };
+  }
+
+  private presentOption(x: any) {
+    return {
+      id: x.id, carrier: x.carrier, service: x.service, eta: x.etaText, simulated: x.simulated,
+      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), total: toNaira(x.feeKobo + x.companyFeeKobo),
+    };
+  }
+
+  // What the VENDOR sees before booking: where it is collected, where it goes, and the courier the customer chose
+  async quoteDelivery(vendorId: string, orderId: string) {
+    const o = await this.loadForGig(vendorId, orderId);
+    if (!o.deliveryOptionId) throw new BadRequestException('The customer has not chosen a courier yet.');
+    const { from, to, options } = await this.deliveryOptions(o);
+    const opt = options.find(x => x.id === o.deliveryOptionId);
+    if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
+    return {
+      from, to, itemName: o.product.name, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100,
+      ...this.presentOption(opt),
+    };
+  }
+
+  // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.
+  // The vendor's pickup address is never shown to the customer.
+  async quoteMyDelivery(customerId: string, orderId: string) {
+    const o: any = await this.prisma.ssOrder.findFirst({
+      where: { id: orderId, customerId },
+      include: { product: { select: { name: true } } },
+    });
+    if (!o) throw new NotFoundException('Plan not found');
+    if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way.');
+    if (o.deliveryMethod !== 'DELIVERY') throw new BadRequestException('Choose delivery first.');
+    if (!o.deliveryAddress || !o.deliveryState) throw new BadRequestException('Save your delivery address to see the prices.');
+
+    let res: { from: GigAddress; to: GigAddress; options: any[] };
+    try { res = await this.deliveryOptions(o); }
+    catch (e: any) {
+      if (/pickup address/i.test(e?.message || '')) {
+        throw new BadRequestException('The vendor has not finished adding their pickup address yet, so the prices are not ready.');
+      }
+      throw e;
+    }
+    const { from, to, options } = res;
+    const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    const kind = !eq(from.state, to.state) ? 'Interstate delivery' : eq(from.city, to.city) ? 'Local dispatch rider' : 'Delivery within the state';
+    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo) - (b.feeKobo + b.companyFeeKobo)));
+    return { kind, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100, options: sorted.map(x => this.presentOption(x)) };
+  }
+
+  // The customer taps one of the couriers
+  async setDeliveryOption(customerId: string, orderId: string, optionId: string) {
+    const q = await this.quoteMyDelivery(customerId, orderId); // same checks: delivery chosen, address saved, not sent yet
+    const opt = q.options.find(x => x.id === optionId);
+    if (!opt) throw new BadRequestException('That courier is not available any more. Please choose again.');
+    await this.prisma.ssOrder.update({ where: { id: orderId }, data: { deliveryOptionId: opt.id, deliveryCarrier: opt.carrier } });
+    return this.getMyOrder(customerId, orderId);
+  }
+
+  // Book the courier the customer chose. The price is fetched again here, so the saved price is always fresh.
+  async bookDelivery(vendorId: string, orderId: string, ip?: string) {
+    const o = await this.loadForGig(vendorId, orderId);
+    if (!o.deliveryOptionId) throw new BadRequestException('The customer has not chosen a courier yet.');
+    const { from, to, options } = await this.deliveryOptions(o);
+    const opt = options.find(x => x.id === o.deliveryOptionId);
+    if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
+
+    // Claim the order first, so a double tap can never book two riders
+    const claim = await this.prisma.ssOrder.updateMany({
+      where: { id: orderId, vendorId, status: 'COMPLETED', fulfillmentStatus: 'PENDING', gigWaybill: null, gigStatus: null },
+      data: { gigStatus: 'BOOKING' },
+    });
+    if (claim.count === 0) throw new ConflictException('This order is already being booked.');
+
+    let booking: any;
+    try {
+      booking = await this.gig.book({
+        from, to, declaredValueKobo: BigInt(o.totalPrice), itemName: o.product.name, reference: o.orderNumber, optionId: opt.id, requestToken: opt.requestToken,
+      });
+    } catch (e) {
+      await this.prisma.ssOrder.update({ where: { id: orderId }, data: { gigStatus: null } });
+      throw e;
+    }
+
+    const carrier: string = booking.carrier || opt.carrier;
+    await this.prisma.ssOrder.update({
+      where: { id: orderId },
+      data: {
+        fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
+        trackingNumber: booking.waybill, dispatchNote: null,
+        deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo,
+        gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: vendorId, action: 'SS_ORDER_GIG_BOOKED', entityType: 'SS_ORDER', entityId: orderId,
+        metadata: {
+          carrier, optionId: opt.id, waybill: booking.waybill, courierFeeKobo: opt.feeKobo.toString(),
+          companyFeeKobo: opt.companyFeeKobo.toString(), simulated: booking.simulated,
+        },
+        ipAddress: ip,
+      },
+    });
+    await this.sendNotifications([{
+      userId: o.customerId, type: 'SS_ORDER_DISPATCHED', title: `A ${carrier} rider is coming for your goods`,
+      body: `"${o.product.name}" is booked with ${carrier} (waybill ${booking.waybill}).`,
+      data: { orderId }, important: true,
+    }]);
+    return {
+      message: booking.simulated
+        ? 'Test booking saved. No real rider was called (simulated mode).'
+        : `${carrier} rider requested. They will come to collect the goods from your pickup address.`,
+      waybill: booking.waybill,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════
   // READS
   // ══════════════════════════════════════════════════════════
 
@@ -623,9 +994,10 @@ export class SsOrdersService {
         installments: { orderBy: { number: 'asc' } },
         payments: { orderBy: { paidAt: 'desc' }, take: 20 },
         product: { select: { name: true, referenceNumber: true, images: true } },
-        vendor: { select: { vendorProfile: { select: { businessName: true } } } },
+        vendor: { select: { vendorProfile: { select: { businessName: true, address: true, phone: true } } } },
         refund: true,
         chatThread: { select: { id: true } },
+        customer: { select: { firstName: true, lastName: true, phone: true, streetAddress: true, city: true, state: true } },
       },
     });
     if (!o) throw new NotFoundException('Plan not found');
@@ -650,9 +1022,20 @@ export class SsOrdersService {
     return { total, page: Math.max(1, page), pageSize: PAGE_SIZE, items: rows.map((o: any) => this.presentOrder(this.withThumb(o), true)) };
   }
 
-  async listVendorOrders(vendorId: string, status?: string, page = 1) {
+  // The vendor's orders. Optionally for ONE product, and for one stage of the journey:
+  //   PAYING (still paying), TO_DISPATCH (paid up, goods not sent yet), DISPATCHED, DELIVERED, CANCELLED
+  async listVendorOrders(vendorId: string, status?: string, page = 1, productId?: string, view?: string) {
     const where: any = { vendorId };
-    if (status && ['ACTIVE', 'COMPLETED', 'REFUNDED', 'DEFAULTED', 'CANCELLED', 'DISPUTED'].includes(status)) where.status = status;
+    if (productId && UUID_RE.test(productId)) where.productId = productId;
+    switch (view) {
+      case 'PAYING':      where.status = { in: ['ACTIVE', 'DISPUTED'] }; break;
+      case 'TO_DISPATCH': where.status = 'COMPLETED'; where.fulfillmentStatus = 'PENDING'; break;
+      case 'DISPATCHED':  where.status = 'COMPLETED'; where.fulfillmentStatus = 'DISPATCHED'; break;
+      case 'DELIVERED':   where.status = 'COMPLETED'; where.fulfillmentStatus = 'DELIVERED'; break;
+      case 'CANCELLED':   where.status = { in: ['REFUNDED', 'DEFAULTED', 'CANCELLED'] }; break;
+      default:
+        if (status && ['ACTIVE', 'COMPLETED', 'REFUNDED', 'DEFAULTED', 'CANCELLED', 'DISPUTED'].includes(status)) where.status = status;
+    }
     const skip = (Math.max(1, page) - 1) * PAGE_SIZE;
     const [total, rows] = await Promise.all([
       this.prisma.ssOrder.count({ where }),
@@ -673,6 +1056,48 @@ export class SsOrdersService {
         chatThreadId: o.chatThread?.id ?? null,
       })),
     };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // THE VENDOR'S PRODUCTS WITH THEIR ORDER COUNTS (the first screen of "Customer plans")
+  // ══════════════════════════════════════════════════════════
+
+  async listVendorOrderProducts(vendorId: string) {
+    // (cast: Prisma's groupBy typing is strict about the result type, the shape below is what it returns)
+    const groups = (await (this.prisma.ssOrder as any).groupBy({
+      by: ['productId', 'status', 'fulfillmentStatus'],
+      where: { vendorId },
+      _count: { _all: true },
+    })) as any[];
+    const ids = Array.from(new Set(groups.map(g => g.productId)));
+    if (ids.length === 0) return { items: [] };
+
+    const products: any[] = await this.prisma.ssProduct.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, referenceNumber: true, images: true, price: true },
+    });
+
+    const items = products.map(p => {
+      const c = { paying: 0, toDispatch: 0, dispatched: 0, delivered: 0, cancelled: 0, total: 0 };
+      for (const g of groups.filter(x => x.productId === p.id)) {
+        const n = g._count._all;
+        c.total += n;
+        if (g.status === 'ACTIVE' || g.status === 'DISPUTED') c.paying += n;
+        else if (g.status === 'COMPLETED') {
+          if (g.fulfillmentStatus === 'DISPATCHED') c.dispatched += n;
+          else if (g.fulfillmentStatus === 'DELIVERED') c.delivered += n;
+          else c.toDispatch += n;
+        } else c.cancelled += n;
+      }
+      return {
+        productId: p.id, name: p.name, referenceNumber: p.referenceNumber, price: toNaira(p.price),
+        thumbnail: p.images?.[0] ? this.cloudinary.publicImageUrl(p.images[0], 240) : null,
+        counts: c,
+      };
+    });
+    // the ones that need action come first
+    items.sort((a, b) => b.counts.toDispatch - a.counts.toDispatch || b.counts.paying - a.counts.paying || a.name.localeCompare(b.name));
+    return { items };
   }
 
   // The vendor's "customers who asked for their money back" screen

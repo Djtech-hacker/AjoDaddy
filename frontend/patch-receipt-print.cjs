@@ -1,0 +1,30 @@
+// Adds "Print or save as PDF" to the wallet receipt (TAREVA logo on top, TAREVA watermark behind)
+// Run from the FRONTEND folder:   node patch-receipt-print.cjs
+const fs = require('fs')
+const file = 'src/pages/wallet/WalletPage.tsx'
+if (!fs.existsSync(file)) { console.log('!!  cannot find ' + file + ' (open CMD in the frontend folder)'); process.exit(1) }
+let s = fs.readFileSync(file, 'utf8')
+fs.writeFileSync(file + '.bak3', s)
+const step = (name, ok) => console.log((ok ? 'ok  ' : '!!  ') + name)
+
+const CONST_SNIPPET = "\n// TAREVA logo shown at the top of a printed receipt\nconst RECEIPT_LOGO = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'\n"
+const FN_SNIPPET = "  // Print the receipt: TAREVA logo on top, TAREVA watermark behind, shown in a hidden frame\n  const printReceipt = () => {\n    const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;')\n    const money = (isCredit ? '+' : '-') + '\u20a6' + tx.amount.toLocaleString()\n    const statusText = tx.status === 'COMPLETED' ? 'Successful' : tx.status.charAt(0) + tx.status.slice(1).toLowerCase()\n    const rowsHtml = rows.map(r => '<tr><td class=\"l\">' + esc(r.label) + '</td><td class=\"v\">' + esc(r.val) + '</td></tr>').join('')\n    const html =\n      '<!doctype html><html><head><meta charset=\"utf-8\"><title>TAREVA receipt</title><style>' +\n      '@page{size:A4;margin:16mm}' +\n      '*{box-sizing:border-box}' +\n      'body{margin:0;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Arial,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +\n      '.wm{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:110px;font-weight:800;letter-spacing:10px;color:rgba(27,92,60,0.09);white-space:nowrap;z-index:0;pointer-events:none}' +\n      '.page{position:relative;z-index:1;max-width:560px;margin:0 auto}' +\n      '.logo{text-align:center;margin-bottom:8px}.logo img{height:90px;width:auto}' +\n      'h1{text-align:center;font-size:18px;margin:6px 0 18px;color:#1B5C3C}' +\n      '.amt{text-align:center;margin-bottom:18px}.amt small{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#888}.amt b{font-size:34px}' +\n      '.st{display:inline-block;margin-top:6px;padding:3px 10px;border-radius:99px;background:#E7F5EC;color:#1B5C3C;font-size:12px;font-weight:600}' +\n      'table{width:100%;border-collapse:collapse}td{padding:9px 4px;border-bottom:1px solid #e5e5e5;font-size:13px;vertical-align:top}' +\n      '.l{color:#777;width:38%}.v{text-align:right;font-weight:600;word-break:break-all}' +\n      '.foot{margin-top:26px;text-align:center;font-size:11px;color:#888;line-height:1.6}' +\n      '</style></head><body>' +\n      '<div class=\"wm\">TAREVA</div><div class=\"page\">' +\n      '<div class=\"logo\"><img id=\"lg\" src=\"' + RECEIPT_LOGO + '\" alt=\"TAREVA\"></div>' +\n      '<h1>Transaction receipt</h1>' +\n      '<div class=\"amt\"><small>' + (isCredit ? 'Money in' : 'Money out') + '</small><b>' + esc(money) + '</b><br><span class=\"st\">' + esc(statusText) + '</span></div>' +\n      '<table>' + rowsHtml + '</table>' +\n      '<div class=\"foot\">Generated on ' + esc(dayjs().format('MMM D, YYYY h:mm A')) + '.<br>This receipt was issued electronically by TAREVA and is valid without a signature.</div>' +\n      '</div></body></html>'\n\n    const frame = document.createElement('iframe')\n    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'\n    document.body.appendChild(frame)\n    const doc = frame.contentWindow?.document\n    if (!doc) { showToast('Could not open the print view', 'error'); frame.remove(); return }\n    doc.open(); doc.write(html); doc.close()\n\n    let done = false\n    const go = () => {\n      if (done) return\n      done = true\n      try { frame.contentWindow?.focus(); frame.contentWindow?.print() }\n      catch { showToast('Could not print this receipt', 'error') }\n      setTimeout(() => frame.remove(), 60000)\n    }\n    // wait for the logo so it is on the page when printing\n    const img = doc.getElementById('lg') as HTMLImageElement | null\n    if (img && !img.complete) { img.onload = go; img.onerror = go; setTimeout(go, 4000) }\n    else setTimeout(go, 300)\n  }\n\n"
+const BTN_SNIPPET = "        {!sent && !reporting && (\n          <button type=\"button\" onClick={printReceipt}\n            className=\"w-full h-10 rounded-lg border border-black/[0.1] bg-white text-[12px] font-semibold text-dim hover:bg-warm transition-colors inline-flex items-center justify-center gap-2\">\n            <svg className=\"w-4 h-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path strokeLinecap=\"round\" strokeLinejoin=\"round\" strokeWidth={1.8} d=\"M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z\"/></svg>\n            Print or save as PDF\n          </button>\n        )}\n"
+
+if (s.includes('const printReceipt')) { step('print button (already added)', true) }
+else {
+  // 1) the logo address, after the KYC_ROUTE line
+  const kyc = /const KYC_ROUTE = [^\n]*\n/
+  if (kyc.test(s)) { s = s.replace(kyc, m => m + CONST_SNIPPET); step('logo address added', true) } else step('logo address (could not find KYC_ROUTE)', false)
+
+  // 2) the print function, just before submitIssue
+  const sub = '  const submitIssue = async () => {'
+  if (s.includes(sub)) { s = s.replace(sub, FN_SNIPPET + sub); step('print function added', true) } else step('print function (could not find submitIssue)', false)
+
+  // 3) the button, just before the "report sent" box
+  const sent = '        {sent ? ('
+  if (s.includes(sent)) { s = s.replace(sent, BTN_SNIPPET + sent); step('print button added', true) } else step('print button (could not find the place for it)', false)
+}
+
+fs.writeFileSync(file, s)
+console.log('\nSaved. Backup: ' + file + '.bak3')

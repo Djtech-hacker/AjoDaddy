@@ -11,7 +11,8 @@ import { CinematicLoader } from '@/components/ui/CinematicLoader'
 import { PageTransition }  from '@/components/ui/PageTransition'
 import { MaintenanceScreen } from '@/components/ui/MaintenanceScreen'
 import { MaintenanceBanner } from '@/components/ui/MaintenanceBanner'
-import SupportBubble from '@/components/SupportBubble'
+import MessagesBubble from '@/components/MessagesBubble'
+import MessagesPage from '@/pages/messages/MessagesPage'
 
 import LoginPage       from '@/pages/auth/LoginPage'
 import RegisterPage    from '@/pages/auth/RegisterPage'
@@ -30,6 +31,7 @@ import SupportPage     from '@/pages/support/SupportPage'
 import CustomerServiceDashboardPage from '@/pages/support/CustomerServiceDashboardPage'
 import LandingPage     from '@/pages/LandingPage'
 import NotFoundPage    from '@/pages/NotFoundPage'
+import VerifyReceiptPage from '@/pages/VerifyReceiptPage'
 import KycVerificationPage from '@/pages/Kyc/KycVerificationPage'
 import PrivacyPage from '@/pages/Privacy'
 import TermsPage   from '@/pages/Terms'
@@ -134,15 +136,6 @@ export default function App() {
   const isExemptFromMaintenance = user && ['ADMIN', 'SUPER_ADMIN'].includes(user.role)
   const showMaintenanceScreen = appReady && isMaintenanceMode && !isExemptFromMaintenance
 
-  // Name sent in the WhatsApp message. Cast to any so TypeScript doesn't
-  // complain if your user type uses different field names.
-  const u = user as any
-  const supportName: string | undefined =
-    u?.fullName ||
-    [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
-    u?.name ||
-    u?.username ||
-    undefined
 
   return (
     <>
@@ -176,6 +169,7 @@ export default function App() {
                   <Route path="/vendor/products/new" element={<RequireAuth><VendorProductFormPage /></RequireAuth>} />
                   <Route path="/vendor/products/:id" element={<RequireAuth><VendorProductFormPage /></RequireAuth>} />
                   <Route path="/ss-staff"        element={<RequireAuth><RequireStaff><SmallSmallStaffPage /></RequireStaff></RequireAuth>} />
+                  <Route path="/messages"        element={<RequireAuth><MessagesPage /></RequireAuth>} />
                   <Route path="/wallet"          element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/payment/verify"  element={<RequireAuth><WalletPage /></RequireAuth>} />
                   <Route path="/profile"         element={<RequireAuth><ProfilePage /></RequireAuth>} />
@@ -184,6 +178,7 @@ export default function App() {
                   <Route path="/customer-service" element={<RequireAuth><RequireCustomerService><CustomerServiceDashboardPage /></RequireCustomerService></RequireAuth>} />
                   <Route path="/admin"           element={<RequireAuth><RequireAdmin><AdminPage /></RequireAdmin></RequireAuth>} />
                   <Route path="/super-admin"     element={<RequireAuth><RequireSuperAdmin><SuperAdminPage /></RequireSuperAdmin></RequireAuth>} />
+                  <Route path="/verify-receipt/:code" element={<VerifyReceiptPage />} />
                   <Route path="/privacy"         element={<PrivacyPage />} />
                   <Route path="/terms"           element={<TermsPage />} />
                   <Route path="*"                element={<NotFoundPage />} />
@@ -191,7 +186,7 @@ export default function App() {
               </AnimatePresence>
             </PageTransition>
             {toast && <Toast message={toast.message} type={toast.type} />}
-            <SupportBubble userName={supportName} />
+            {user && <MessagesBubble />}
           </>
         )
       )}

@@ -9,7 +9,7 @@ import { ValidationExceptionFilter } from './common/filters/validation-exception
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
-// ── Fix BigInt JSON serialization ─────────────────────────────
+// -- Fix BigInt JSON serialization --
 (BigInt.prototype as any).toJSON = function () { return Number(this); };
 
 async function bootstrap() {
@@ -18,7 +18,7 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log', 'debug'],
   });
 
-  // ── Security middleware ────────────────────────────────────
+  // -- Security middleware --
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -37,7 +37,7 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-  // ── CORS ───────────────────────────────────────────────────
+  // -- CORS --
   const allowedOrigins = (
     process.env.ALLOWED_ORIGINS ||
     process.env.FRONTEND_URL ||
@@ -51,13 +51,19 @@ async function bootstrap() {
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Idempotency-Key'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Idempotency-Key',
+      'X-Transaction-Pin', // <-- added: lets the frontend send the payment PIN header
+    ],
   });
 
-  // ── Global prefix ──────────────────────────────────────────
+  // -- Global prefix --
   app.setGlobalPrefix('api');
 
-  // ── Global pipes ───────────────────────────────────────────
+  // -- Global pipes --
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -65,20 +71,20 @@ async function bootstrap() {
       transform: true,
       transformOptions: { enableImplicitConversion: true },
       exceptionFactory: (errors) => {
-        console.error('❌ Validation failed:', JSON.stringify(errors, null, 2));
+        console.error('Validation failed:', JSON.stringify(errors, null, 2));
         return new BadRequestException(errors);
       },
     }),
   );
 
-  // ── Global filters & interceptors ──────────────────────────
+  // -- Global filters & interceptors --
   // NOTE: order matters. ValidationExceptionFilter is registered FIRST
   // so it gets first refusal on BadRequestException (validation
   // errors) and rewrites the generic "Validation failed" into the
   // actual constraint message (e.g. "Password must contain uppercase,
-  // lowercase, and a number") before HttpExceptionFilter — which
+  // lowercase, and a number") before HttpExceptionFilter - which
   // doesn't know how to read class-validator's raw ValidationError[]
-  // shape — ever sees it. All other exception types (401, 403, 409,
+  // shape - ever sees it. All other exception types (401, 403, 409,
   // etc.) still fall through to HttpExceptionFilter as before.
   app.useGlobalFilters(new ValidationExceptionFilter(), new HttpExceptionFilter());
   app.useGlobalInterceptors(
@@ -86,11 +92,11 @@ async function bootstrap() {
     new TransformInterceptor(),
   );
 
-  // ── Swagger API docs ───────────────────────────────────────
+  // -- Swagger API docs --
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('TAREVA API')
-      .setDescription('TAREVA — African Fintech Contribution Platform')
+      .setDescription('TAREVA - African Fintech Contribution Platform')
       .setVersion('1.0')
       .addBearerAuth()
       .addCookieAuth('refresh_token')
@@ -102,9 +108,9 @@ async function bootstrap() {
 
   const port = process.env.PORT || 4000;
   await app.listen(port);
-  logger.log(`🚀 TAREVA API running on port ${port}`);
+  logger.log(`TAREVA API running on port ${port}`);
   logger.log(` Created by Olabanji David Aka Dj Tech olabanjidavid16@gmail.com `);
-  logger.log(`📍 Environment: ${process.env.NODE_ENV}`);
+  logger.log(`Environment: ${process.env.NODE_ENV}`);
 }
 
 bootstrap();

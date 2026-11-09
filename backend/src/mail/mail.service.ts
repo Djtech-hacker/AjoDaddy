@@ -5,11 +5,13 @@
 // Free tier: 200 emails/day; only the SENDER address must be verified.
 //
 // Public methods: sendPasswordReset / sendEmailVerification /
-// sendPinChangeOtp / sendTwoFactorOtp / sendBankAccountAlert.
+// sendPinChangeOtp / sendTwoFactorOtp / sendBankAccountAlert /
+// sendNewChatMessage.
 // All return true/false (they never throw).
 //
-// NEW (this pass): sendTwoFactorOtp(to, firstName, code, type) — the
-// emailed code for turning 2FA on/off and for 2FA login.
+// NEW (this pass): sendNewChatMessage(to, firstName, senderName,
+// productName, text, path) — "you have a new message" email for the
+// Small Small customer/vendor chat.
 //
 // Node's "fetch failed" hides the real reason in err.cause. We log it
 // (ENOTFOUND = DNS, ETIMEDOUT / UND_ERR_CONNECT_TIMEOUT = blocked or slow
@@ -45,7 +47,9 @@ export class MailService {
   private readonly fromEmail: string;
   private readonly appName: string;
   private readonly frontendUrl: string;
-  private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png';
+  // e_trim = Cloudinary cuts off the empty transparent space around the logo,
+  // so the visible logo sits exactly in the middle of the email.
+  private readonly logoUrl = 'https://res.cloudinary.com/dmjakrnby/image/upload/e_trim/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png';
 
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('MAILJET_API_KEY', '');
@@ -59,6 +63,16 @@ export class MailService {
     if (DEV_MODE) {
       this.logger.warn('MAIL_DEV_MODE is ON — emails are printed here and NOTHING is sent. Never use in production.');
     }
+  }
+
+  // Makes user-typed text safe to put inside email HTML.
+  private escapeHtml(value: string): string {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // Turns Node's vague "fetch failed" into something useful.
@@ -152,7 +166,7 @@ export class MailService {
     return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
         <div style="text-align: center; margin-bottom: 32px;">
-         <img src="${this.logoUrl}" alt="${this.appName}" height="130" style="display: inline-block; height: 130px; width: auto;" />   
+          <img src="${this.logoUrl}" alt="${this.appName}" height="130" style="display: block; margin: 0 auto; height: 130px; width: auto;" />
         </div>
         ${content}
         <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
@@ -316,5 +330,62 @@ export class MailService {
     `);
 
     return this.send(to, `${this.appName}: bank account ${action === 'default' ? 'default changed' : action}`, html);
+  }
+
+  // "You have a new message" email for the Small Small chat (customer <-> vendor).
+  //   senderName  = who wrote the message
+  //   productName = the product the chat is about
+  //   text        = the message (shortened + made HTML-safe here)
+  //   path        = the app page that opens the chat, e.g. '/shop/orders/123'
+  async sendNewChatMessage(
+    to: string,
+    firstName: string,
+    senderName: string,
+    productName: string,
+    text: string,
+    path: string,
+  ): Promise<boolean> {
+    const safeSender = this.escapeHtml(senderName || 'Someone');
+    const safeProduct = this.escapeHtml(productName || 'a product');
+    const raw = String(text ?? '').trim();
+    const shortText = raw.length > 300 ? `${raw.slice(0, 300)}…` : raw;
+    const safeText = this.escapeHtml(shortText || '(attachment)').replace(/\n/g, '<br>');
+
+    const cleanPath = path ? (path.startsWith('/') ? path : `/${path}`) : '/';
+    const chatUrl = `${this.frontendUrl}${cleanPath}`;
+
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">New message</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${this.escapeHtml(firstName) || 'there'},<br><br>
+        <strong>${safeSender}</strong> sent you a message about <strong>${safeProduct}</strong>:
+      </p>
+
+      <div style="background: #F3F4F6; border-left: 4px solid #1B5C3C; border-radius: 8px; padding: 14px 16px; margin: 20px 0;
+                  color: #1a1a1a; font-size: 14px; line-height: 1.6;">
+        ${safeText}
+      </div>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${chatUrl}"
+           style="display: inline-block; background: #1B5C3C; color: #fff; font-size: 14px; font-weight: 600;
+                  padding: 12px 32px; border-radius: 8px; text-decoration: none;">
+          Open chat
+        </a>
+      </div>
+
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        Reply inside ${this.appName} so your conversation stays on the platform and protected.<br><br>
+        If the button doesn't work, copy and paste this URL:<br>
+        <a href="${chatUrl}" style="color: #1B5C3C; word-break: break-all;">${chatUrl}</a>
+      </p>
+    `);
+
+    return this.send(
+      to,
+      `${this.appName}: new message from ${senderName || 'someone'}`,
+      html,
+      `CHAT LINK: ${chatUrl}`,
+    );
   }
 }

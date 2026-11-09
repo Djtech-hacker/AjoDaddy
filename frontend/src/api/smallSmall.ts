@@ -68,15 +68,26 @@ export type PlanChoice = {
 
 export const planApi = {
   preview: (body: PlanChoice) => api.post('/small-small/orders/preview', body),
-  start: (body: PlanChoice & { paymentMode: 'MANUAL' | 'AUTO'; idempotencyKey: string }) => api.post('/small-small/orders', body),
+  // The transaction PIN travels in a header so it never gets mixed into the plan details
+  start: (body: PlanChoice & { paymentMode: 'MANUAL' | 'AUTO'; idempotencyKey: string }, pin: string) =>
+    api.post('/small-small/orders', body, { headers: { 'x-transaction-pin': pin }, timeout: 60000 }),
   list: (params: { status?: string; page?: number }) => api.get('/small-small/orders', { params }),
   get: (id: string) => api.get(`/small-small/orders/${id}`),
-  pay: (id: string, body: { amount: number; idempotencyKey: string }) => api.post(`/small-small/orders/${id}/pay`, body),
+  pay: (id: string, body: { amount: number; idempotencyKey: string }, pin: string) =>
+    api.post(`/small-small/orders/${id}/pay`, body, { headers: { 'x-transaction-pin': pin }, timeout: 60000 }),
   setMode: (id: string, mode: 'MANUAL' | 'AUTO') => api.post(`/small-small/orders/${id}/payment-mode`, { mode }),
   refund: (id: string) => api.post(`/small-small/orders/${id}/refund`),
+  // the customer confirms the goods arrived
+  received: (id: string) => api.post(`/small-small/orders/${id}/received`),
+  // where the customer wants the goods delivered
+  deliveryQuote: (id: string) => api.get(`/small-small/orders/${id}/delivery-quote`),
+  setOption: (id: string, optionId: string) => api.post(`/small-small/orders/${id}/delivery-option`, { optionId }),
+  setMethod: (id: string, method: 'DELIVERY' | 'PICKUP') => api.post(`/small-small/orders/${id}/delivery-method`, { method }),
+  setAddress: (id: string, body: { name: string; phone: string; address: string; city: string; state: string; latitude?: number; longitude?: number }) =>
+    api.post(`/small-small/orders/${id}/delivery-address`, body),
 }
 
-// ── Vendors: products, stock, orders, refunds ────────────────
+// ── Vendors: products, stock, orders, delivery, refunds ──────
 
 export type ProductPayload = {
   name: string
@@ -99,7 +110,17 @@ export const vendorShopApi = {
   update: (id: string, body: Partial<ProductPayload>) => api.patch(`/small-small/vendor/products/${id}`, body),
   setStock: (id: string, body: { totalStock: number; reason?: string }) => api.post(`/small-small/vendor/products/${id}/stock`, body),
   setStatus: (id: string, status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED') => api.post(`/small-small/vendor/products/${id}/status`, { status }),
-  orders: (params: { status?: string; page?: number }) => api.get('/small-small/vendor/orders', { params }),
+  // view: PAYING | TO_DISPATCH | DISPATCHED | DELIVERED | CANCELLED | ALL
+  orders: (params: { status?: string; page?: number; productId?: string; view?: string }) => api.get('/small-small/vendor/orders', { params }),
+  // my products that have customers, with a count for each stage
+  orderProducts: () => api.get('/small-small/vendor/order-products'),
+  // mark an order as sent (or update the delivery details)
+  dispatch: (id: string, body: { courier: string; trackingNumber?: string; note?: string }) =>
+    api.post(`/small-small/vendor/orders/${id}/dispatch`, body),
+  // GIG Logistics: see the price, then book a rider
+  readyForPickup: (id: string, body: { note?: string; location?: string }) => api.post(`/small-small/vendor/orders/${id}/ready-for-pickup`, body),
+  gigQuote: (id: string) => api.post(`/small-small/vendor/orders/${id}/gig-quote`),
+  gigBook: (id: string) => api.post(`/small-small/vendor/orders/${id}/gig-book`, {}, { timeout: 60000 }),
   refunds: (params: { page?: number }) => api.get('/small-small/vendor/refunds', { params }),
 }
 
@@ -109,6 +130,20 @@ export const chatApi = {
   messages: (threadId: string) => api.get(`/small-small/chat/${threadId}/messages`),
   send: (threadId: string, content: string) => api.post(`/small-small/chat/${threadId}/messages`, { content }),
   remove: (threadId: string, messageId: string) => api.delete(`/small-small/chat/${threadId}/messages/${messageId}`),
+  // chat with a vendor before buying
+  startForProduct: (productId: string) => api.post(`/small-small/chat/product/${productId}`),
+  // the vendor's inbox
+  vendorThreads: () => api.get('/small-small/chat/vendor/threads'),
+  // all my conversations (as customer and as vendor) and the unread number for the Messages button
+  myThreads: () => api.get('/small-small/chat/threads'),
+  unreadCount: () => api.get('/small-small/chat/unread-count'),
+}
+
+// ── Report a vendor ──────────────────────────────────────────
+
+export const reportApi = {
+  vendor: (body: { reason: string; details: string; threadId?: string; orderId?: string; productId?: string }) =>
+    api.post('/small-small/reports/vendor', body),
 }
 
 // ── Staff: customer care, admin ──────────────────────────────

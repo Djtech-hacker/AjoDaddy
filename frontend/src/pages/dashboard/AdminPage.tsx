@@ -27,6 +27,7 @@ const actGreen  = `${act} border-emerald-200 text-emerald-700 bg-emerald-50 hove
 const actPurple = `${act} border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100`
 const TH = 'px-5 py-2.5 text-left text-[9.5px] font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap'
 const TD = 'px-5 py-3'
+const typeLabel = (t?: string) => (({ SS_VENDOR_REPORT: 'Vendor report' } as any)[t || ''] || t || '')
 
 const HERO_PATTERN =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='220' viewBox='0 0 420 220'%3E%3Cpath d='M-20 130 C60 40 150 210 230 120 S370 70 440 140' fill='none' stroke='%23C9A227' stroke-opacity='.28' stroke-width='1.5'/%3E%3Cpath d='M-20 175 C80 90 160 230 250 150 S370 110 440 185' fill='none' stroke='%23C9A227' stroke-opacity='.18' stroke-width='1.5'/%3E%3C/svg%3E\")"
@@ -579,7 +580,7 @@ export default function AdminPage() {
                             <tr key={d.id} className="hover:bg-gray-50/80 transition-colors">
                               <td className={`${TD} text-[11px] text-gray-500`}>@{d.reporter?.username || '—'}</td>
                               <td className={`${TD} text-[11px] text-gray-500`}>{d.reportedUser ? `@${d.reportedUser.username}` : 'Group'}</td>
-                              <td className={`${TD} text-[12px] font-medium text-gray-900`}>{d.type}</td>
+                              <td className={`${TD} text-[12px] font-medium text-gray-900`}>{typeLabel(d.type)}</td>
                               <td className={`${TD} text-[11px] text-gray-500`}>@{d.escalatedBy?.username || 'system'}</td>
                               <td className={`${TD} text-[11px] text-gray-500 whitespace-nowrap`}>{d.escalatedAt ? dayjs(d.escalatedAt).format('MMM D, h:mm A') : '—'}</td>
                               <td className={TD}><button onClick={() => setQueueDetail({ ...d, _kind: 'dispute' })} className={actGray}>Review</button></td>
@@ -915,7 +916,7 @@ export default function AdminPage() {
         <div className="space-y-4">
           <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
             <p className="text-[9.5px] text-gray-400 uppercase tracking-wider font-semibold mb-1">{queueDetail?._kind === 'ticket' ? 'Ticket' : 'Report'}</p>
-            <p className="text-[13px] font-medium text-gray-900">{queueDetail?._kind === 'ticket' ? queueDetail?.subject : queueDetail?.type}</p>
+            <p className="text-[13px] font-medium text-gray-900">{queueDetail?._kind === 'ticket' ? queueDetail?.subject : typeLabel(queueDetail?.type)}</p>
           </div>
 
           {queueDetail?._kind === 'ticket' ? (
@@ -969,7 +970,7 @@ export default function AdminPage() {
             )
           ) : (
             <>
-              <p className="text-[13px] text-gray-600 leading-relaxed">{queueDetail?.description || queueDetail?.subject}</p>
+              <p className="text-[13px] text-gray-600 leading-relaxed whitespace-pre-wrap">{queueDetail?.description || queueDetail?.subject}</p>
               {queueDetail?._kind === 'dispute' && !['RESOLVED', 'DISMISSED', 'CLOSED'].includes(queueDetail?.status) && (
                 <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
                   <div>

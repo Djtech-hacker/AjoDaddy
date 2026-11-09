@@ -33,7 +33,7 @@ function usePrefersReducedMotion() {
 }
 
 // ── Static data (sample data for illustration only) ───────────
-const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793388022/Tareva_Green_Ribbon_Logo%E6%9C%9F%E7%89%B9%E7%A0%81_bwxdjs.png'
 
 const payoutRotation = [
   { pos: 1, name: 'Adaeze Kalu',  initials: 'AK', date: 'Jan 6',  done: true,  current: false },

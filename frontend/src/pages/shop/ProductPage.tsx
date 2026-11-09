@@ -5,9 +5,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import DashboardLayout from '@/components/layout/DashboardLayout'
-import { shopApi, planApi, type PlanChoice } from '@/api/smallSmall'
-import { SsStyles, SsTabs, Pill, naira, fmtDate, errMsg, unwrap, newKey, useDebounced, FREQ_LABEL } from '@/components/ss/ssShared'
+import { shopApi, planApi, chatApi, type PlanChoice } from '@/api/smallSmall'
+import { SsStyles, SsTabs, Pill, Modal, naira, fmtDate, errMsg, unwrap, newKey, useDebounced, FREQ_LABEL } from '@/components/ss/ssShared'
 import VerifiedBadge from '@/components/ss/VerifiedBadge'
+import SsPinModal from '@/components/ss/SsPinModal'
+import SsChat from '@/components/ss/SsChat'
+import SsReportModal from '@/components/ss/SsReportModal'
 import { useUIStore } from '@/stores/uiStore'
 
 // There is no percentage minimum any more. The only floor is ₦100, the smallest payment the wallet takes.
@@ -61,6 +64,11 @@ export default function ProductPage() {
 
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState('')
+  const [pinOpen, setPinOpen] = useState(false)
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null)
+  const [chatBusy, setChatBusy] = useState(false)
+  const [chatError, setChatError] = useState('')
+  const [reportOpen, setReportOpen] = useState(false)
   const keyRef = useRef(newKey())   // same key on a double tap = only one plan, charged once
 
   useEffect(() => {
@@ -122,19 +130,37 @@ export default function ProductPage() {
     depositNum > product.price ? 'The first payment cannot be more than the price.' :
     frequency === 'CUSTOM' && !customDays ? 'Choose how many days between payments.' : ''
 
-  const start = async () => {
+  const start = async (pin: string) => {
     if (!choice) return
     setStartError(''); setStarting(true)
     try {
-      const res = await planApi.start({ ...choice, paymentMode: mode, idempotencyKey: keyRef.current })
+      const res = await planApi.start({ ...choice, paymentMode: mode, idempotencyKey: keyRef.current }, pin)
       const order = unwrap(res)
       keyRef.current = newKey()
+      setPinOpen(false)
       showToast('Your plan has started', 'success')
       navigate(`/plans/${order?.id ?? ''}`)
     } catch (e) {
-      setStartError(errMsg(e, 'Could not start your plan. Please try again.'))
+      const m = errMsg(e, 'Could not start your plan. Please try again.')
+      // a PIN problem stays inside the PIN box; anything else shows on the page
+      if (/pin/i.test(m) && !/insufficient/i.test(m)) throw new Error(m)
+      setPinOpen(false); setStartError(m)
     } finally {
       setStarting(false)
+    }
+  }
+
+  // Ask the vendor a question before buying
+  const openChat = async () => {
+    if (!product) return
+    setChatError(''); setChatBusy(true)
+    try {
+      const res = await chatApi.startForProduct(product.id)
+      setChatThreadId((unwrap(res) as any).threadId)
+    } catch (e) {
+      setChatError(errMsg(e, 'Could not open the chat. Please try again.'))
+    } finally {
+      setChatBusy(false)
     }
   }
 
@@ -180,6 +206,13 @@ export default function ProductPage() {
                   {product.vendor.isVerified && <VerifiedBadge />}
                   {' '}· Ref {product.referenceNumber}
                 </p>
+                <div style={{ marginTop: 10 }}>
+                  <button type="button" className="ss-btn ghost sm" disabled={chatBusy} onClick={openChat}>
+                    {chatBusy ? 'Opening…' : '💬 Message the vendor'}
+                  </button>
+                  {' '}<button type="button" className="ss-btn ghost sm" onClick={() => setReportOpen(true)}>🚩 Report this vendor</button>
+                  {chatError && <div className="ss-note err" role="alert" style={{ marginTop: 8 }}>{chatError}</div>}
+                </div>
               </div>
             </div>
 
@@ -275,7 +308,7 @@ export default function ProductPage() {
 
                   <div className="ss-row">
                     <span className="ss-hint">The first payment comes from your wallet now.</span>
-                    <button type="button" className="ss-btn" onClick={start} disabled={starting || !choice || !preview || !!localError}>
+                    <button type="button" className="ss-btn" onClick={() => setPinOpen(true)} disabled={starting || !choice || !preview || !!localError}>
                       {starting ? <><span className="ss-spin" /> Starting…</> : <>Pay {naira(depositNum || 0)} and start →</>}
                     </button>
                   </div>
@@ -284,6 +317,23 @@ export default function ProductPage() {
               <div style={{ marginTop: 10 }}><Pill tone="gray">Money is held safely until the plan is finished</Pill></div>
             </div>
           </div>
+        )}
+        {reportOpen && product && (
+          <SsReportModal productId={product.id} vendorName={product.vendor.businessName || undefined} onClose={() => setReportOpen(false)} />
+        )}
+        {chatThreadId && (
+          <Modal title={`Chat with ${product?.vendor.businessName || 'the vendor'}`} onClose={() => setChatThreadId(null)}>
+            <SsChat threadId={chatThreadId} height={340} />
+          </Modal>
+        )}
+        {pinOpen && (
+          <SsPinModal
+            title="Confirm with your PIN"
+            summary={`${naira(depositNum || 0)} will be taken from your wallet to start this plan.`}
+            confirmLabel={`Pay ${naira(depositNum || 0)} and start`}
+            onClose={() => setPinOpen(false)}
+            onConfirm={start}
+          />
         )}
       </div>
     </DashboardLayout>

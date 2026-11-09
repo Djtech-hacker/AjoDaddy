@@ -10,6 +10,7 @@ type Tab = 'tickets' | 'reports'
 
 const tsv = (s: string) => ({ OPEN: 'warning', IN_PROGRESS: 'brand', RESOLVED: 'success', CLOSED: 'neutral' } as any)[s] || 'neutral'
 const dsv = (s: string) => ({ OPEN: 'warning', UNDER_REVIEW: 'warning', ESCALATED: 'danger', RESOLVED: 'success', CLOSED: 'neutral', DISMISSED: 'neutral' } as any)[s] || 'neutral'
+const typeLabel = (t?: string) => (({ SS_VENDOR_REPORT: 'Vendor report' } as any)[t || ''] || t || '')
 const pv  = (p: string) => ({ LOW: 'neutral', MEDIUM: 'warning', HIGH: 'danger', URGENT: 'danger' } as any)[p] || 'neutral'
 
 export default function CustomerServiceDashboardPage() {
@@ -318,7 +319,7 @@ export default function CustomerServiceDashboardPage() {
                           <td className="px-4 py-3 text-[11px] text-dim whitespace-nowrap">
                             {r.reportedUser ? `@${r.reportedUser.username}` : r.groupId ? `Group · ${r.groupId.slice(0,8)}…` : <span className="text-mist">General</span>}
                           </td>
-                          <td className="px-4 py-3 text-[12px] text-ink">{r.type}</td>
+                          <td className="px-4 py-3 text-[12px] text-ink">{typeLabel(r.type)}</td>
                           <td className="px-4 py-3"><Badge variant={dsv(r.status)}>{r.status?.replace('_',' ').toLowerCase()}</Badge></td>
                           <td className="px-4 py-3 text-[10px] text-mist font-mono whitespace-nowrap">{dayjs(r.createdAt).format('MMM D, h:mm A')}</td>
                           <td className="px-4 py-3"><Button size="sm" variant="secondary" onClick={() => openReport(r)}>Open</Button></td>
@@ -454,7 +455,7 @@ export default function CustomerServiceDashboardPage() {
       <Modal open={!!reportDetail} onClose={() => {
           setReportDetail(null); setReportNote(''); setRescNote(''); setReportReply('')
           if (pollRef.current) clearInterval(pollRef.current)
-        }} title={reportDetail?.dispute?.type || 'Report'} size="lg">
+        }} title={typeLabel(reportDetail?.dispute?.type) || 'Report'} size="lg">
         {reportDetailLoading
           ? <div className="space-y-3">{[...Array(3)].map((_,i) => <Skeleton key={i} className="h-12 rounded-xl"/>)}</div>
           : (
@@ -496,7 +497,7 @@ export default function CustomerServiceDashboardPage() {
 
             <div className="py-4 border-b border-black/[0.05]">
               <p className="text-[11px] font-bold text-mist uppercase tracking-wider mb-2">What they reported</p>
-              <p className="text-[13px] text-ink leading-relaxed bg-warm rounded-xl px-4 py-3">{reportDetail?.dispute?.description}</p>
+              <p className="text-[13px] text-ink leading-relaxed bg-warm rounded-xl px-4 py-3 whitespace-pre-wrap">{reportDetail?.dispute?.description}</p>
               <p className="text-[10px] text-mist mt-2 font-mono">Filed {dayjs(reportDetail?.dispute?.createdAt).format('MMM D, YYYY h:mm A')}</p>
             </div>
 

@@ -126,21 +126,78 @@ function Sidebar({ onClose, mobile }: { onClose?: () => void; mobile?: boolean }
   )
 }
 
+// ── Where a notification takes you when you tap it ──────────────────────────
+// Returns the page to open, or null when there is nowhere to go (then the tap only marks it read).
+const GROUP_LIST_TYPES   = ['MEMBER_JOINED', 'GROUP_INVITE', 'GROUP_JOIN_APPROVED', 'CONTRIBUTION_PAID', 'PAYOUT_SCHEDULED']
+const WALLET_TYPES       = ['WALLET_FUNDED', 'WITHDRAWAL_PROCESSED', 'PAYOUT_RECEIVED']
+// Pay Small Small, the customer's side: open that plan
+const SS_CUSTOMER_PLAN   = ['SS_PAYMENT_RECEIVED', 'SS_PLAN_COMPLETED', 'SS_PAYMENT_REMINDER', 'SS_AUTO_DEBIT_FAILED',
+                            'SS_GRACE_STARTED', 'SS_PAYMENT_MISSED', 'SS_REFUND_PROCESSED', 'SS_ORDER_DISPATCHED']
+// Pay Small Small, the vendor's side: open the shop on the right tab
+const SS_VENDOR_ORDERS   = ['SS_PLAN_STARTED', 'SS_VENDOR_PAYOUT', 'SS_ORDER_DELIVERED']
+const SS_VENDOR_PRODUCTS = ['SS_OUT_OF_STOCK', 'SS_LOW_STOCK']
+const VENDOR_SHOP_TYPES  = ['VENDOR_APPROVED', 'VENDOR_SUSPENDED', 'VENDOR_REINSTATED']
+const VENDOR_APPLY_TYPES = ['VENDOR_APPLICATION_UPDATE', 'VENDOR_REJECTED']
+const STAFF_REVIEW_TYPES = ['VENDOR_APPLICATION_SUBMITTED', 'VENDOR_KYC_MISMATCH']
+
+function destinationFor(n: any): string | null {
+  const type = String(n?.type || '')
+  const d = n?.data || {}
+
+  // groups and wallet (as before)
+  if (d.groupSlug) return `/groups/${d.groupSlug}`
+  if (type === 'CONTRIBUTION_DUE') return d.groupId ? `/groups/${d.groupId}` : '/groups'
+  if (GROUP_LIST_TYPES.includes(type)) return '/groups'
+  if (WALLET_TYPES.includes(type)) return '/wallet'
+
+  // messages: open that exact conversation
+  if (type === 'SS_NEW_MESSAGE') return d.threadId ? `/messages?thread=${d.threadId}` : '/messages'
+
+  // Pay Small Small
+  if (SS_CUSTOMER_PLAN.includes(type)) return d.orderId ? `/plans/${d.orderId}` : '/plans'
+  if (SS_VENDOR_ORDERS.includes(type)) return '/vendor?tab=orders'
+  if (type === 'SS_REFUND_VENDOR') return '/vendor?tab=refunds'
+  if (SS_VENDOR_PRODUCTS.includes(type)) return '/vendor?tab=products'
+  if (type === 'SS_ORDER_DEFAULTED') {
+    // the vendor's version of this notice says "(missed payments)" in its title
+    const forVendor = /missed payments/i.test(String(n?.title || ''))
+    if (forVendor) return '/vendor?tab=refunds'
+    return d.orderId ? `/plans/${d.orderId}` : '/plans'
+  }
+  // delivery choices sent to the vendor (customer picked delivery or pickup)
+  if (type === 'SYSTEM' && d.orderId) return '/vendor?tab=orders'
+
+  // vendor onboarding
+  if (VENDOR_SHOP_TYPES.includes(type)) return '/vendor'
+  if (VENDOR_APPLY_TYPES.includes(type)) return '/become-vendor'
+  if (STAFF_REVIEW_TYPES.includes(type)) return '/ss-staff'
+
+  return null
+}
+
 function NotificationsPanel({ onClose }: { onClose: () => void }) {
   const { data, refetch } = useNotifications({ limit: 10 })
   const markRead = useMarkNotificationRead()
+  const queryClient = useQueryClient()
   const navigate = useNavigate()
   const notifications = (data as any)?.notifications || []
 
-  const handleClick = async (n: any) => {
-    if (!n.isRead) { await markRead.mutateAsync(n.id); refetch() }
+  const handleClick = (n: any) => {
+    const to = destinationFor(n)
+
+    // Go straight away. Marking it read happens in the background, so a slow
+    // or failed save can never stop the person from getting where they want to go.
     onClose()
-    const type = n.type as string
-    const d = n.data || {}
-    if (d.groupSlug) { navigate(`/groups/${d.groupSlug}`) }
-    else if (type === 'CONTRIBUTION_DUE') { navigate(d.groupSlug ? `/groups/${d.groupSlug}` : d.groupId ? `/groups/${d.groupId}` : '/groups') }
-    else if (['MEMBER_JOINED','GROUP_INVITE','GROUP_JOIN_APPROVED','CONTRIBUTION_PAID','PAYOUT_SCHEDULED'].includes(type)) { navigate('/groups') }
-    else if (['WALLET_FUNDED','WITHDRAWAL_PROCESSED','PAYOUT_RECEIVED'].includes(type)) { navigate('/wallet') }
+    if (to) navigate(to)
+
+    if (!n.isRead) {
+      markRead.mutate(n.id, {
+        onSuccess: () => {
+          refetch()
+          queryClient.invalidateQueries({ queryKey: ['notifications'] })
+        },
+      })
+    }
   }
 
   return (
@@ -157,6 +214,7 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
           <div className="py-10 text-center text-mist text-[13px]">No notifications yet</div>
         ) : notifications.map((n: any) => (
           <div key={n.id} onClick={() => handleClick(n)}
+            role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') handleClick(n) }}
             className={`px-4 py-3.5 border-b border-black/[0.04] last:border-0 hover:bg-warm transition-colors cursor-pointer ${!n.isRead ? 'bg-brand-pale/30' : ''}`}>
             <div className="flex items-start gap-3">
               <div className={`w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0 ${!n.isRead ? 'bg-brand' : ''}`} />

@@ -1379,6 +1379,7 @@ model SsOrder {
   customerId               String
   vendorId                 String
   status                   SsOrderStatus @default(ACTIVE)
+  deliveryLockedAmount     BigInt        @default(0)
 
   // money (kobo)
   totalPrice               BigInt

@@ -18,10 +18,19 @@
 //
 // DELIVERY: once a customer has finished paying (status COMPLETED) the vendor marks
 // the goods as dispatched (courier + tracking), and the customer confirms receipt.
+//
+// DELIVERY MONEY (GIG couriers):
+//   - When the customer picks a courier, the delivery price (courier + our fee) is LOCKED
+//     inside their own wallet. SsOrder.deliveryLockedAmount remembers how much, so only
+//     this order's lock is ever released.
+//   - The lock is released if the customer changes the courier, the address, or picks pickup,
+//     if the plan is cancelled or refunded, or if the vendor sends the goods another way.
+//   - The lock becomes a real charge only when the vendor books the courier (bookDelivery).
+//   - The GIG call is made OUTSIDE the database transaction. If GIG fails, the lock stays.
 
 import {
   Injectable, BadRequestException, ConflictException, ForbiddenException,
-  NotFoundException, ServiceUnavailableException, Logger,
+  NotFoundException, ServiceUnavailableException, InternalServerErrorException, Logger,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -149,6 +158,15 @@ export class SsOrdersService {
     return `${(u.firstName || 'A customer').trim()}${last ? ' ' + last[0].toUpperCase() + '.' : ''}`;
   }
 
+  // Gives back the money held for this order's delivery (if any).
+  // Call inside a transaction, after the order row has been locked (FOR UPDATE).
+  private async releaseDeliveryLock(tx: any, order: { id: string; customerId: string; deliveryLockedAmount?: any }) {
+    const held = BigInt(order.deliveryLockedAmount ?? 0);
+    if (held <= 0n) return;
+    await this.escrow.unlockDeliveryFunds(tx, order.customerId, held);
+    await tx.ssOrder.update({ where: { id: order.id }, data: { deliveryLockedAmount: 0n } });
+  }
+
   private refundStatus(o: any) {
     const paidPct = percentPaid(o.amountPaid, o.totalPrice);
     const allowed = refundAllowed({
@@ -205,6 +223,8 @@ export class SsOrdersService {
       out.refundThresholdPercent = o.refundThresholdPercent;
       out.refund = this.refundStatus(o);
       out.chatThreadId = o.chatThread?.id ?? null;
+      // money set aside in the customer's wallet for delivery (charged when the vendor books the courier)
+      out.deliveryHeld = o.deliveryLockedAmount ? toNaira(BigInt(o.deliveryLockedAmount)) : 0;
       // the vendor's pickup address is only shown once they have said the goods are ready for pickup
       const vp = o.vendor?.vendorProfile;
       const pickupAt = o.pickupLocation || vp?.address;
@@ -608,6 +628,9 @@ export class SsOrdersService {
       throw new ConflictException('This plan needs to be checked by our team before it can be refunded. Please contact support.');
     }
 
+    // Any money set aside for delivery goes back to the customer's free balance. No fee: nothing was charged.
+    await this.releaseDeliveryLock(tx, order);
+
     const b = refundBreakdown(paid, order.refundFeePercent, order.refundVendorSharePercent);
     await this.escrow.refundFromEscrow(tx, {
       orderId: order.id, orderNumber: order.orderNumber, productName: order.product.name,
@@ -626,6 +649,7 @@ export class SsOrdersService {
       data: {
         status: p.reason === 'DEFAULT' ? 'DEFAULTED' : 'REFUNDED',
         escrowBalance: 0n, nextDueDate: null, graceExpiresAt: null,
+        deliveryOptionId: null, deliveryCarrier: null,
         ...(p.reason === 'DEFAULT' ? { defaultedAt: new Date() } : { refundedAt: new Date() }),
       },
     });
@@ -694,14 +718,25 @@ export class SsOrdersService {
     const tracking = dto.trackingNumber?.trim() || null;
     const first = o.fulfillmentStatus === 'PENDING';
 
-    await this.prisma.ssOrder.update({
-      where: { id: orderId },
-      data: {
-        fulfillmentStatus: 'DISPATCHED',
-        dispatchedAt: first ? new Date() : o.dispatchedAt,
-        courier, trackingNumber: tracking, dispatchNote: dto.note?.trim() || null,
-      },
-    });
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+      const fresh = await tx.ssOrder.findUnique({ where: { id: orderId } });
+      if (!fresh) throw new NotFoundException('Order not found');
+      if (fresh.gigWaybill || fresh.gigStatus) throw new ConflictException('This order is being booked with GIG, so it cannot be edited here.');
+      if (fresh.fulfillmentStatus === 'DELIVERED') throw new BadRequestException('The customer already confirmed they received this order.');
+      // The vendor is sending the goods their own way, so the delivery money set aside is given back
+      await this.releaseDeliveryLock(tx, fresh);
+      await tx.ssOrder.update({
+        where: { id: orderId },
+        data: {
+          fulfillmentStatus: 'DISPATCHED',
+          dispatchedAt: first ? new Date() : o.dispatchedAt,
+          courier, trackingNumber: tracking, dispatchNote: dto.note?.trim() || null,
+          deliveryOptionId: null, deliveryCarrier: null,
+        },
+      });
+    }, TX_OPTIONS);
+
     await this.prisma.auditLog.create({
       data: {
         actorId: vendorId, action: first ? 'SS_ORDER_DISPATCHED' : 'SS_ORDER_DISPATCH_UPDATED',
@@ -741,49 +776,66 @@ export class SsOrdersService {
 
   // The customer says where the goods should go
   async setDeliveryAddress(customerId: string, orderId: string, dto: DeliveryAddressDto) {
-    const o: any = await this.prisma.ssOrder.findFirst({
-      where: { id: orderId, customerId }, select: { status: true, fulfillmentStatus: true },
-    });
-    if (!o) throw new NotFoundException('Plan not found');
-    if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
-    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
-    await this.prisma.ssOrder.update({
-      where: { id: orderId },
-      data: {
-        deliveryMethod: 'DELIVERY',
-        deliveryOptionId: null, deliveryCarrier: null, // a new address means new prices: they choose again
-        deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
-        deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
-        deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
-        deliveryLng: typeof dto.longitude === 'number' ? dto.longitude : null,
-      },
-    });
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+      const o = await tx.ssOrder.findFirst({ where: { id: orderId, customerId } });
+      if (!o) throw new NotFoundException('Plan not found');
+      if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+      if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
+      // A new address means new prices: the money set aside for the old courier is released and they choose again
+      await this.releaseDeliveryLock(tx, o);
+      await tx.ssOrder.update({
+        where: { id: orderId },
+        data: {
+          deliveryMethod: 'DELIVERY',
+          deliveryOptionId: null, deliveryCarrier: null,
+          deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
+          deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
+          deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
+          deliveryLng: typeof dto.longitude === 'number' ? dto.longitude : null,
+        },
+      });
+    }, TX_OPTIONS);
     return this.getMyOrder(customerId, orderId);
   }
 
   // The customer chooses: a GIG rider brings it, or they collect it from the vendor
   async setDeliveryMethod(customerId: string, orderId: string, method: 'DELIVERY' | 'PICKUP') {
-    const o: any = await this.prisma.ssOrder.findFirst({
-      where: { id: orderId, customerId },
-      select: { status: true, fulfillmentStatus: true, vendorId: true, deliveryMethod: true, product: { select: { name: true } } },
-    });
-    if (!o) throw new NotFoundException('Plan not found');
-    if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
-    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way, so this cannot change.');
-    if (o.deliveryMethod !== method) {
-      await this.prisma.ssOrder.update({ where: { id: orderId }, data: { deliveryMethod: method } });
+    const events: NotifyEvent[] = [];
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+      const o = await tx.ssOrder.findFirst({
+        where: { id: orderId, customerId },
+        include: { product: { select: { name: true } } },
+      });
+      if (!o) throw new NotFoundException('Plan not found');
+      if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+      if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way, so this cannot change.');
+      if (o.deliveryMethod === method) return;
+
+      const data: any = { deliveryMethod: method };
+      if (method === 'PICKUP') {
+        // No courier needed any more: release the money set aside for delivery
+        await this.releaseDeliveryLock(tx, o);
+        data.deliveryOptionId = null;
+        data.deliveryCarrier = null;
+      }
+      await tx.ssOrder.update({ where: { id: orderId }, data });
+
       // only tell the vendor once there is something for them to do
       if (o.status === 'COMPLETED') {
-        await this.sendNotifications([{
+        events.push({
           userId: o.vendorId, type: 'SYSTEM',
           title: method === 'PICKUP' ? 'Customer will pick up in person' : 'Customer wants delivery',
           body: method === 'PICKUP'
             ? `The customer will collect "${o.product.name}" from you. Tell them when it is ready.`
             : `The customer wants "${o.product.name}" delivered. They will add their address.`,
           data: { orderId }, important: false,
-        }]);
+        });
       }
-    }
+    }, TX_OPTIONS);
+
+    await this.sendNotifications(events);
     return this.getMyOrder(customerId, orderId);
   }
 
@@ -888,57 +940,110 @@ export class SsOrdersService {
     };
   }
 
-  // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.
-  // The vendor's pickup address is never shown to the customer.
-  async quoteMyDelivery(customerId: string, orderId: string) {
+  // The checks every customer delivery step shares: it is their plan, delivery is chosen,
+  // the address is saved and the goods have not been sent yet.
+  private async loadMyDeliveryOrder(customerId: string, orderId: string) {
     const o: any = await this.prisma.ssOrder.findFirst({
       where: { id: orderId, customerId },
       include: { product: { select: { name: true } } },
     });
     if (!o) throw new NotFoundException('Plan not found');
     if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
-    if (o.fulfillmentStatus !== 'PENDING') throw new BadRequestException('Your goods are already on the way.');
+    if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way.');
     if (o.deliveryMethod !== 'DELIVERY') throw new BadRequestException('Choose delivery first.');
     if (!o.deliveryAddress || !o.deliveryState) throw new BadRequestException('Save your delivery address to see the prices.');
+    return o;
+  }
 
-    let res: { from: GigAddress; to: GigAddress; options: any[] };
-    try { res = await this.deliveryOptions(o); }
+  // Same as deliveryOptions, with a friendlier message for the customer when the vendor's profile is incomplete
+  private async myDeliveryOptions(o: any) {
+    try { return await this.deliveryOptions(o); }
     catch (e: any) {
       if (/pickup address/i.test(e?.message || '')) {
         throw new BadRequestException('The vendor has not finished adding their pickup address yet, so the prices are not ready.');
       }
       throw e;
     }
-    const { from, to, options } = res;
+  }
+
+  // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.
+  // The vendor's pickup address is never shown to the customer.
+  async quoteMyDelivery(customerId: string, orderId: string) {
+    const o = await this.loadMyDeliveryOrder(customerId, orderId);
+    const { from, to, options } = await this.myDeliveryOptions(o);
     const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const kind = !eq(from.state, to.state) ? 'Interstate delivery' : eq(from.city, to.city) ? 'Local dispatch rider' : 'Delivery within the state';
     const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo) - (b.feeKobo + b.companyFeeKobo)));
     return { kind, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100, options: sorted.map(x => this.presentOption(x)) };
   }
 
-  // The customer taps one of the couriers
+  // The customer taps one of the couriers: the price is set aside (locked) inside their own wallet.
+  // Nothing is spent yet. It is charged when the vendor books the courier.
   async setDeliveryOption(customerId: string, orderId: string, optionId: string) {
-    const q = await this.quoteMyDelivery(customerId, orderId); // same checks: delivery chosen, address saved, not sent yet
-    const opt = q.options.find(x => x.id === optionId);
+    const cfg = await this.settings();
+    if (cfg.frozen) throw new ServiceUnavailableException('Pay Small Small is temporarily unavailable. Please try again later.');
+
+    const o = await this.loadMyDeliveryOrder(customerId, orderId);
+    // GIG is asked OUTSIDE the transaction, so a slow courier API never holds the database
+    const { options } = await this.myDeliveryOptions(o);
+    const opt = options.find(x => x.id === optionId);
     if (!opt) throw new BadRequestException('That courier is not available any more. Please choose again.');
-    await this.prisma.ssOrder.update({ where: { id: orderId }, data: { deliveryOptionId: opt.id, deliveryCarrier: opt.carrier } });
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+      const fresh = await tx.ssOrder.findUnique({ where: { id: orderId } });
+      if (!fresh || fresh.customerId !== customerId) throw new NotFoundException('Plan not found');
+      if (fresh.status !== 'ACTIVE' && fresh.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
+      if (fresh.fulfillmentStatus !== 'PENDING' || fresh.gigStatus) throw new ConflictException('Your goods are already being sent, so this cannot change.');
+      if (fresh.deliveryMethod !== 'DELIVERY') throw new BadRequestException('Choose delivery first.');
+
+      // Switching courier: release the old amount first (if this fails below, everything is undone and the old choice stays)
+      await this.releaseDeliveryLock(tx, fresh);
+      const ok = await this.escrow.lockDeliveryFunds(tx, customerId, total);
+      if (!ok) {
+        throw new BadRequestException(`Not enough available money in your wallet to set aside ${naira(total)} for delivery. Fund your wallet and choose again.`);
+      }
+      await tx.ssOrder.update({
+        where: { id: orderId },
+        data: { deliveryOptionId: opt.id, deliveryCarrier: opt.carrier, deliveryLockedAmount: total },
+      });
+    }, TX_OPTIONS);
+
     return this.getMyOrder(customerId, orderId);
   }
 
   // Book the courier the customer chose. The price is fetched again here, so the saved price is always fresh.
+  // Order of events: claim the order -> call GIG (outside any transaction) -> turn the lock into a charge.
   async bookDelivery(vendorId: string, orderId: string, ip?: string) {
+    const cfg = await this.settings();
+    if (cfg.frozen) throw new ServiceUnavailableException('Pay Small Small is temporarily unavailable. Please try again later.');
+
     const o = await this.loadForGig(vendorId, orderId);
     if (!o.deliveryOptionId) throw new BadRequestException('The customer has not chosen a courier yet.');
+    const held: bigint = BigInt(o.deliveryLockedAmount ?? 0);
+    if (held <= 0n) {
+      throw new BadRequestException('The delivery payment has not been set aside yet. Ask the customer to choose the courier again.');
+    }
     const { from, to, options } = await this.deliveryOptions(o);
     const opt = options.find(x => x.id === o.deliveryOptionId);
     if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
 
-    // Claim the order first, so a double tap can never book two riders
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+    if (total > held) {
+      throw new BadRequestException('The delivery price went up after the customer chose. Ask them to choose the courier again.');
+    }
+
+    // Claim the order first, so a double tap can never book two riders.
+    // The claim only works if the customer's choice and the money set aside are still exactly what we just read.
     const claim = await this.prisma.ssOrder.updateMany({
-      where: { id: orderId, vendorId, status: 'COMPLETED', fulfillmentStatus: 'PENDING', gigWaybill: null, gigStatus: null },
+      where: {
+        id: orderId, vendorId, status: 'COMPLETED', fulfillmentStatus: 'PENDING', gigWaybill: null, gigStatus: null,
+        deliveryOptionId: o.deliveryOptionId, deliveryLockedAmount: held,
+      },
       data: { gigStatus: 'BOOKING' },
     });
-    if (claim.count === 0) throw new ConflictException('This order is already being booked.');
+    if (claim.count === 0) throw new ConflictException('This order is already being booked, or the customer just changed their choice. Please try again.');
 
     let booking: any;
     try {
@@ -946,20 +1051,38 @@ export class SsOrdersService {
         from, to, declaredValueKobo: BigInt(o.totalPrice), itemName: o.product.name, reference: o.orderNumber, optionId: opt.id, requestToken: opt.requestToken,
       });
     } catch (e) {
+      // Booking failed: nothing was charged and the money stays set aside for the customer's next try
       await this.prisma.ssOrder.update({ where: { id: orderId }, data: { gigStatus: null } });
       throw e;
     }
 
     const carrier: string = booking.carrier || opt.carrier;
-    await this.prisma.ssOrder.update({
-      where: { id: orderId },
-      data: {
-        fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
-        trackingNumber: booking.waybill, dispatchNote: null,
-        deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo,
-        gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
-      },
-    });
+    try {
+      await this.prisma.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+        // The locked money becomes a real charge (the SSD- reference is unique, so this can only ever happen once)
+        await this.escrow.settleDelivery(tx, {
+          orderId, orderNumber: o.orderNumber, productName: o.product.name, customerId: o.customerId,
+          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, key: 'delivery',
+        });
+        // If the price came down since the customer chose, the difference goes back to their free balance
+        if (held > total) await this.escrow.unlockDeliveryFunds(tx, o.customerId, held - total);
+        await tx.ssOrder.update({
+          where: { id: orderId },
+          data: {
+            fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
+            trackingNumber: booking.waybill, dispatchNote: null,
+            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo, deliveryLockedAmount: 0n,
+            gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
+          },
+        });
+      }, TX_OPTIONS);
+    } catch (e: any) {
+      // A rider was booked but the charge did not go through. The order stays in BOOKING so nobody can book a second rider.
+      this.logger.error(`GIG BOOKED BUT NOT CHARGED on ${o.orderNumber}: waybill ${booking.waybill}, carrier ${carrier}, amount ${total} kobo. Needs manual review. ${e?.message}`);
+      throw new InternalServerErrorException('The rider was booked but the delivery payment could not be completed. Our team has been alerted. Please do not book again.');
+    }
+
     await this.prisma.auditLog.create({
       data: {
         actorId: vendorId, action: 'SS_ORDER_GIG_BOOKED', entityType: 'SS_ORDER', entityId: orderId,
@@ -972,7 +1095,7 @@ export class SsOrdersService {
     });
     await this.sendNotifications([{
       userId: o.customerId, type: 'SS_ORDER_DISPATCHED', title: `A ${carrier} rider is coming for your goods`,
-      body: `"${o.product.name}" is booked with ${carrier} (waybill ${booking.waybill}).`,
+      body: `"${o.product.name}" is booked with ${carrier} (waybill ${booking.waybill}). ${naira(total)} was taken from your wallet for delivery.`,
       data: { orderId }, important: true,
     }]);
     return {

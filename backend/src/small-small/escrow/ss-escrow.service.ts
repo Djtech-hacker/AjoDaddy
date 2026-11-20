@@ -13,7 +13,14 @@
 //                      the company's own revenue, and
 //                      SYSTEM.lockedBalance == sum(SsOrder.escrowBalance).
 //   Vendor wallet    : wallets.balance (withdrawn through your normal flow, 1% fee)
-//   Company revenue  : SYSTEM wallet balance (refund fee share, optional sale fee)
+//   Company revenue  : SYSTEM wallet balance (refund fee share, optional sale fee,
+//                      delivery service fee)
+//   Delivery fee     : NOT in escrow. While the customer waits for the vendor to book the
+//                      courier, the amount is LOCKED inside the customer's OWN wallet
+//                      (lockedBalance goes up, balance does not change). It becomes a real
+//                      charge only when the courier is booked (settleDelivery), and is simply
+//                      unlocked if the customer changes their mind (unlockDeliveryFunds).
+//                      So the escrow numbers above are never affected by delivery.
 //
 // Why raw SQL for wallet balances
 //   WalletService.creditWallet()/debitWallet() read the balance, calculate in
@@ -315,6 +322,89 @@ export class SsEscrowService {
       { orderId: o.orderId, account: 'VENDOR_WALLET',   direction: 'CREDIT', type: 'REFUND_FEE_VENDOR',   userId: o.vendorId,   amount: b.vendorShare,    reference: `${base}:vendor` },
       { orderId: o.orderId, account: 'COMPANY_REVENUE', direction: 'CREDIT', type: 'REFUND_FEE_PLATFORM', userId: null,         amount: b.companyShare,   reference: `${base}:company` },
     ]);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // DELIVERY FEE: lock it, unlock it, or settle it
+  // ══════════════════════════════════════════════════════════
+
+  // The customer chose a courier: lock the amount inside their OWN wallet.
+  // Their balance does not change, but it can no longer be spent on anything else.
+  // Returns false when they do not have enough available money (nothing is changed then).
+  async lockDeliveryFunds(tx: any, userId: string, amount: bigint): Promise<boolean> {
+    const rows = (await tx.$queryRaw`
+      UPDATE wallets
+         SET "lockedBalance" = "lockedBalance" + ${amount}, "updatedAt" = NOW()
+       WHERE "userId" = ${userId}
+         AND "isActive" = true
+         AND balance - "lockedBalance" >= ${amount}
+      RETURNING id
+    `) as Array<{ id: string }>;
+    return rows.length > 0;
+  }
+
+  // The customer changed their mind (new address, pickup, another courier) or the plan was cancelled:
+  // the lock is simply removed. No money moved, so there is nothing to refund and no fee.
+  async unlockDeliveryFunds(tx: any, userId: string, amount: bigint) {
+    if (amount <= 0n) return;
+    const rows = (await tx.$queryRaw`
+      UPDATE wallets
+         SET "lockedBalance" = "lockedBalance" - ${amount}, "updatedAt" = NOW()
+       WHERE "userId" = ${userId}
+         AND "lockedBalance" >= ${amount}
+      RETURNING id
+    `) as Array<{ id: string }>;
+    if (rows.length === 0) {
+      this.logger.error(`DELIVERY LOCK OUT OF SYNC: could not unlock ${amount} kobo for user ${userId}`);
+      throw new InternalServerErrorException('Your delivery payment could not be released. Our team has been alerted.');
+    }
+  }
+
+  // The courier is booked: turn the lock into a real charge.
+  //   customer wallet : balance and lock both go down by (courier price + service fee)
+  //   company revenue : the service fee (the courier price leaves the system, because the company
+  //                     pays the courier from its own Terminal wallet)
+  async settleDelivery(tx: any, o: {
+    orderId: string; orderNumber: string; productName: string; customerId: string;
+    courierFee: bigint; companyFee: bigint; key: string;
+  }) {
+    const total = o.courierFee + o.companyFee;
+    if (total <= 0n) return;
+
+    const rows = (await tx.$queryRaw`
+      UPDATE wallets
+         SET balance = balance - ${total}, "lockedBalance" = "lockedBalance" - ${total}, "updatedAt" = NOW()
+       WHERE "userId" = ${o.customerId}
+         AND "lockedBalance" >= ${total}
+         AND balance >= ${total}
+      RETURNING id, balance
+    `) as Array<{ id: string; balance: bigint }>;
+    if (rows.length === 0) {
+      this.logger.error(`DELIVERY SETTLE FAILED for ${o.orderNumber}: customer wallet does not hold ${total} kobo locked`);
+      throw new InternalServerErrorException('The delivery payment could not be completed. Our team has been alerted.');
+    }
+    const after = BigInt(rows[0].balance);
+
+    const base = `${o.orderNumber}:${o.key}`;
+    await this.recordTx(tx, {
+      userId: o.customerId, walletId: rows[0].id, type: 'CONTRIBUTION', amount: total,
+      before: after + total, after, reference: `SSD-${base}`,
+      description: `Delivery: ${o.productName}`,
+      metadata: {
+        orderId: o.orderId, orderNumber: o.orderNumber, kind: 'DELIVERY',
+        courierFeeKobo: Number(o.courierFee), serviceFeeKobo: Number(o.companyFee),
+      },
+    });
+
+    if (o.companyFee > 0n) {
+      const r = await this.revenueAdd(tx, o.companyFee);
+      await this.recordTx(tx, {
+        userId: SYSTEM_USER_ID, walletId: r.walletId, type: 'WALLET_FUNDING', amount: o.companyFee,
+        before: r.before, after: r.after, reference: `SSDELIVERYFEE-${base}`,
+        description: `Delivery service fee from plan ${o.orderNumber}`,
+        metadata: { orderId: o.orderId, orderNumber: o.orderNumber, kind: 'DELIVERY_FEE', fromUserId: o.customerId },
+      });
+    }
   }
 
   // ══════════════════════════════════════════════════════════

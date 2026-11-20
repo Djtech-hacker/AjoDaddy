@@ -69,6 +69,8 @@ type Plan = {
   deliveryFee: number | null
   deliveryCompanyFee: number | null
   deliveryTotal: number | null
+  // money set aside in the customer's wallet for delivery (charged when the vendor books the courier)
+  deliveryHeld?: number
 }
 
 type Address = { name: string; phone: string; address: string; city: string; state: string }
@@ -229,12 +231,17 @@ export default function PlanPage() {
     finally { setAddrBusy(false) }
   }
 
+  // Choosing a courier sets the delivery price aside in the customer's wallet.
+  // If their wallet is short, the server says so and the tick is taken back.
   const chooseOption = async (optionId: string) => {
     if (!plan || pickedOpt === optionId) return
     const before = pickedOpt
     setError(''); setPickedOpt(optionId) // tick it straight away, save it in the background
-    try { await planApi.setOption(plan.id, optionId); load() }
-    catch (e) { setPickedOpt(before); setError(errMsg(e, 'Could not save your courier choice. Please try again.')) }
+    try {
+      await planApi.setOption(plan.id, optionId)
+      showToast('Delivery payment set aside in your wallet', 'success')
+      load()
+    } catch (e) { setPickedOpt(before); setError(errMsg(e, 'Could not save your courier choice. Please try again.')) }
   }
 
   const chooseMethod = async (m: 'DELIVERY' | 'PICKUP') => {
@@ -335,7 +342,10 @@ export default function PlanPage() {
                           })}
                         </div>
                         {quote.options.some(op => op.simulated) && <p className="ss-hint">Test mode: these prices are only estimates.</p>}
-                        {!pickedOpt && <p className="ss-hint">Tap one to choose it. The vendor can book it once you have chosen.</p>}
+                        {!pickedOpt && <p className="ss-hint">Tap one to choose it. The price is set aside in your wallet, and the vendor can book it once you have chosen.</p>}
+                        {pickedOpt && (plan.deliveryHeld ?? 0) > 0 && (
+                          <p className="ss-hint">🔒 {naira(plan.deliveryHeld as number)} is set aside in your wallet for delivery. It is only charged when the vendor books the courier. Changing the courier or your address, or choosing pickup, gives it back.</p>
+                        )}
                       </div>
                     ) : quoteError ? (
                       <p className="ss-hint">{quoteError}</p>
@@ -383,6 +393,9 @@ export default function PlanPage() {
                         ].filter(Boolean).join(', ')}.
                       </p>
                     )}
+                    {plan.deliveryAddress && (plan.deliveryHeld ?? 0) > 0 && (
+                      <p className="ss-hint">Saving a new address gives back the {naira(plan.deliveryHeld as number)} set aside for delivery. You will choose a courier again.</p>
+                    )}
                     <div className="ss-row end">
                       {plan.deliveryAddress && <button type="button" className="ss-btn ghost" onClick={() => setAddrOpen(false)}>Cancel</button>}
                       <button type="button" className="ss-btn" disabled={!addrOk || addrBusy} onClick={saveAddress}>{addrBusy ? 'Saving…' : 'Save address'}</button>
@@ -421,7 +434,7 @@ export default function PlanPage() {
                     )}
                     {plan.dispatchNote && <p className="ss-hint">{plan.dispatchNote}</p>}
                     {plan.deliveryTotal != null && (
-                      <p className="ss-hint">Delivery cost: {naira(plan.deliveryTotal)} (courier {naira(plan.deliveryFee ?? 0)} + service fee {naira(plan.deliveryCompanyFee ?? 0)})</p>
+                      <p className="ss-hint">Delivery cost: {naira(plan.deliveryTotal)} (courier {naira(plan.deliveryFee ?? 0)} + service fee {naira(plan.deliveryCompanyFee ?? 0)}), taken from your wallet.</p>
                     )}
                     {plan.gigSimulated && <p className="ss-hint">Test mode: this is a simulated booking, no real rider was called.</p>}
                     <div className="ss-row end">
@@ -546,6 +559,7 @@ export default function PlanPage() {
                     <p className="ss-p">
                       You have paid {naira(plan.refund.preview.youPaid)}. If you cancel now, {plan.refund.preview.feePercent}% ({naira(plan.refund.preview.feeTotal)}) is kept
                       and <b>{naira(plan.refund.preview.youGetBack)}</b> goes back to your wallet.
+                      {(plan.deliveryHeld ?? 0) > 0 && <> The {naira(plan.deliveryHeld as number)} set aside for delivery is also given back, with no fee.</>}
                     </p>
                     <div className="ss-row end"><button type="button" className="ss-btn danger" onClick={() => setConfirmRefund(true)}>Cancel this plan…</button></div>
                   </>

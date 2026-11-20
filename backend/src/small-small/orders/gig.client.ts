@@ -3,6 +3,8 @@
 //
 // CARRIER_MODE in backend .env:
 //   (not set) or "simulated"  -> prices are ESTIMATES and no real rider is booked. Safe for testing.
+//   "terminal"                -> Terminal Africa (T-Ship API): one API that carries GIG, DHL, FEZ, Kwik and others.
+//                                Needs TERMINAL_SECRET_KEY. A key starting sk_test uses the SANDBOX, sk_live uses LIVE.
 //   "shipbubble"              -> the real Shipbubble API (one API that carries GIG, DHL, FEZ and others).
 //                                Needs SHIPBUBBLE_API_KEY. A key starting sb_sandbox is TEST mode, sb_prod is LIVE.
 //
@@ -68,6 +70,234 @@ export class GigSimulatedClient implements GigClient {
     if (!carrier) throw new BadRequestException('That courier choice is not available.');
     const n = Math.floor(10_000_000 + Math.random() * 89_999_999);
     return { waybill: `SIM${n}`, status: 'BOOKED', simulated: true, carrier };
+  }
+}
+
+// ── Terminal Africa: one API that carries GIG, DHL, FEZ, Kwik and more ──
+// Docs: https://docs.terminal.africa/tship   Auth: "Authorization: Bearer <secret key>"
+// Base: https://sandbox.terminal.africa/v1 (test keys, sk_test...)  or  https://api.terminal.africa/v1 (live keys, sk_live...)
+//
+// How a quote and a booking work:
+//   QUOTE  1) POST /shipments/quick   makes a DRAFT shipment from the two addresses and the parcel in ONE call
+//          2) GET  /rates/shipment    returns the courier prices for that draft shipment
+//   BOOK   3) POST /shipments/pickup  books the chosen rate (pickup_option "pickup" = the carrier collects from the vendor's door)
+//
+// The delivery price is taken from OUR Terminal wallet, so that wallet must hold enough money.
+// (We collect the delivery cost from the customer's wallet.)
+//
+// Optional .env settings (sensible defaults are used when missing):
+//   TERMINAL_BASE_URL            overrides the base URL (normally not needed)
+//   TERMINAL_DEFAULT_WEIGHT_KG   weight of every parcel, default 1 (products do not store a weight yet)
+//   TERMINAL_DEFAULT_ZIP         postal code used for every address, default 100001 (the app does not collect one yet)
+//
+// Notes:
+//   - "amount" in Terminal rates is in NAIRA. The app works in KOBO, so it is converted here.
+//   - Option ids stay the same between quotes (they use the carrier, not the one-off rate id),
+//     so a customer's saved choice can still be found when the vendor books later.
+class TerminalHttpError extends Error { constructor(public status: number, message: string) { super(message); } }
+
+export class TerminalClient implements GigClient {
+  private readonly logger = new Logger('TerminalClient');
+
+  private get key() { return process.env.TERMINAL_SECRET_KEY || ''; }
+  private get base() {
+    const custom = process.env.TERMINAL_BASE_URL;
+    if (custom) return custom.replace(/\/+$/, '');
+    return this.key.startsWith('sk_live') ? 'https://api.terminal.africa/v1' : 'https://sandbox.terminal.africa/v1';
+  }
+
+  private async call(method: 'GET' | 'POST', path: string, body?: unknown, query?: Record<string, string>): Promise<any> {
+    if (!this.key) throw new ServiceUnavailableException('Courier booking is not set up yet. Please try again later.');
+    const qs = query ? '?' + new URLSearchParams(query).toString() : '';
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 30_000);
+    let res: any;
+    try {
+      res = await (globalThis as any).fetch(`${this.base}${path}${qs}`, {
+        method,
+        headers: { Authorization: `Bearer ${this.key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: ctl.signal,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Terminal ${method} ${path} failed: ${e?.message}`);
+      throw new ServiceUnavailableException('We could not reach the courier service. Please try again.');
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok || json?.status === false) {
+      const detail = [json?.message, ...(Array.isArray(json?.errors) ? json.errors : [])].filter(Boolean).join(' | ');
+      this.logger.warn(`Terminal ${method} ${path} -> ${res.status}: ${detail}`);
+      if (res.status === 401 || res.status === 403) throw new ServiceUnavailableException('The courier service login failed. Please contact support.');
+      if (res.status === 429 || res.status >= 500) throw new ServiceUnavailableException('The courier service is busy. Please try again shortly.');
+      // a low Terminal wallet is OUR problem, never show it to the customer
+      if (/insufficient|wallet|balance/i.test(detail)) throw new ServiceUnavailableException('Delivery booking is temporarily unavailable. Please try again later.');
+      // the app swaps any error containing the words "pickup address" for a friendly message, which hides the real reason.
+      // Say "pickup location" instead so Terminal's real message reaches the screen.
+      throw new TerminalHttpError(res.status, (detail || 'The courier service could not process this request.').replace(/pickup address/gi, 'pickup location'));
+    }
+    return json;
+  }
+
+  // Terminal wants international numbers like +2348012345678
+  private phone(p: string) {
+    const d = (p || '').replace(/[^\d+]/g, '');
+    if (d.startsWith('+')) return d;
+    if (d.startsWith('234')) return '+' + d;
+    if (d.startsWith('0')) return '+234' + d.slice(1);
+    return '+234' + d;
+  }
+
+  // Terminal allows at most 45 characters per address line, so a long address is split:
+  // the first line is cut at a space or comma, and the rest goes to line 2 (also 45 characters at most).
+  private lines(address: string): { line1: string; line2?: string } {
+    const MAX = 45;
+    const text = (address || '').replace(/\s+/g, ' ').trim();
+    if (text.length <= MAX) return { line1: text };
+    let cut = Math.max(text.lastIndexOf(' ', MAX), text.lastIndexOf(',', MAX - 1) + 1);
+    if (cut < 20) cut = MAX; // no good break point found: cut hard
+    const line1 = text.slice(0, cut).replace(/[\s,]+$/, '');
+    const rest = text.slice(cut).replace(/^[\s,]+/, '').slice(0, MAX).replace(/[\s,]+$/, '');
+    return rest ? { line1, line2: rest } : { line1 };
+  }
+
+  private address(a: GigAddress) {
+    const parts = (a.name || '').trim().split(/\s+/).filter(Boolean);
+    const first = parts[0] || 'Customer';
+    const last = parts.length > 1 ? parts.slice(1).join(' ') : first;
+    return {
+      first_name: first,
+      last_name: last,
+      email: a.email,
+      phone: this.phone(a.phone),
+      ...this.lines(a.address),
+      city: a.city.trim(),
+      state: a.state.trim(),
+      country: 'NG',
+      zip: process.env.TERMINAL_DEFAULT_ZIP || '100001',
+    };
+  }
+
+  private parcel(declaredValueKobo: bigint, itemName: string) {
+    const name = (itemName || 'Goods').slice(0, 80);
+    return {
+      description: name,
+      weight_unit: 'kg',
+      items: [{
+        name, description: name, type: 'parcel', currency: 'NGN',
+        value: Math.max(1, Math.round(Number(declaredValueKobo) / 100)), // Terminal wants naira
+        quantity: 1,
+        weight: Number(process.env.TERMINAL_DEFAULT_WEIGHT_KG) || 1,
+      }],
+    };
+  }
+
+  // The same courier gets the same id every time, even though Terminal makes a new rate id for every quote
+  private optionId(rate: any) {
+    const carrier = String(rate.carrier_reference || rate.carrier_id || rate.carrier_slug || rate.carrier_name);
+    const service = String(rate.carrier_rate_description || 'standard').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'standard';
+    return `${carrier}:${service}`;
+  }
+
+  // Steps 1 and 2: draft shipment, then prices from every courier that will collect from the vendor's door
+  async quoteOptions(from: GigAddress, to: GigAddress, declaredValueKobo: bigint, itemName = 'Goods'): Promise<CarrierOption[]> {
+    const route = `${from.city}, ${from.state} -> ${to.city}, ${to.state}`;
+    const draft = await this.call('POST', '/shipments/quick', {
+      pickup_address: this.address(from),
+      delivery_address: this.address(to),
+      parcel: this.parcel(declaredValueKobo, itemName),
+      shipment_purpose: 'commercial',
+      metadata: { source: 'tareva' },
+    }).catch(e => { this.logger.warn(`Terminal quote failed for ${route}: ${e?.message}`); throw this.asNest(e); });
+    const shipmentId: string | undefined = draft?.data?.shipment_id;
+    if (!shipmentId) throw new ServiceUnavailableException('The courier service did not accept this delivery. Please try again.');
+
+    const r = await this.call('GET', '/rates/shipment', undefined, { shipment_id: shipmentId, currency: 'NGN' })
+      .catch(e => { this.logger.warn(`Terminal quote failed for ${route}: ${e?.message}`); throw this.asNest(e); });
+    const rates: any[] = Array.isArray(r?.data) ? r.data : [];
+
+    const best = new Map<string, CarrierOption>();
+    for (const rate of rates) {
+      const amount = Number(rate.amount);
+      if (!rate.rate_id || !Number.isFinite(amount) || amount <= 0) continue; // no price = cannot sell it
+      if (rate.dropoff_required === true) continue;                           // the vendor would have to carry it to a hub
+
+      // we want the carrier to collect from the vendor's door ("pickup")
+      const options: any[] | undefined = Array.isArray(rate.pickup_options) ? rate.pickup_options : undefined;
+      const canPickup = !options || options.some(o => o?.type === 'pickup');
+      if (!canPickup) continue;
+
+      const carrier = String(rate.carrier_name || 'Courier').replace(/\|/g, '/');
+      const opt: CarrierOption = {
+        id: this.optionId(rate),
+        carrier,
+        service: String(rate.carrier_rate_description || 'Door to door'),
+        feeKobo: BigInt(Math.round(amount * 100)),
+        etaText: String(rate.delivery_time || 'Delivery time not given'),
+        simulated: false,
+        // shipment id | rate id | carrier name | does this rate list the "pickup" option (1/0)
+        requestToken: `${shipmentId}|${rate.rate_id}|${carrier}|${options ? '1' : '0'}`,
+      };
+      const prev = best.get(opt.id);
+      if (!prev || opt.feeKobo < prev.feeKobo) best.set(opt.id, opt);
+    }
+
+    const list = [...best.values()].sort((a, b) => (a.feeKobo < b.feeKobo ? -1 : a.feeKobo > b.feeKobo ? 1 : 0));
+    if (list.length === 0) throw new BadRequestException('No courier is available for this route right now.');
+    return list;
+  }
+
+  // Step 3: book the courier the customer chose (the price is taken from our Terminal wallet)
+  async book(args: {
+    from: GigAddress; to: GigAddress; declaredValueKobo: bigint; itemName: string; reference: string;
+    optionId: string; requestToken?: string;
+  }): Promise<GigBooking> {
+    // 1) try the quote we already have. Rates can go stale, so if Terminal refuses it, quote again once.
+    const parts = (args.requestToken || '').split('|');
+    if (parts.length === 4) {
+      try {
+        return await this.arrange(parts[0], parts[1], parts[2], parts[3] === '1', args.reference);
+      } catch (e: any) {
+        if (!(e instanceof TerminalHttpError)) throw this.asNest(e); // timeouts etc: do NOT retry, it may have booked
+        this.logger.warn(`Terminal rate ${parts[1]} was refused (${e.message}); quoting again`);
+      }
+    }
+
+    // 2) fresh quote, find the same courier choice, book it
+    const options = await this.quoteOptions(args.from, args.to, args.declaredValueKobo, args.itemName);
+    const pick = options.find(o => o.id === args.optionId);
+    if (!pick || !pick.requestToken) throw new BadRequestException('That courier choice is no longer available. Please choose again.');
+    const p = pick.requestToken.split('|');
+    try {
+      return await this.arrange(p[0], p[1], p[2], p[3] === '1', args.reference);
+    } catch (e: any) {
+      throw this.asNest(e);
+    }
+  }
+
+  private async arrange(shipmentId: string, rateId: string, carrier: string, hasPickupOption: boolean, reference: string): Promise<GigBooking> {
+    const r = await this.call('POST', '/shipments/pickup', {
+      rate_id: rateId,
+      shipment_id: shipmentId,
+      ...(hasPickupOption ? { pickup_option: 'pickup' } : {}),
+    });
+    const d = r?.data || {};
+    if (d?.metadata?.priority_pickup_error) this.logger.warn(`Terminal ${shipmentId}: ${d.metadata.priority_pickup_error}`);
+    const id = d.shipment_id || shipmentId;
+    this.logger.log(`Terminal booked ${id} for ${reference}`);
+    return {
+      waybill: String(id), // the Terminal shipment id: it is what tracking and webhooks use
+      status: String(d.status || 'confirmed').toUpperCase(),
+      simulated: false,
+      carrier,
+    };
+  }
+
+  // Terminal "your request was wrong" errors become a normal 400 for the app
+  private asNest(e: any) {
+    return e instanceof TerminalHttpError ? new BadRequestException(e.message) : e;
   }
 }
 
@@ -218,5 +448,8 @@ export class ShipbubbleClient implements GigClient {
 }
 
 export function createGigClient(): GigClient {
-  return (process.env.CARRIER_MODE || '').toLowerCase() === 'shipbubble' ? new ShipbubbleClient() : new GigSimulatedClient();
+  const mode = (process.env.CARRIER_MODE || '').toLowerCase();
+  if (mode === 'terminal') return new TerminalClient();
+  if (mode === 'shipbubble') return new ShipbubbleClient();
+  return new GigSimulatedClient();
 }

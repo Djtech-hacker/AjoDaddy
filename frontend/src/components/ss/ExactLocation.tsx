@@ -153,7 +153,7 @@ export default function ExactLocation({ value, onChange, onAddress }: Props) {
             src={mapSrc(shown)}
             style={{ width: '100%', height: 200, border: 0, borderRadius: 12 }}
             loading="lazy"
-          />
+          />z
           <p className="ss-hint">
             <a href={`https://www.google.com/maps?q=${shown.lat},${shown.lng}`} target="_blank" rel="noreferrer">Open in Google Maps</a>
           </p>

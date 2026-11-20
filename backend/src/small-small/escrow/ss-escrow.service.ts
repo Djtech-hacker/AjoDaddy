@@ -256,6 +256,16 @@ export class SsEscrowService {
   }) {
     const b = o.breakdown;
     if (b.paid <= 0n) return;
+
+    // SAFETY GUARD: the three payouts must add up to exactly what leaves escrow.
+    // If they don't, money would be created or destroyed. Stop before anything moves.
+    if (b.customerRefund + b.vendorShare + b.companyShare !== b.paid) {
+      this.logger.error(
+        `REFUND BREAKDOWN MISMATCH for ${o.orderNumber}: paid=${b.paid} customer=${b.customerRefund} vendor=${b.vendorShare} company=${b.companyShare}`,
+      );
+      throw new InternalServerErrorException('Refund could not be completed. Our team has been alerted.');
+    }
+
     const base = `${o.orderNumber}:refund`;
 
     const esc = await this.escrowRemove(tx, b.paid);

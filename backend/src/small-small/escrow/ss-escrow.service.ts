@@ -362,13 +362,15 @@ export class SsEscrowService {
 
   // The courier is booked: turn the lock into a real charge.
   //   customer wallet : balance and lock both go down by (courier price + service fee)
-  //   company revenue : the service fee (the courier price leaves the system, because the company
-  //                     pays the courier from its own Terminal wallet)
+  //   company revenue : BOTH parts go into the SYSTEM wallet's free balance, so the revenue account holds
+  //                     the whole delivery payment and the books always match the real cash. The courier
+  //                     part is later withdrawn from the revenue account to pay the courier company
+  //                     (Terminal); the service fee is the company's own income.
   async settleDelivery(tx: any, o: {
     orderId: string; orderNumber: string; productName: string; customerId: string;
-    courierFee: bigint; companyFee: bigint; key: string;
+    courierFee: bigint; companyFee: bigint; transferFee: bigint; key: string;
   }) {
-    const total = o.courierFee + o.companyFee;
+    const total = o.courierFee + o.companyFee + o.transferFee;
     if (total <= 0n) return;
 
     const rows = (await tx.$queryRaw`
@@ -392,10 +394,33 @@ export class SsEscrowService {
       description: `Delivery: ${o.productName}`,
       metadata: {
         orderId: o.orderId, orderNumber: o.orderNumber, kind: 'DELIVERY',
-        courierFeeKobo: Number(o.courierFee), serviceFeeKobo: Number(o.companyFee),
+        courierFeeKobo: Number(o.courierFee), serviceFeeKobo: Number(o.companyFee), transferFeeKobo: Number(o.transferFee),
       },
     });
 
+    // The courier's price: held in the revenue account until it is paid out to the courier company
+    if (o.courierFee > 0n) {
+      const c = await this.revenueAdd(tx, o.courierFee);
+      await this.recordTx(tx, {
+        userId: SYSTEM_USER_ID, walletId: c.walletId, type: 'WALLET_FUNDING', amount: o.courierFee,
+        before: c.before, after: c.after, reference: `SSDELIVERYCOURIER-${base}`,
+        description: `Courier cost collected for plan ${o.orderNumber}`,
+        metadata: { orderId: o.orderId, orderNumber: o.orderNumber, kind: 'DELIVERY_COURIER', fromUserId: o.customerId },
+      });
+    }
+
+    // The Paystack charge for sending the courier's money out: collected from the customer so the company does not lose it
+    if (o.transferFee > 0n) {
+      const t = await this.revenueAdd(tx, o.transferFee);
+      await this.recordTx(tx, {
+        userId: SYSTEM_USER_ID, walletId: t.walletId, type: 'WALLET_FUNDING', amount: o.transferFee,
+        before: t.before, after: t.after, reference: `SSDELIVERYTRANSFER-${base}`,
+        description: `Transfer charge collected for plan ${o.orderNumber}`,
+        metadata: { orderId: o.orderId, orderNumber: o.orderNumber, kind: 'DELIVERY_TRANSFER_FEE', fromUserId: o.customerId },
+      });
+    }
+
+    // Our service fee: the company's own income
     if (o.companyFee > 0n) {
       const r = await this.revenueAdd(tx, o.companyFee);
       await this.recordTx(tx, {

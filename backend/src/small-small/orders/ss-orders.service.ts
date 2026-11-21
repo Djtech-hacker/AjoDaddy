@@ -20,7 +20,7 @@
 // the goods as dispatched (courier + tracking), and the customer confirms receipt.
 //
 // DELIVERY MONEY (GIG couriers):
-//   - When the customer picks a courier, the delivery price (courier + our fee) is LOCKED
+//   - When the customer picks a courier, the delivery price (courier + our service fee + the Paystack transfer charge) is LOCKED
 //     inside their own wallet. SsOrder.deliveryLockedAmount remembers how much, so only
 //     this order's lock is ever released.
 //   - The lock is released if the customer changes the courier, the address, or picks pickup,
@@ -57,6 +57,17 @@ const GIG_COMPANY_FEE_BPS = BigInt(Number(process.env.GIG_COMPANY_FEE_BPS ?? 200
 // Shown as the "courier" when the customer collects the goods from the vendor
 const PICKUP_LABEL = 'Pickup in person';
 const companyFeeOn = (gigFeeKobo: bigint) => (gigFeeKobo * GIG_COMPANY_FEE_BPS + 5_000n) / 10_000n;
+
+// What Paystack charges to send the courier's money out to the courier company (Nigeria transfer fees,
+// plus the ₦50 government stamp duty on transfers of ₦10,000 and above). The customer pays this as part
+// of the delivery price, so it is never taken out of the company's own pocket.
+//   up to ₦5,000: ₦10 | ₦5,001 to ₦50,000: ₦25 | above ₦50,000: ₦50 | + ₦50 stamp duty from ₦10,000
+const paystackTransferFeeOn = (courierKobo: bigint) => {
+  if (courierKobo <= 0n) return 0n;
+  let fee = courierKobo <= 500_000n ? 1_000n : courierKobo <= 5_000_000n ? 2_500n : 5_000n;
+  if (courierKobo >= 1_000_000n) fee += 5_000n;
+  return fee;
+};
 
 const toKobo  = (naira: number) => BigInt(Math.round(naira * 100));
 const toNaira = (kobo: bigint | number) => Number(kobo) / 100;
@@ -916,14 +927,15 @@ export class SsOrdersService {
   private async deliveryOptions(o: any) {
     const { from, to } = await this.gigAddresses(o);
     const list = await this.gig.quoteOptions(from, to, BigInt(o.totalPrice), o.product?.name);
-    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo) }));
+    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo), transferFeeKobo: paystackTransferFeeOn(x.feeKobo) }));
     return { from, to, options };
   }
 
   private presentOption(x: any) {
     return {
       id: x.id, carrier: x.carrier, service: x.service, eta: x.etaText, simulated: x.simulated,
-      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), total: toNaira(x.feeKobo + x.companyFeeKobo),
+      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), transferFee: toNaira(x.transferFeeKobo),
+      total: toNaira(x.feeKobo + x.companyFeeKobo + x.transferFeeKobo),
     };
   }
 
@@ -973,7 +985,7 @@ export class SsOrdersService {
     const { from, to, options } = await this.myDeliveryOptions(o);
     const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const kind = !eq(from.state, to.state) ? 'Interstate delivery' : eq(from.city, to.city) ? 'Local dispatch rider' : 'Delivery within the state';
-    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo) - (b.feeKobo + b.companyFeeKobo)));
+    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo + a.transferFeeKobo) - (b.feeKobo + b.companyFeeKobo + b.transferFeeKobo)));
     return { kind, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100, options: sorted.map(x => this.presentOption(x)) };
   }
 
@@ -988,7 +1000,7 @@ export class SsOrdersService {
     const { options } = await this.myDeliveryOptions(o);
     const opt = options.find(x => x.id === optionId);
     if (!opt) throw new BadRequestException('That courier is not available any more. Please choose again.');
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
@@ -1029,7 +1041,7 @@ export class SsOrdersService {
     const opt = options.find(x => x.id === o.deliveryOptionId);
     if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
 
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
     if (total > held) {
       throw new BadRequestException('The delivery price went up after the customer chose. Ask them to choose the courier again.');
     }
@@ -1063,7 +1075,7 @@ export class SsOrdersService {
         // The locked money becomes a real charge (the SSD- reference is unique, so this can only ever happen once)
         await this.escrow.settleDelivery(tx, {
           orderId, orderNumber: o.orderNumber, productName: o.product.name, customerId: o.customerId,
-          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, key: 'delivery',
+          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, transferFee: opt.transferFeeKobo, key: 'delivery',
         });
         // If the price came down since the customer chose, the difference goes back to their free balance
         if (held > total) await this.escrow.unlockDeliveryFunds(tx, o.customerId, held - total);
@@ -1072,7 +1084,7 @@ export class SsOrdersService {
           data: {
             fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
             trackingNumber: booking.waybill, dispatchNote: null,
-            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo, deliveryLockedAmount: 0n,
+            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo + opt.transferFeeKobo, deliveryLockedAmount: 0n,
             gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
           },
         });
@@ -1088,7 +1100,7 @@ export class SsOrdersService {
         actorId: vendorId, action: 'SS_ORDER_GIG_BOOKED', entityType: 'SS_ORDER', entityId: orderId,
         metadata: {
           carrier, optionId: opt.id, waybill: booking.waybill, courierFeeKobo: opt.feeKobo.toString(),
-          companyFeeKobo: opt.companyFeeKobo.toString(), simulated: booking.simulated,
+          companyFeeKobo: opt.companyFeeKobo.toString(), transferFeeKobo: opt.transferFeeKobo.toString(), simulated: booking.simulated,
         },
         ipAddress: ip,
       },

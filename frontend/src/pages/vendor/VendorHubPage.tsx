@@ -20,6 +20,8 @@ type VProduct = {
   totalStock: number; reservedCount: number; soldCount: number; availableStock: number
   status: string; isFlagged: boolean
 }
+// What couriers need to collect from the vendor. "missing" lists what is not filled in yet.
+type PickupInfo = { ready: boolean; missing: string[] }
 type VOrder = {
   id: string; orderNumber: string; status: string; customer: string; chatThreadId: string | null
   product: { name: string }; totalPrice: number; amountPaid: number; percentPaid: number; payoutReleased?: boolean
@@ -125,6 +127,7 @@ function ProductsTab() {
   const navigate = useNavigate()
   const { showToast } = useUIStore()
   const [items, setItems] = useState<VProduct[] | null>(null)
+  const [pickup, setPickup] = useState<PickupInfo | null>(null)
   const [error, setError] = useState('')
   const [stockFor, setStockFor] = useState<VProduct | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -132,7 +135,12 @@ function ProductsTab() {
 
   const load = useCallback(() => {
     vendorShopApi.list({ status: showArchived ? 'ARCHIVED' : undefined })
-      .then(res => { setItems((unwrap(res) as any).items as VProduct[]); setError('') })
+      .then(res => {
+        const d: any = unwrap(res)
+        setItems(d.items as VProduct[])
+        setPickup((d.pickup as PickupInfo) ?? null)
+        setError('')
+      })
       .catch(e => setError(errMsg(e, 'Could not load your products.')))
   }, [showArchived])
   useEffect(() => { setItems(null); load() }, [load])
@@ -147,6 +155,14 @@ function ProductsTab() {
 
   return (
     <>
+      {pickup && !pickup.ready && (
+        <div className="ss-note warn" role="alert">
+          <b>Finish your pickup details before you sell.</b> Couriers need them to collect from you, and without them customers cannot get delivery prices. Missing from your profile: {pickup.missing.join(', ')}.
+          <div style={{ marginTop: 8 }}>
+            <button type="button" className="ss-btn ghost sm" onClick={() => navigate('/profile')}>Add them in my profile →</button>
+          </div>
+        </div>
+      )}
       {error && <div className="ss-note err" role="alert">{error}</div>}
       <div className="ss-row" style={{ marginTop: 0 }}>
         <span className="ss-hint">{showArchived ? 'Archived products' : 'Your live and paused products'}</span>

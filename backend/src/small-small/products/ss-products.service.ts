@@ -13,6 +13,9 @@
 // Customers pay any amount from start to finish (no percentage minimum), and the
 // vendor is always paid when the customer finishes paying.
 //
+// PICKUP DETAILS: a vendor cannot post a product, or turn one back on, until a courier knows where to collect
+// from them: a street address, city, state and phone number. Without these no customer could ever get a delivery.
+//
 // Money in the API is NAIRA. The database stores KOBO.
 
 import {
@@ -89,6 +92,34 @@ export class SsProductsService {
     return Math.max(0, p.totalStock - p.reservedCount - p.soldCount);
   }
 
+  // What a courier needs to collect from this vendor: a street address, city, state and phone number.
+  // (The business address and phone from the vendor profile count, and so do the ones on the personal profile.)
+  async pickupReadiness(vendorId: string): Promise<{ ready: boolean; missing: string[] }> {
+    const v: any = await this.prisma.user.findUnique({
+      where: { id: vendorId },
+      select: {
+        phone: true, streetAddress: true, city: true, state: true,
+        vendorProfile: { select: { address: true, phone: true } },
+      },
+    });
+    const missing: string[] = [];
+    if (!String(v?.vendorProfile?.address || v?.streetAddress || '').trim()) missing.push('street address');
+    if (!String(v?.city || '').trim())                                       missing.push('city');
+    if (!String(v?.state || '').trim())                                      missing.push('state');
+    if (!String(v?.vendorProfile?.phone || v?.phone || '').trim())           missing.push('phone number');
+    return { ready: missing.length === 0, missing };
+  }
+
+  // Stops a vendor from selling something no customer could ever get delivered
+  private async assertCanSell(vendorId: string) {
+    const r = await this.pickupReadiness(vendorId);
+    if (!r.ready) {
+      throw new BadRequestException(
+        `Add your pickup details to your profile before you sell, so couriers know where to collect from you. Missing: ${r.missing.join(', ')}.`,
+      );
+    }
+  }
+
   // The checks the schema cannot do for us
   private validateTerms(t: Terms) {
     const freq = t.allowedFrequencies;
@@ -163,6 +194,9 @@ export class SsProductsService {
   }
 
   async createProduct(vendorId: string, dto: CreateProductDto, ip?: string) {
+    // a vendor couriers cannot collect from cannot sell
+    await this.assertCanSell(vendorId);
+
     const terms: Terms = {
       price:                  dto.price,
       allowedFrequencies:     dto.allowedFrequencies,
@@ -312,6 +346,8 @@ export class SsProductsService {
     if (dto.status === 'ACTIVE') {
       if (p.isFlagged) throw new ForbiddenException('Customer support has put this product on hold. Contact support.');
       if (this.available(p) <= 0) throw new BadRequestException('Add stock first, then turn the product on.');
+      // turning a product on puts it in front of customers, so couriers must be able to collect from the vendor
+      await this.assertCanSell(vendorId);
     }
 
     let updated: any;
@@ -336,11 +372,12 @@ export class SsProductsService {
     else where.status = { not: 'ARCHIVED' };
 
     const skip = (Math.max(1, page) - 1) * PAGE_SIZE;
-    const [total, rows] = await Promise.all([
+    const [total, rows, pickup] = await Promise.all([
       this.prisma.ssProduct.count({ where }),
       this.prisma.ssProduct.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: PAGE_SIZE }),
+      this.pickupReadiness(vendorId), // the shop page shows a warning banner when something is missing
     ]);
-    return { total, page: Math.max(1, page), pageSize: PAGE_SIZE, items: rows.map((p: any) => this.presentFull(p)) };
+    return { total, page: Math.max(1, page), pageSize: PAGE_SIZE, items: rows.map((p: any) => this.presentFull(p)), pickup };
   }
 
   async getMine(vendorId: string, productId: string) {

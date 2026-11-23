@@ -73,6 +73,35 @@ export class GigSimulatedClient implements GigClient {
   }
 }
 
+// ── Small helpers for matching a typed city to Terminal's own list of cities ──
+// "Sagamu", "sagamu ", "SAGAMU" and "Ijebu-Ode" / "Ijebu Ode" all compare equal after this
+const norm = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const squash = (s: string) => norm(s).replace(/ /g, '');
+
+// how many single-letter edits turn a into b (small number = very similar spelling)
+const lev = (a: string, b: string) => {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+};
+
+// distance in km between two map points
+const km = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+  const r = (x: number) => (x * Math.PI) / 180;
+  const h = Math.sin(r(bLat - aLat) / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(r(bLng - aLng) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+};
+
 // ── Terminal Africa: one API that carries GIG, DHL, FEZ, Kwik and more ──
 // Docs: https://docs.terminal.africa/tship   Auth: "Authorization: Bearer <secret key>"
 // Base: https://sandbox.terminal.africa/v1 (test keys, sk_test...)  or  https://api.terminal.africa/v1 (live keys, sk_live...)
@@ -81,6 +110,12 @@ export class GigSimulatedClient implements GigClient {
 //   QUOTE  1) POST /shipments/quick   makes a DRAFT shipment from the two addresses and the parcel in ONE call
 //          2) GET  /rates/shipment    returns the courier prices for that draft shipment
 //   BOOK   3) POST /shipments/pickup  books the chosen rate (pickup_option "pickup" = the carrier collects from the vendor's door)
+//
+// CITY MATCHING: Terminal only accepts cities from its own list ("Invalid city, please select one from the list of cities").
+// So before every quote, both addresses are matched to that list automatically (GET /states and GET /cities, kept for 24 hours):
+//   1) same name ignoring capitals, spaces and dashes   2) a very close spelling   3) the nearest listed city to the shared GPS spot
+// If nothing matches, the customer gets a clear message with the closest city names. If Terminal's lists cannot be reached,
+// the address is sent exactly as typed (the old behaviour), so this can never make things worse.
 //
 // The delivery price is taken from OUR Terminal wallet, so that wallet must hold enough money.
 // (We collect the delivery cost from the customer's wallet.)
@@ -98,6 +133,9 @@ class TerminalHttpError extends Error { constructor(public status: number, messa
 
 export class TerminalClient implements GigClient {
   private readonly logger = new Logger('TerminalClient');
+  // Terminal's lists of states and cities, kept for a day so we do not ask for them on every quote
+  private readonly geoCache = new Map<string, { at: number; data: any[] }>();
+  private static readonly GEO_TTL_MS = 24 * 3_600_000;
 
   private get key() { return process.env.TERMINAL_SECRET_KEY || ''; }
   private get base() {
@@ -139,6 +177,98 @@ export class TerminalClient implements GigClient {
       throw new TerminalHttpError(res.status, (detail || 'The courier service could not process this request.').replace(/pickup address/gi, 'pickup location'));
     }
     return json;
+  }
+
+  // ── Automatic city matching ──────────────────────────────────
+
+  // Terminal's list of states or cities (for Nigeria), kept for a day
+  private async geoList(path: '/states' | '/cities', query: Record<string, string>): Promise<any[]> {
+    const k = path + JSON.stringify(query);
+    const hit = this.geoCache.get(k);
+    if (hit && Date.now() - hit.at < TerminalClient.GEO_TTL_MS) return hit.data;
+    const r = await this.call('GET', path, undefined, query);
+    const data: any[] = Array.isArray(r?.data) ? r.data : [];
+    if (data.length > 0) this.geoCache.set(k, { at: Date.now(), data });
+    return data;
+  }
+
+  // "Ogun", "Ogun State" and "ogun" all find Terminal's Ogun. "FCT Abuja" finds the Federal Capital Territory.
+  private async matchState(typed: string): Promise<{ name: string; code: string } | null> {
+    const states = await this.geoList('/states', { country_code: 'NG' });
+    const strip = (s: string) => norm(s).replace(/\bstate\b/g, '').trim();
+    let want = strip(typed);
+    if (/^fct\b|^abuja\b|federal capital/.test(want)) want = 'federal capital territory';
+    const rows = states.map(s => ({ name: String(s.name), code: String(s.isoCode), n: strip(String(s.name)) }));
+    const exact = rows.find(r => r.n === want);
+    if (exact) return { name: exact.name, code: exact.code };
+    const close = rows.map(r => ({ r, d: lev(r.n, want) })).sort((x, y) => x.d - y.d)[0];
+    return close && close.d <= 2 ? { name: close.r.name, code: close.r.code } : null;
+  }
+
+  // Turns what the customer typed into a city and state Terminal accepts
+  private async resolveAddress(a: GigAddress, who: 'pickup' | 'delivery'): Promise<GigAddress> {
+    try {
+      const st = await this.matchState(a.state);
+      if (!st) return a; // cannot read Terminal's state list: send it as typed
+
+      const cities = await this.geoList('/cities', { country_code: 'NG', state_code: st.code });
+      if (cities.length === 0) return { ...a, state: st.name };
+
+      const rows = cities.map(c => ({
+        name: String(c.name), n: norm(String(c.name)), s: squash(String(c.name)),
+        lat: Number(c.latitude), lng: Number(c.longitude),
+      }));
+      const want = norm(a.city);
+      const wantS = squash(a.city);
+
+      // 1) the same name, ignoring capitals, spaces and dashes
+      let hit = rows.find(r => r.n === want) || rows.find(r => r.s === wantS);
+
+      // 2) one listed city that starts the same way ("Ijebu" -> "Ijebu Ode")
+      if (!hit && wantS.length >= 4) {
+        const loose = rows.filter(r => r.s.length >= 4 && (r.s.startsWith(wantS) || wantS.startsWith(r.s)));
+        if (loose.length === 1) hit = loose[0];
+      }
+
+      // 3) a very close spelling ("Sagamu" -> "Shagamu"), only when there is one clear best match
+      const byName = rows.map(r => ({ r, d: lev(r.s, wantS) })).sort((x, y) => x.d - y.d);
+      if (!hit) {
+        const limit = Math.max(1, Math.floor(wantS.length / 5));
+        if (byName[0] && byName[0].d <= limit && (!byName[1] || byName[1].d > byName[0].d)) hit = byName[0].r;
+      }
+
+      // 4) the nearest listed city to the exact spot the customer shared, if it is close enough to be right
+      if (!hit && typeof a.latitude === 'number' && typeof a.longitude === 'number') {
+        const near = rows
+          .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lng))
+          .map(r => ({ r, d: km(a.latitude as number, a.longitude as number, r.lat, r.lng) }))
+          .sort((x, y) => x.d - y.d)[0];
+        if (near && near.d <= 30) hit = near.r;
+      }
+
+      if (hit) {
+        if (hit.name !== a.city.trim() || st.name !== a.state.trim()) {
+          this.logger.log(`Matched ${who} city "${a.city}, ${a.state}" to Terminal's "${hit.name}, ${st.name}"`);
+        }
+        return { ...a, city: hit.name, state: st.name };
+      }
+
+      // nothing matches: tell them which cities Terminal does serve in that state
+      const options = byName.slice(0, 8).map(x => x.r.name).join(', ');
+      if (who === 'pickup') {
+        throw new BadRequestException(
+          `The vendor's pickup city "${a.city}" is not on the courier's list for ${st.name}. The vendor needs to change the city in their profile to a nearby one, such as: ${options}.`,
+        );
+      }
+      throw new BadRequestException(
+        `We could not find "${a.city}" on the courier's list for ${st.name}. Tap "Change address" and use a nearby city, such as: ${options}.`,
+      );
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      // Terminal's lists could not be read: do not block the customer, send the address as typed
+      this.logger.warn(`City matching skipped for ${who} (${a.city}, ${a.state}): ${e?.message}`);
+      return a;
+    }
   }
 
   // Terminal wants international numbers like +2348012345678
@@ -204,9 +334,11 @@ export class TerminalClient implements GigClient {
   // Steps 1 and 2: draft shipment, then prices from every courier that will collect from the vendor's door
   async quoteOptions(from: GigAddress, to: GigAddress, declaredValueKobo: bigint, itemName = 'Goods'): Promise<CarrierOption[]> {
     const route = `${from.city}, ${from.state} -> ${to.city}, ${to.state}`;
+    // match both addresses to Terminal's own city list first, so a spelling difference never blocks a quote
+    const [pickup, dropoff] = await Promise.all([this.resolveAddress(from, 'pickup'), this.resolveAddress(to, 'delivery')]);
     const draft = await this.call('POST', '/shipments/quick', {
-      pickup_address: this.address(from),
-      delivery_address: this.address(to),
+      pickup_address: this.address(pickup),
+      delivery_address: this.address(dropoff),
       parcel: this.parcel(declaredValueKobo, itemName),
       shipment_purpose: 'commercial',
       metadata: { source: 'tareva' },

@@ -793,13 +793,17 @@ export class SsOrdersService {
       if (!o) throw new NotFoundException('Plan not found');
       if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
       if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
-      // A new address means new prices: the money set aside for the old courier is released and they choose again
-      await this.releaseDeliveryLock(tx, o);
+      // Same city and state = same courier prices, so the courier choice (and the money set aside) stays.
+      // A different city or state means new prices: the old amount is released and they choose again.
+      const same = (a?: string | null, b?: string | null) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+      const areaUnchanged = o.deliveryMethod === 'DELIVERY' && !!o.deliveryOptionId
+        && same(o.deliveryCity, dto.city) && same(o.deliveryState, dto.state);
+      if (!areaUnchanged) await this.releaseDeliveryLock(tx, o);
       await tx.ssOrder.update({
         where: { id: orderId },
         data: {
           deliveryMethod: 'DELIVERY',
-          deliveryOptionId: null, deliveryCarrier: null,
+          ...(areaUnchanged ? {} : { deliveryOptionId: null, deliveryCarrier: null }),
           deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
           deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
           deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
@@ -971,11 +975,33 @@ export class SsOrdersService {
   private async myDeliveryOptions(o: any) {
     try { return await this.deliveryOptions(o); }
     catch (e: any) {
-      if (/pickup address/i.test(e?.message || '')) {
+      const msg: string = e?.message || '';
+      const missing = /pickup address/i.test(msg);            // the vendor has not filled in an address, state or phone
+      const badCity = /vendor's pickup city/i.test(msg);       // the vendor's city is not on the courier's list
+      if (missing || badCity) {
+        // the customer is stuck because of the vendor: tell the vendor (at most once a day)
+        await this.nudgeVendorPickupDetails(o).catch(() => undefined);
+      }
+      if (missing) {
         throw new BadRequestException('The vendor has not finished adding their pickup address yet, so the prices are not ready.');
       }
       throw e;
     }
+  }
+
+  // Tells the vendor their pickup details are blocking a customer. Sent at most once every 24 hours per vendor.
+  private async nudgeVendorPickupDetails(o: any) {
+    const title = 'Customers cannot get delivery prices yet';
+    const since = new Date(Date.now() - 24 * 3_600_000);
+    const recent = await this.prisma.notification.findFirst({
+      where: { userId: o.vendorId, title, createdAt: { gte: since } }, select: { id: true },
+    });
+    if (recent) return;
+    await this.sendNotifications([{
+      userId: o.vendorId, type: 'SYSTEM', title,
+      body: `A customer wants "${o.product?.name ?? 'your product'}" delivered, but your pickup details are incomplete or your city is not on the courier's list. Add your street address, city, state and phone number in your profile so couriers can collect from you.`,
+      data: { orderId: o.id }, important: true,
+    }]);
   }
 
   // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.

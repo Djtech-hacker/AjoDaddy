@@ -344,7 +344,7 @@ export default function PlanPage() {
                         {quote.options.some(op => op.simulated) && <p className="ss-hint">Test mode: these prices are only estimates.</p>}
                         {!pickedOpt && <p className="ss-hint">Tap one to choose it. The price is set aside in your wallet, and the vendor can book it once you have chosen.</p>}
                         {pickedOpt && (plan.deliveryHeld ?? 0) > 0 && (
-                          <p className="ss-hint">🔒 {naira(plan.deliveryHeld as number)} is set aside in your wallet for delivery. It is only charged when the vendor books the courier. Changing the courier or your address, or choosing pickup, gives it back.</p>
+                          <p className="ss-hint">🔒 {naira(plan.deliveryHeld as number)} is set aside in your wallet for delivery. It is only charged when the vendor books the courier. Changing the courier, moving to a different city or state, or choosing pickup gives it back.</p>
                         )}
                       </div>
                     ) : quoteError ? (
@@ -394,7 +394,7 @@ export default function PlanPage() {
                       </p>
                     )}
                     {plan.deliveryAddress && (plan.deliveryHeld ?? 0) > 0 && (
-                      <p className="ss-hint">Saving a new address gives back the {naira(plan.deliveryHeld as number)} set aside for delivery. You will choose a courier again.</p>
+                      <p className="ss-hint">If you change the city or state, the {naira(plan.deliveryHeld as number)} set aside for delivery is given back and you choose a courier again. If only the street, name or phone changes, your courier choice stays.</p>
                     )}
                     <div className="ss-row end">
                       {plan.deliveryAddress && <button type="button" className="ss-btn ghost" onClick={() => setAddrOpen(false)}>Cancel</button>}

@@ -99,7 +99,7 @@ export default function VendorHubPage() {
             <div className="ss-head">
               <div>
                 <h2 className="ss-title">Your shop</h2>
-                <p className="ss-sub">When a customer finishes paying, the money lands in your wallet. Withdraw it from the <button type="button" className="ss-linkbtn" onClick={() => navigate('/wallet')}>wallet</button>.</p>
+                <p className="ss-sub">When a customer confirms they received the goods (or after the waiting period), the money lands in your wallet. Withdraw it from the <button type="button" className="ss-linkbtn" onClick={() => navigate('/wallet')}>wallet</button>.</p>
               </div>
               <button type="button" className="ss-btn" onClick={() => navigate('/vendor/products/new')}>+ New product</button>
             </div>
@@ -428,6 +428,13 @@ function ProductOrders({ product, onBack }: { product: VOrderProduct; onBack: ()
                   {o.status === 'COMPLETED' && o.fulfillmentStatus === 'DELIVERED' && (
                     <p className="ss-item-s" style={{ marginTop: 8 }}>Customer confirmed delivery{o.deliveredAt ? ` · ${fmtDate(o.deliveredAt)}` : ''}</p>
                   )}
+                  {o.status === 'COMPLETED' && o.payoutReleased === false && (
+                    <p className="ss-item-s" style={{ marginTop: 8 }}>
+                      {o.fulfillmentStatus === 'PENDING'
+                        ? 'Your money is held safely. Send the goods within 14 days of the customer finishing, or they are refunded.'
+                        : 'Your money is held safely until the customer confirms delivery, or automatically after the waiting period if nobody reports a problem.'}
+                    </p>
+                  )}
                 </div>
                 <div className="ss-item-r" style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                   <Pill tone={statusTone(o.status)}>{statusLabel(o.status)}</Pill>
@@ -747,7 +754,7 @@ function RefundsTab() {
           </div>
           <div className="ss-item-r">
             <p className="ss-item-t" style={{ color: '#166534' }}>+{naira(r.yourShare)}</p>
-            <p className="ss-item-s">{r.reason === 'DEFAULT' ? 'Missed payments' : 'Customer cancelled'}</p>
+            <p className="ss-item-s">{r.reason === 'DEFAULT' ? 'Missed payments' : r.reason === 'VENDOR_NO_SHIP' ? 'Goods not sent in time' : 'Customer cancelled'}</p>
           </div>
         </div>
       ))}

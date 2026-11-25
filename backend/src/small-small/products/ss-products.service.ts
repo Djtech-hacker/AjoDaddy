@@ -93,20 +93,18 @@ export class SsProductsService {
   }
 
   // What a courier needs to collect from this vendor: a street address, city, state and phone number.
-  // (The business address and phone from the vendor profile count, and so do the ones on the personal profile.)
+  // These come from the vendor's PERSONAL Profile page, the one place they can edit. (The business address typed in the
+  // vendor application cannot be changed later, so it is not used for pickups.)
   async pickupReadiness(vendorId: string): Promise<{ ready: boolean; missing: string[] }> {
     const v: any = await this.prisma.user.findUnique({
       where: { id: vendorId },
-      select: {
-        phone: true, streetAddress: true, city: true, state: true,
-        vendorProfile: { select: { address: true, phone: true } },
-      },
+      select: { phone: true, streetAddress: true, city: true, state: true },
     });
     const missing: string[] = [];
-    if (!String(v?.vendorProfile?.address || v?.streetAddress || '').trim()) missing.push('street address');
-    if (!String(v?.city || '').trim())                                       missing.push('city');
-    if (!String(v?.state || '').trim())                                      missing.push('state');
-    if (!String(v?.vendorProfile?.phone || v?.phone || '').trim())           missing.push('phone number');
+    if (!String(v?.streetAddress || '').trim()) missing.push('street address');
+    if (!String(v?.city || '').trim())          missing.push('city');
+    if (!String(v?.state || '').trim())         missing.push('state');
+    if (!String(v?.phone || '').trim())         missing.push('phone number');
     return { ready: missing.length === 0, missing };
   }
 

@@ -6,12 +6,18 @@
 // ADDED (from Figma): email + Verified badge in hero, Personal
 //       Information, Residential Address, Security & Authentication,
 //       Bank & Payment Methods and "Save settings changes".
-// UPDATED (this pass):
+// UPDATED (earlier pass):
 //   - Email, phone and date of birth are READ-ONLY and never sent on save.
 //     Phone comes from registration, DOB comes from the NIN/BVN record.
 //   - DOB is shown as "23 February ••••" (the year is never displayed, and the
 //     backend no longer sends it: it returns dobDisplay = "23 February").
 //   - 2FA is <TwoFactorCard /> (email-code confirmed, own endpoints).
+// UPDATED (this pass):
+//   - Clearing an address field now really clears it: blank address fields ARE sent.
+//     (Before, every blank field was dropped from the request, so the old value stayed on the
+//     server while the page still said "Settings saved".)
+//   - After saving, the profile is read back from the server. If an address field did not
+//     save, the page says so and shows what is really stored, instead of claiming success.
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useForm, UseFormRegister, UseFormSetFocus } from 'react-hook-form'
@@ -223,6 +229,13 @@ type SettingsValues = {
   streetAddress: string; city: string; state: string; postalCode: string; country: string
 }
 
+// The address fields a person can clear. A blank one is SENT (so the server removes it).
+// Names and country are never sent blank.
+const ADDRESS_KEYS = ['streetAddress', 'city', 'state', 'postalCode'] as const
+const ADDRESS_LABEL: Record<string, string> = {
+  streetAddress: 'street address', city: 'city', state: 'state', postalCode: 'postal code',
+}
+
 // Defined at module level so inputs are not remounted on re-render
 function Field({ name, label, register, setFocus, type = 'text', locked = false, wide = false }: {
   name: keyof SettingsValues; label: string; register: UseFormRegister<SettingsValues>; setFocus: UseFormSetFocus<SettingsValues>
@@ -271,10 +284,30 @@ function SettingsForm({ profile, userId, onSaved }: { profile: FullProfile; user
     setStatus(null)
     try {
       // Email, phone and date of birth are never sent: phone comes from
-      // registration, DOB from NIN/BVN. 2FA has its own code-confirmed
-      // endpoints. Empty strings are dropped.
-      const payload = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== '')) as Record<string, string>
+      // registration, DOB from NIN/BVN. 2FA has its own code-confirmed endpoints.
+      // Names and country are never sent blank. The address fields CAN be cleared,
+      // so a blank address field IS sent (as an empty value).
+      const payload: Record<string, string> = {}
+      for (const [k, v] of Object.entries(values)) {
+        const val = String(v ?? '').trim()
+        if ((ADDRESS_KEYS as readonly string[]).includes(k) || val !== '') payload[k] = val
+      }
       await apiFetch(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+
+      // Do not trust "OK": read the profile back, so the page shows what is REALLY saved
+      const fresh = await fetchFullProfile(userId)
+      const notSaved = fresh
+        ? ADDRESS_KEYS.filter(k => String((fresh as any)[k] ?? '').trim() !== (payload[k] ?? ''))
+        : []
+      if (fresh && notSaved.length > 0) {
+        const real: Record<string, string> = {}
+        for (const k of ADDRESS_KEYS) real[k] = String((fresh as any)[k] ?? '')
+        reset({ ...values, ...real })
+        onSaved(real as Partial<FullProfile>)
+        setStatus({ type: 'err', msg: `We could not save your ${notSaved.map(k => ADDRESS_LABEL[k]).join(', ')}. Please try again.` })
+        return
+      }
+
       onSaved(payload as Partial<FullProfile>)
       reset(values)
       const cur = useAuthStore.getState().user

@@ -20,7 +20,7 @@
 // the goods as dispatched (courier + tracking), and the customer confirms receipt.
 //
 // DELIVERY MONEY (GIG couriers):
-//   - When the customer picks a courier, the delivery price (courier + our service fee + the Paystack transfer charge) is LOCKED
+//   - When the customer picks a courier, the delivery price (courier + our fee) is LOCKED
 //     inside their own wallet. SsOrder.deliveryLockedAmount remembers how much, so only
 //     this order's lock is ever released.
 //   - The lock is released if the customer changes the courier, the address, or picks pickup,
@@ -57,17 +57,6 @@ const GIG_COMPANY_FEE_BPS = BigInt(Number(process.env.GIG_COMPANY_FEE_BPS ?? 200
 // Shown as the "courier" when the customer collects the goods from the vendor
 const PICKUP_LABEL = 'Pickup in person';
 const companyFeeOn = (gigFeeKobo: bigint) => (gigFeeKobo * GIG_COMPANY_FEE_BPS + 5_000n) / 10_000n;
-
-// What Paystack charges to send the courier's money out to the courier company (Nigeria transfer fees,
-// plus the ₦50 government stamp duty on transfers of ₦10,000 and above). The customer pays this as part
-// of the delivery price, so it is never taken out of the company's own pocket.
-//   up to ₦5,000: ₦10 | ₦5,001 to ₦50,000: ₦25 | above ₦50,000: ₦50 | + ₦50 stamp duty from ₦10,000
-const paystackTransferFeeOn = (courierKobo: bigint) => {
-  if (courierKobo <= 0n) return 0n;
-  let fee = courierKobo <= 500_000n ? 1_000n : courierKobo <= 5_000_000n ? 2_500n : 5_000n;
-  if (courierKobo >= 1_000_000n) fee += 5_000n;
-  return fee;
-};
 
 const toKobo  = (naira: number) => BigInt(Math.round(naira * 100));
 const toNaira = (kobo: bigint | number) => Number(kobo) / 100;
@@ -793,17 +782,13 @@ export class SsOrdersService {
       if (!o) throw new NotFoundException('Plan not found');
       if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
       if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
-      // Same city and state = same courier prices, so the courier choice (and the money set aside) stays.
-      // A different city or state means new prices: the old amount is released and they choose again.
-      const same = (a?: string | null, b?: string | null) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
-      const areaUnchanged = o.deliveryMethod === 'DELIVERY' && !!o.deliveryOptionId
-        && same(o.deliveryCity, dto.city) && same(o.deliveryState, dto.state);
-      if (!areaUnchanged) await this.releaseDeliveryLock(tx, o);
+      // A new address means new prices: the money set aside for the old courier is released and they choose again
+      await this.releaseDeliveryLock(tx, o);
       await tx.ssOrder.update({
         where: { id: orderId },
         data: {
           deliveryMethod: 'DELIVERY',
-          ...(areaUnchanged ? {} : { deliveryOptionId: null, deliveryCarrier: null }),
+          deliveryOptionId: null, deliveryCarrier: null,
           deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
           deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
           deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
@@ -931,15 +916,14 @@ export class SsOrdersService {
   private async deliveryOptions(o: any) {
     const { from, to } = await this.gigAddresses(o);
     const list = await this.gig.quoteOptions(from, to, BigInt(o.totalPrice), o.product?.name);
-    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo), transferFeeKobo: paystackTransferFeeOn(x.feeKobo) }));
+    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo) }));
     return { from, to, options };
   }
 
   private presentOption(x: any) {
     return {
       id: x.id, carrier: x.carrier, service: x.service, eta: x.etaText, simulated: x.simulated,
-      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), transferFee: toNaira(x.transferFeeKobo),
-      total: toNaira(x.feeKobo + x.companyFeeKobo + x.transferFeeKobo),
+      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), total: toNaira(x.feeKobo + x.companyFeeKobo),
     };
   }
 
@@ -975,33 +959,11 @@ export class SsOrdersService {
   private async myDeliveryOptions(o: any) {
     try { return await this.deliveryOptions(o); }
     catch (e: any) {
-      const msg: string = e?.message || '';
-      const missing = /pickup address/i.test(msg);            // the vendor has not filled in an address, state or phone
-      const badCity = /vendor's pickup city/i.test(msg);       // the vendor's city is not on the courier's list
-      if (missing || badCity) {
-        // the customer is stuck because of the vendor: tell the vendor (at most once a day)
-        await this.nudgeVendorPickupDetails(o).catch(() => undefined);
-      }
-      if (missing) {
+      if (/pickup address/i.test(e?.message || '')) {
         throw new BadRequestException('The vendor has not finished adding their pickup address yet, so the prices are not ready.');
       }
       throw e;
     }
-  }
-
-  // Tells the vendor their pickup details are blocking a customer. Sent at most once every 24 hours per vendor.
-  private async nudgeVendorPickupDetails(o: any) {
-    const title = 'Customers cannot get delivery prices yet';
-    const since = new Date(Date.now() - 24 * 3_600_000);
-    const recent = await this.prisma.notification.findFirst({
-      where: { userId: o.vendorId, title, createdAt: { gte: since } }, select: { id: true },
-    });
-    if (recent) return;
-    await this.sendNotifications([{
-      userId: o.vendorId, type: 'SYSTEM', title,
-      body: `A customer wants "${o.product?.name ?? 'your product'}" delivered, but your pickup details are incomplete or your city is not on the courier's list. Add your street address, city, state and phone number in your profile so couriers can collect from you.`,
-      data: { orderId: o.id }, important: true,
-    }]);
   }
 
   // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.
@@ -1011,7 +973,7 @@ export class SsOrdersService {
     const { from, to, options } = await this.myDeliveryOptions(o);
     const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const kind = !eq(from.state, to.state) ? 'Interstate delivery' : eq(from.city, to.city) ? 'Local dispatch rider' : 'Delivery within the state';
-    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo + a.transferFeeKobo) - (b.feeKobo + b.companyFeeKobo + b.transferFeeKobo)));
+    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo) - (b.feeKobo + b.companyFeeKobo)));
     return { kind, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100, options: sorted.map(x => this.presentOption(x)) };
   }
 
@@ -1026,7 +988,7 @@ export class SsOrdersService {
     const { options } = await this.myDeliveryOptions(o);
     const opt = options.find(x => x.id === optionId);
     if (!opt) throw new BadRequestException('That courier is not available any more. Please choose again.');
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
@@ -1067,7 +1029,7 @@ export class SsOrdersService {
     const opt = options.find(x => x.id === o.deliveryOptionId);
     if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
 
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
     if (total > held) {
       throw new BadRequestException('The delivery price went up after the customer chose. Ask them to choose the courier again.');
     }
@@ -1101,7 +1063,7 @@ export class SsOrdersService {
         // The locked money becomes a real charge (the SSD- reference is unique, so this can only ever happen once)
         await this.escrow.settleDelivery(tx, {
           orderId, orderNumber: o.orderNumber, productName: o.product.name, customerId: o.customerId,
-          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, transferFee: opt.transferFeeKobo, key: 'delivery',
+          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, key: 'delivery',
         });
         // If the price came down since the customer chose, the difference goes back to their free balance
         if (held > total) await this.escrow.unlockDeliveryFunds(tx, o.customerId, held - total);
@@ -1110,7 +1072,7 @@ export class SsOrdersService {
           data: {
             fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
             trackingNumber: booking.waybill, dispatchNote: null,
-            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo + opt.transferFeeKobo, deliveryLockedAmount: 0n,
+            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo, deliveryLockedAmount: 0n,
             gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
           },
         });
@@ -1126,7 +1088,7 @@ export class SsOrdersService {
         actorId: vendorId, action: 'SS_ORDER_GIG_BOOKED', entityType: 'SS_ORDER', entityId: orderId,
         metadata: {
           carrier, optionId: opt.id, waybill: booking.waybill, courierFeeKobo: opt.feeKobo.toString(),
-          companyFeeKobo: opt.companyFeeKobo.toString(), transferFeeKobo: opt.transferFeeKobo.toString(), simulated: booking.simulated,
+          companyFeeKobo: opt.companyFeeKobo.toString(), simulated: booking.simulated,
         },
         ipAddress: ip,
       },

@@ -16,7 +16,7 @@ import { useUIStore } from '@/stores/uiStore'
 
 const PICKUP_LABEL = 'Pickup in person'
 
-type CourierOption = { id: string; carrier: string; service: string; eta: string; simulated: boolean; gigFee: number; companyFee: number; transferFee: number; total: number }
+type CourierOption = { id: string; carrier: string; service: string; eta: string; simulated: boolean; gigFee: number; companyFee: number; total: number }
 type DeliveryQuote = { kind: string; companyFeePercent: number; options: CourierOption[] }
 
 type Installment = { number: number; dueDate: string; amount: number; paidAmount: number; status: string; paidAt: string | null }
@@ -334,7 +334,7 @@ export default function PlanPage() {
                                 onClick={() => chooseOption(op.id)} onKeyDown={e => { if (e.key === 'Enter') chooseOption(op.id) }}>
                                 <div className="ss-item-main">
                                   <p className="ss-item-t">{op.carrier} · {op.service}{on ? ' ✓' : ''}</p>
-                                  <p className="ss-item-s">Arrives: {op.eta} · courier {naira(op.gigFee)} + {quote.companyFeePercent}% service fee {naira(op.companyFee)} + transfer charge {naira(op.transferFee)}</p>
+                                  <p className="ss-item-s">Arrives: {op.eta} · courier {naira(op.gigFee)} + {quote.companyFeePercent}% service fee {naira(op.companyFee)}</p>
                                 </div>
                                 <div className="ss-item-r"><p className="ss-item-t">{naira(op.total)}</p></div>
                               </div>
@@ -344,7 +344,7 @@ export default function PlanPage() {
                         {quote.options.some(op => op.simulated) && <p className="ss-hint">Test mode: these prices are only estimates.</p>}
                         {!pickedOpt && <p className="ss-hint">Tap one to choose it. The price is set aside in your wallet, and the vendor can book it once you have chosen.</p>}
                         {pickedOpt && (plan.deliveryHeld ?? 0) > 0 && (
-                          <p className="ss-hint">🔒 {naira(plan.deliveryHeld as number)} is set aside in your wallet for delivery. It is only charged when the vendor books the courier. Changing the courier, moving to a different city or state, or choosing pickup gives it back.</p>
+                          <p className="ss-hint">🔒 {naira(plan.deliveryHeld as number)} is set aside in your wallet for delivery. It is only charged when the vendor books the courier. Changing the courier or your address, or choosing pickup, gives it back.</p>
                         )}
                       </div>
                     ) : quoteError ? (
@@ -394,7 +394,7 @@ export default function PlanPage() {
                       </p>
                     )}
                     {plan.deliveryAddress && (plan.deliveryHeld ?? 0) > 0 && (
-                      <p className="ss-hint">If you change the city or state, the {naira(plan.deliveryHeld as number)} set aside for delivery is given back and you choose a courier again. If only the street, name or phone changes, your courier choice stays.</p>
+                      <p className="ss-hint">Saving a new address gives back the {naira(plan.deliveryHeld as number)} set aside for delivery. You will choose a courier again.</p>
                     )}
                     <div className="ss-row end">
                       {plan.deliveryAddress && <button type="button" className="ss-btn ghost" onClick={() => setAddrOpen(false)}>Cancel</button>}
@@ -434,7 +434,7 @@ export default function PlanPage() {
                     )}
                     {plan.dispatchNote && <p className="ss-hint">{plan.dispatchNote}</p>}
                     {plan.deliveryTotal != null && (
-                      <p className="ss-hint">Delivery cost: {naira(plan.deliveryTotal)} (courier {naira(plan.deliveryFee ?? 0)} + service and transfer fees {naira(plan.deliveryCompanyFee ?? 0)}), taken from your wallet.</p>
+                      <p className="ss-hint">Delivery cost: {naira(plan.deliveryTotal)} (courier {naira(plan.deliveryFee ?? 0)} + service fee {naira(plan.deliveryCompanyFee ?? 0)}), taken from your wallet.</p>
                     )}
                     {plan.gigSimulated && <p className="ss-hint">Test mode: this is a simulated booking, no real rider was called.</p>}
                     <div className="ss-row end">

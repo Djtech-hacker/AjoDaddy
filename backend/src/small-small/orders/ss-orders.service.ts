@@ -20,7 +20,7 @@
 // the goods as dispatched (courier + tracking), and the customer confirms receipt.
 //
 // DELIVERY MONEY (GIG couriers):
-//   - When the customer picks a courier, the delivery price (courier + our fee) is LOCKED
+//   - When the customer picks a courier, the delivery price (courier + our service fee + the Paystack transfer charge) is LOCKED
 //     inside their own wallet. SsOrder.deliveryLockedAmount remembers how much, so only
 //     this order's lock is ever released.
 //   - The lock is released if the customer changes the courier, the address, or picks pickup,
@@ -37,6 +37,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { SsEscrowService } from '../escrow/ss-escrow.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
+import { MailService } from '../../mail/mail.service';
 import { generateReferenceNumber, looksLikeReferenceNumber } from '../utils/reference-number.util';
 import { buildSchedule, resolveIntervalDays, MIN_FIRST_PAYMENT_KOBO } from '../utils/ss-schedule.util';
 import { refundAllowed, refundBreakdown, payoutDue, percentPaid } from '../utils/ss-money.util';
@@ -58,13 +59,39 @@ const GIG_COMPANY_FEE_BPS = BigInt(Number(process.env.GIG_COMPANY_FEE_BPS ?? 200
 const PICKUP_LABEL = 'Pickup in person';
 const companyFeeOn = (gigFeeKobo: bigint) => (gigFeeKobo * GIG_COMPANY_FEE_BPS + 5_000n) / 10_000n;
 
+// What Paystack charges to send the courier's money out to the courier company (Nigeria transfer fees,
+// plus the ₦50 government stamp duty on transfers of ₦10,000 and above). The customer pays this as part
+// of the delivery price, so it is never taken out of the company's own pocket.
+//   up to ₦5,000: ₦10 | ₦5,001 to ₦50,000: ₦25 | above ₦50,000: ₦50 | + ₦50 stamp duty from ₦10,000
+const paystackTransferFeeOn = (courierKobo: bigint) => {
+  if (courierKobo <= 0n) return 0n;
+  let fee = courierKobo <= 500_000n ? 1_000n : courierKobo <= 5_000_000n ? 2_500n : 5_000n;
+  if (courierKobo >= 1_000_000n) fee += 5_000n;
+  return fee;
+};
+
 const toKobo  = (naira: number) => BigInt(Math.round(naira * 100));
 const toNaira = (kobo: bigint | number) => Number(kobo) / 100;
 const naira   = (kobo: bigint) => '₦' + toNaira(kobo).toLocaleString('en-NG', { maximumFractionDigits: 2 });
 
 export type NotifyEvent = {
   userId: string; type: string; title: string; body: string; data?: any; important?: boolean;
+  email?: boolean; // also send this one by email (the types in EMAIL_TYPES are emailed without this flag)
 };
+
+// These Pay Small Small events are also sent to the person's email, not only shown in the app
+const EMAIL_TYPES = new Set([
+  'SS_PLAN_STARTED', 'SS_PLAN_COMPLETED', 'SS_VENDOR_PAYOUT', 'SS_ORDER_DISPATCHED', 'SS_ORDER_DELIVERED',
+  'SS_REFUND_PROCESSED', 'SS_REFUND_VENDOR', 'SS_ORDER_DEFAULTED', 'SS_PAYMENT_MISSED',
+  'SS_AUTO_DEBIT_FAILED', 'SS_GRACE_STARTED', 'SS_PAYMENT_REMINDER',
+]);
+
+// THE RULES for a plan the customer has finished paying (also shown to vendors when they apply):
+//   - the money stays in escrow until the customer confirms delivery, or the safety timer runs out
+//   - the vendor has SHIP_DEADLINE_DAYS to send the goods or say they are ready for pickup, or the customer is refunded in full
+export const SHIP_DEADLINE_DAYS = 14;
+export const RELEASE_DAYS_DELIVERY = 7;  // days after the courier is booked
+export const RELEASE_DAYS_PICKUP = 3;    // days after "ready for pickup"
 
 export type SsSettings = {
   frozen: boolean;
@@ -86,6 +113,7 @@ export class SsOrdersService {
     private readonly notifications: NotificationsService,
     private readonly escrow:        SsEscrowService,
     private readonly cloudinary:    CloudinaryService,
+    private readonly mail:          MailService,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -139,7 +167,26 @@ export class SsOrdersService {
       } catch (err: any) {
         this.logger.warn(`Notification failed (${e.type}): ${err?.message}`);
       }
+      // the important ones also go to the person's email. This never waits and never throws.
+      if (e.email || EMAIL_TYPES.has(e.type)) {
+        this.emailEvent(e).catch((err: any) => this.logger.warn(`Email failed (${e.type}): ${err?.message}`));
+      }
     }
+  }
+
+  // Emails one event. The link opens the vendor's orders for a vendor, and the plan page for a customer.
+  private async emailEvent(e: NotifyEvent) {
+    const u = await this.prisma.user.findUnique({ where: { id: e.userId }, select: { email: true, firstName: true } });
+    if (!u?.email) return;
+    const orderId: string | undefined = e.data?.orderId;
+    let path = '/';
+    if (orderId) {
+      const o = await this.prisma.ssOrder.findUnique({ where: { id: orderId }, select: { vendorId: true } });
+      path = o?.vendorId === e.userId ? '/vendor?tab=orders' : `/plans/${orderId}`;
+    }
+    await this.mail.sendSmallSmallUpdate(
+      u.email, u.firstName || '', e.title, e.body, path, path.startsWith('/vendor') ? 'Open my orders' : 'Open my plan',
+    );
   }
 
   private async resolveProductId(idOrReference: string): Promise<string> {
@@ -223,6 +270,8 @@ export class SsOrdersService {
       out.refundThresholdPercent = o.refundThresholdPercent;
       out.refund = this.refundStatus(o);
       out.chatThreadId = o.chatThread?.id ?? null;
+      // true while the vendor's money is still held by TAREVA (it is paid when the customer confirms delivery)
+      out.payoutHeld = o.status === 'COMPLETED' && !o.payoutReleased;
       // money set aside in the customer's wallet for delivery (charged when the vendor books the courier)
       out.deliveryHeld = o.deliveryLockedAmount ? toNaira(BigInt(o.deliveryLockedAmount)) : 0;
       // the vendor's pickup address is only shown once they have said the goods are ready for pickup
@@ -238,6 +287,7 @@ export class SsOrdersService {
       if (o.refund) {
         out.refundDetails = {
           paid: toNaira(o.refund.paidAmount), fee: toNaira(o.refund.feeTotal), refunded: toNaira(o.refund.customerRefund),
+          reason: o.refund.reason,
         };
       }
     } else {
@@ -515,12 +565,14 @@ export class SsOrdersService {
     }
 
     // 5) Is the vendor due their money now?
-    //    (If the plan is finished, the vendor is ALWAYS paid, so money can never be left in escrow)
+    //    The vendor is NOT paid when the last installment lands. When the plan is finished the money stays in escrow and is
+    //    released when the customer confirms they received the goods, or when the safety timer runs out
+    //    (see releaseHeldPayoutInTx). Only old "pay at a percent" products still pay out early.
     const completed = newPaid >= order.totalPrice;
-    const due = payoutDue({
+    const due = order.payoutMode === 'AT_PERCENT' && !order.payoutReleased && payoutDue({
       payoutMode: order.payoutMode, payoutPercent: order.payoutPercent, payoutReleased: order.payoutReleased,
       amountPaid: newPaid, totalPrice: order.totalPrice,
-    }) || (completed && !order.payoutReleased);
+    });
 
     let payoutNowNet = 0n;
     let payoutNow = false;
@@ -571,11 +623,18 @@ export class SsOrdersService {
         body: `${naira(directNet)} received for "${order.product.name}".`,
         data: { orderId: order.id }, important: true,
       });
+    } else if (completed && !order.payoutReleased) {
+      // the money is held: tell the vendor to send the goods, and exactly when they get paid
+      events.push({
+        userId: order.vendorId, type: 'SS_PLAN_COMPLETED', title: 'Customer finished paying: send the goods',
+        body: `${naira(newEscrow)} for "${order.product.name}" is now held safely by TAREVA. Send the goods (or mark them ready for pickup) within ${SHIP_DEADLINE_DAYS} days, or the customer is refunded in full. The money is added to your wallet when the customer confirms they received the goods, or automatically ${RELEASE_DAYS_DELIVERY} days after you send them (${RELEASE_DAYS_PICKUP} days for pickup) if there is no report.`,
+        data: { orderId: order.id }, important: true,
+      });
     }
     if (completed) {
       events.push({
         userId: p.payerId, type: 'SS_PLAN_COMPLETED', title: 'Plan completed 🎉',
-        body: `You finished paying for "${order.product.name}". The vendor will send your goods.`,
+        body: `You finished paying for "${order.product.name}". Your money is held safely by TAREVA. The vendor sends your goods, and the money is only passed to them when you confirm you received them.`,
         data: { orderId: order.id }, important: true,
       });
     }
@@ -687,6 +746,95 @@ export class SsOrdersService {
   }
 
   // ══════════════════════════════════════════════════════════
+  // HELD PAYOUT: pay the vendor after delivery, or refund the customer when nothing was sent
+  // ══════════════════════════════════════════════════════════
+
+  // Moves the money held in escrow for a finished plan to the vendor's wallet.
+  // Used when the customer confirms delivery, by the daily safety timer, and (later) by customer care.
+  // Must be called inside a transaction. Returns false when there was nothing to release (already paid, not finished).
+  async releaseHeldPayoutInTx(
+    tx: any, orderId: string, why: 'CUSTOMER_CONFIRMED' | 'TIMER' | 'STAFF', cfg: SsSettings, events: NotifyEvent[],
+  ): Promise<boolean> {
+    await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+    const o = await tx.ssOrder.findUnique({ where: { id: orderId }, include: { product: { select: { name: true } } } });
+    if (!o || o.status !== 'COMPLETED' || o.payoutReleased) return false;
+    const held: bigint = BigInt(o.escrowBalance);
+    if (held <= 0n) return false;
+
+    const r = await this.escrow.releaseEscrowToVendor(tx, {
+      orderId: o.id, orderNumber: o.orderNumber, productName: o.product.name,
+      vendorId: o.vendorId, amount: held, saleFeeBps: cfg.saleFeeBps,
+    });
+    await tx.ssOrder.update({
+      where: { id: o.id },
+      data: { payoutReleased: true, payoutReleasedAt: new Date(), escrowBalance: 0n },
+    });
+
+    const reason =
+      why === 'CUSTOMER_CONFIRMED' ? `The customer confirmed they received "${o.product.name}".`
+      : why === 'TIMER' ? `The customer did not report a problem after you sent "${o.product.name}".`
+      : `Customer care released the payment for "${o.product.name}".`;
+    events.push({
+      userId: o.vendorId, type: 'SS_VENDOR_PAYOUT', title: 'You have been paid',
+      body: `${reason} ${naira(r.net)} was added to your wallet.`,
+      data: { orderId: o.id }, important: true,
+    });
+    return true;
+  }
+
+  // The customer finished paying but the vendor never sent the goods in time: everything goes back to the customer.
+  // No cancellation fee (it is not the customer's fault). Used by the daily checks. Must be called inside a transaction.
+  async refundUnshippedInTx(tx: any, orderId: string, now: Date, events: NotifyEvent[]): Promise<boolean> {
+    await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+    const o = await tx.ssOrder.findUnique({ where: { id: orderId }, include: { product: { select: { name: true } } } });
+    if (!o || o.status !== 'COMPLETED' || o.payoutReleased || o.fulfillmentStatus !== 'PENDING') return false;
+
+    const paid: bigint = BigInt(o.escrowBalance);
+    // the money held must equal what the customer paid. If not, do nothing and alert.
+    if (paid <= 0n || paid !== BigInt(o.amountPaid)) {
+      this.logger.error(`ACCOUNTING MISMATCH on ${o.orderNumber}: paid ${o.amountPaid} but escrow ${o.escrowBalance}. Not refunded automatically.`);
+      return false;
+    }
+
+    await this.releaseDeliveryLock(tx, o);
+    await this.escrow.refundFromEscrow(tx, {
+      orderId: o.id, orderNumber: o.orderNumber, productName: o.product.name,
+      customerId: o.customerId, vendorId: o.vendorId,
+      breakdown: { paid, feeTotal: 0n, vendorShare: 0n, companyShare: 0n, customerRefund: paid } as any,
+    });
+    await tx.ssRefund.create({
+      data: {
+        orderId: o.id, customerId: o.customerId, vendorId: o.vendorId, reason: 'VENDOR_NO_SHIP',
+        paidAmount: paid, paidPercentAtRequest: 100,
+        feeTotal: 0n, vendorShare: 0n, companyShare: 0n, customerRefund: paid,
+      },
+    });
+    await tx.ssOrder.update({
+      where: { id: o.id },
+      data: { status: 'REFUNDED', refundedAt: now, escrowBalance: 0n, deliveryOptionId: null, deliveryCarrier: null },
+    });
+
+    // the unit goes back on the shelf
+    await tx.ssProduct.updateMany({ where: { id: o.productId, soldCount: { gte: 1 } }, data: { soldCount: { decrement: 1 } } });
+    const prod = await tx.ssProduct.findUnique({ where: { id: o.productId } });
+    if (prod && prod.status === 'OUT_OF_STOCK' && !prod.isFlagged && prod.totalStock - prod.reservedCount - prod.soldCount > 0) {
+      await tx.ssProduct.update({ where: { id: o.productId }, data: { status: 'ACTIVE' } });
+    }
+
+    events.push({
+      userId: o.customerId, type: 'SS_REFUND_PROCESSED', title: 'Full refund: the goods were not sent',
+      body: `${naira(paid)} was returned to your wallet for "${o.product.name}" because the vendor did not send your goods within ${SHIP_DEADLINE_DAYS} days. No fee was taken.`,
+      data: { orderId: o.id }, important: true,
+    });
+    events.push({
+      userId: o.vendorId, type: 'SS_REFUND_VENDOR', title: 'Order cancelled: goods not sent',
+      body: `"${o.product.name}" was not sent within ${SHIP_DEADLINE_DAYS} days after the customer finished paying, so the customer was refunded in full and the unit is back in stock.`,
+      data: { orderId: o.id }, important: true,
+    });
+    return true;
+  }
+
+  // ══════════════════════════════════════════════════════════
   // SETTINGS ON A PLAN
   // ══════════════════════════════════════════════════════════
 
@@ -752,21 +900,36 @@ export class SsOrdersService {
     return { message: first ? 'Marked as dispatched. The customer has been told.' : 'Delivery details updated.' };
   }
 
+  // The customer says the goods arrived. This is also the moment the vendor is paid: the money held in escrow
+  // goes to their wallet, in the SAME transaction, so the two can never happen without each other.
   async confirmDelivered(customerId: string, orderId: string) {
-    const o: any = await this.prisma.ssOrder.findFirst({
-      where: { id: orderId, customerId },
-      include: { product: { select: { name: true } } },
-    });
-    if (!o) throw new NotFoundException('Plan not found');
-    if (o.status !== 'COMPLETED') throw new BadRequestException('You can confirm once you have finished paying.');
-    if (o.fulfillmentStatus === 'DELIVERED') return this.getMyOrder(customerId, orderId);
-    if (o.fulfillmentStatus !== 'DISPATCHED') throw new BadRequestException('The vendor has not marked this order as dispatched yet.');
+    const cfg = await this.settings();
+    if (cfg.frozen) throw new ServiceUnavailableException('Pay Small Small is temporarily unavailable. Please try again later.');
 
-    await this.prisma.ssOrder.update({ where: { id: orderId }, data: { fulfillmentStatus: 'DELIVERED', deliveredAt: new Date() } });
-    await this.sendNotifications([{
-      userId: o.vendorId, type: 'SS_ORDER_DELIVERED', title: 'Customer received the goods',
-      body: `The customer confirmed they received "${o.product.name}".`, data: { orderId }, important: false,
-    }]);
+    const events: NotifyEvent[] = [];
+    await this.prisma.$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
+      const o = await tx.ssOrder.findFirst({
+        where: { id: orderId, customerId },
+        include: { product: { select: { name: true } } },
+      });
+      if (!o) throw new NotFoundException('Plan not found');
+      if (o.status !== 'COMPLETED') throw new BadRequestException('You can confirm once you have finished paying.');
+      if (o.fulfillmentStatus === 'DELIVERED') return; // already confirmed: nothing more to do
+      if (o.fulfillmentStatus !== 'DISPATCHED') throw new BadRequestException('The vendor has not marked this order as dispatched yet.');
+
+      await tx.ssOrder.update({ where: { id: orderId }, data: { fulfillmentStatus: 'DELIVERED', deliveredAt: new Date() } });
+      const paid = await this.releaseHeldPayoutInTx(tx, orderId, 'CUSTOMER_CONFIRMED', cfg, events);
+      if (!paid) {
+        // old orders were paid out earlier: just tell the vendor
+        events.push({
+          userId: o.vendorId, type: 'SS_ORDER_DELIVERED', title: 'Customer received the goods',
+          body: `The customer confirmed they received "${o.product.name}".`, data: { orderId }, important: false,
+        });
+      }
+    }, TX_OPTIONS);
+
+    await this.sendNotifications(events);
     return this.getMyOrder(customerId, orderId);
   }
 
@@ -782,13 +945,17 @@ export class SsOrdersService {
       if (!o) throw new NotFoundException('Plan not found');
       if (o.status !== 'ACTIVE' && o.status !== 'COMPLETED') throw new BadRequestException('This plan is no longer active.');
       if (o.fulfillmentStatus !== 'PENDING' || o.gigStatus) throw new BadRequestException('Your goods are already on the way, so the address cannot change.');
-      // A new address means new prices: the money set aside for the old courier is released and they choose again
-      await this.releaseDeliveryLock(tx, o);
+      // Same city and state = same courier prices, so the courier choice (and the money set aside) stays.
+      // A different city or state means new prices: the old amount is released and they choose again.
+      const same = (a?: string | null, b?: string | null) => (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+      const areaUnchanged = o.deliveryMethod === 'DELIVERY' && !!o.deliveryOptionId
+        && same(o.deliveryCity, dto.city) && same(o.deliveryState, dto.state);
+      if (!areaUnchanged) await this.releaseDeliveryLock(tx, o);
       await tx.ssOrder.update({
         where: { id: orderId },
         data: {
           deliveryMethod: 'DELIVERY',
-          deliveryOptionId: null, deliveryCarrier: null,
+          ...(areaUnchanged ? {} : { deliveryOptionId: null, deliveryCarrier: null }),
           deliveryName: dto.name.trim(), deliveryPhone: dto.phone.trim(), deliveryAddress: dto.address.trim(),
           deliveryCity: dto.city.trim(), deliveryState: dto.state.trim(),
           deliveryLat: typeof dto.latitude === 'number' ? dto.latitude : null,
@@ -891,10 +1058,11 @@ export class SsOrdersService {
         vendorProfile: { select: { businessName: true, phone: true, address: true } },
       },
     });
-    const pickupAddress = v?.vendorProfile?.address || v?.streetAddress;
-    const pickupPhone = v?.vendorProfile?.phone || v?.phone;
-    if (!pickupAddress || !v?.state || !pickupPhone) {
-      throw new BadRequestException('Add your pickup address, state and phone number to your profile first, so the GIG rider knows where to collect.');
+    // the vendor's personal Profile page is the one place they can edit, so couriers collect from there
+    const pickupAddress = v?.streetAddress;
+    const pickupPhone = v?.phone;
+    if (!pickupAddress || !v?.city || !v?.state || !pickupPhone) {
+      throw new BadRequestException('Add your pickup address (street, city and state) and phone number to your profile first, so the courier knows where to collect.');
     }
     const cu: any = await this.prisma.user.findUnique({ where: { id: o.customerId }, select: { email: true } });
     return {
@@ -916,14 +1084,15 @@ export class SsOrdersService {
   private async deliveryOptions(o: any) {
     const { from, to } = await this.gigAddresses(o);
     const list = await this.gig.quoteOptions(from, to, BigInt(o.totalPrice), o.product?.name);
-    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo) }));
+    const options = list.map(x => ({ ...x, companyFeeKobo: companyFeeOn(x.feeKobo), transferFeeKobo: paystackTransferFeeOn(x.feeKobo) }));
     return { from, to, options };
   }
 
   private presentOption(x: any) {
     return {
       id: x.id, carrier: x.carrier, service: x.service, eta: x.etaText, simulated: x.simulated,
-      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), total: toNaira(x.feeKobo + x.companyFeeKobo),
+      gigFee: toNaira(x.feeKobo), companyFee: toNaira(x.companyFeeKobo), transferFee: toNaira(x.transferFeeKobo),
+      total: toNaira(x.feeKobo + x.companyFeeKobo + x.transferFeeKobo),
     };
   }
 
@@ -959,11 +1128,33 @@ export class SsOrdersService {
   private async myDeliveryOptions(o: any) {
     try { return await this.deliveryOptions(o); }
     catch (e: any) {
-      if (/pickup address/i.test(e?.message || '')) {
+      const msg: string = e?.message || '';
+      const missing = /pickup address/i.test(msg);            // the vendor has not filled in an address, state or phone
+      const badCity = /vendor's pickup city/i.test(msg);       // the vendor's city is not on the courier's list
+      if (missing || badCity) {
+        // the customer is stuck because of the vendor: tell the vendor (at most once a day)
+        await this.nudgeVendorPickupDetails(o).catch(() => undefined);
+      }
+      if (missing) {
         throw new BadRequestException('The vendor has not finished adding their pickup address yet, so the prices are not ready.');
       }
       throw e;
     }
+  }
+
+  // Tells the vendor their pickup details are blocking a customer. Sent at most once every 24 hours per vendor.
+  private async nudgeVendorPickupDetails(o: any) {
+    const title = 'Customers cannot get delivery prices yet';
+    const since = new Date(Date.now() - 24 * 3_600_000);
+    const recent = await this.prisma.notification.findFirst({
+      where: { userId: o.vendorId, title, createdAt: { gte: since } }, select: { id: true },
+    });
+    if (recent) return;
+    await this.sendNotifications([{
+      userId: o.vendorId, type: 'SYSTEM', title,
+      body: `A customer wants "${o.product?.name ?? 'your product'}" delivered, but your pickup details are incomplete or your city is not on the courier's list. Add your street address, city, state and phone number in your profile so couriers can collect from you.`,
+      data: { orderId: o.id }, important: true, email: true,
+    }]);
   }
 
   // What the CUSTOMER sees on their plan page: the couriers to choose from, with prices and arrival times.
@@ -973,7 +1164,7 @@ export class SsOrdersService {
     const { from, to, options } = await this.myDeliveryOptions(o);
     const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const kind = !eq(from.state, to.state) ? 'Interstate delivery' : eq(from.city, to.city) ? 'Local dispatch rider' : 'Delivery within the state';
-    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo) - (b.feeKobo + b.companyFeeKobo)));
+    const sorted = options.slice().sort((a, b) => Number((a.feeKobo + a.companyFeeKobo + a.transferFeeKobo) - (b.feeKobo + b.companyFeeKobo + b.transferFeeKobo)));
     return { kind, companyFeePercent: Number(GIG_COMPANY_FEE_BPS) / 100, options: sorted.map(x => this.presentOption(x)) };
   }
 
@@ -988,7 +1179,7 @@ export class SsOrdersService {
     const { options } = await this.myDeliveryOptions(o);
     const opt = options.find(x => x.id === optionId);
     if (!opt) throw new BadRequestException('That courier is not available any more. Please choose again.');
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
 
     await this.prisma.$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT id FROM ss_orders WHERE id = ${orderId} FOR UPDATE`;
@@ -1029,7 +1220,7 @@ export class SsOrdersService {
     const opt = options.find(x => x.id === o.deliveryOptionId);
     if (!opt) throw new BadRequestException('The courier the customer chose is not available any more. Ask them to choose again.');
 
-    const total: bigint = opt.feeKobo + opt.companyFeeKobo;
+    const total: bigint = opt.feeKobo + opt.companyFeeKobo + opt.transferFeeKobo;
     if (total > held) {
       throw new BadRequestException('The delivery price went up after the customer chose. Ask them to choose the courier again.');
     }
@@ -1063,7 +1254,7 @@ export class SsOrdersService {
         // The locked money becomes a real charge (the SSD- reference is unique, so this can only ever happen once)
         await this.escrow.settleDelivery(tx, {
           orderId, orderNumber: o.orderNumber, productName: o.product.name, customerId: o.customerId,
-          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, key: 'delivery',
+          courierFee: opt.feeKobo, companyFee: opt.companyFeeKobo, transferFee: opt.transferFeeKobo, key: 'delivery',
         });
         // If the price came down since the customer chose, the difference goes back to their free balance
         if (held > total) await this.escrow.unlockDeliveryFunds(tx, o.customerId, held - total);
@@ -1072,7 +1263,7 @@ export class SsOrdersService {
           data: {
             fulfillmentStatus: 'DISPATCHED', dispatchedAt: new Date(), courier: carrier,
             trackingNumber: booking.waybill, dispatchNote: null,
-            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo, deliveryLockedAmount: 0n,
+            deliveryFee: opt.feeKobo, deliveryCompanyFee: opt.companyFeeKobo + opt.transferFeeKobo, deliveryLockedAmount: 0n,
             gigWaybill: booking.waybill, gigStatus: booking.status, gigSimulated: booking.simulated,
           },
         });
@@ -1088,7 +1279,7 @@ export class SsOrdersService {
         actorId: vendorId, action: 'SS_ORDER_GIG_BOOKED', entityType: 'SS_ORDER', entityId: orderId,
         metadata: {
           carrier, optionId: opt.id, waybill: booking.waybill, courierFeeKobo: opt.feeKobo.toString(),
-          companyFeeKobo: opt.companyFeeKobo.toString(), simulated: booking.simulated,
+          companyFeeKobo: opt.companyFeeKobo.toString(), transferFeeKobo: opt.transferFeeKobo.toString(), simulated: booking.simulated,
         },
         ipAddress: ip,
       },

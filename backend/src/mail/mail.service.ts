@@ -6,12 +6,15 @@
 //
 // Public methods: sendPasswordReset / sendEmailVerification /
 // sendPinChangeOtp / sendTwoFactorOtp / sendBankAccountAlert /
-// sendNewChatMessage.
+// sendNewChatMessage / sendSmallSmallUpdate.
 // All return true/false (they never throw).
 //
-// NEW (this pass): sendNewChatMessage(to, firstName, senderName,
-// productName, text, path) — "you have a new message" email for the
-// Small Small customer/vendor chat.
+// sendNewChatMessage(to, firstName, senderName, productName, text, path):
+// "you have a new message" email for the Small Small customer/vendor chat.
+//
+// NEW (this pass): sendSmallSmallUpdate(to, firstName, title, message, path, buttonLabel):
+// one simple email for Pay Small Small events (a customer finished paying, you have been paid,
+// goods sent, refund, and so on). The app calls it for the important order events.
 //
 // Node's "fetch failed" hides the real reason in err.cause. We log it
 // (ENOTFOUND = DNS, ETIMEDOUT / UND_ERR_CONNECT_TIMEOUT = blocked or slow
@@ -387,5 +390,50 @@ export class MailService {
       html,
       `CHAT LINK: ${chatUrl}`,
     );
+  }
+
+  // An update about a Pay Small Small plan or order: a customer finished paying, you have been paid,
+  // the goods were sent, a refund, and so on.
+  //   title       = the headline (also used in the subject)
+  //   message     = the full text (made HTML-safe here)
+  //   path        = the app page the button opens, e.g. '/plans/123' or '/vendor?tab=orders'
+  //   buttonLabel = the text on the button
+  async sendSmallSmallUpdate(
+    to: string,
+    firstName: string,
+    title: string,
+    message: string,
+    path: string,
+    buttonLabel = 'Open TAREVA',
+  ): Promise<boolean> {
+    const safeTitle = this.escapeHtml(title || 'An update on your order');
+    const safeMessage = this.escapeHtml(String(message ?? '').trim()).replace(/\n/g, '<br>');
+    const safeButton = this.escapeHtml(buttonLabel || 'Open TAREVA');
+
+    const cleanPath = path ? (path.startsWith('/') ? path : `/${path}`) : '/';
+    const url = `${this.frontendUrl}${cleanPath}`;
+
+    const html = this.emailWrapper(`
+      <h2 style="font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 8px;">${safeTitle}</h2>
+      <p style="color: #666; font-size: 14px; line-height: 1.6;">
+        Hi ${this.escapeHtml(firstName) || 'there'},<br><br>
+        ${safeMessage}
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${url}"
+           style="display: inline-block; background: #1B5C3C; color: #fff; font-size: 14px; font-weight: 600;
+                  padding: 12px 32px; border-radius: 8px; text-decoration: none;">
+          ${safeButton}
+        </a>
+      </div>
+
+      <p style="color: #999; font-size: 12px; line-height: 1.5;">
+        If the button doesn't work, copy and paste this URL:<br>
+        <a href="${url}" style="color: #1B5C3C; word-break: break-all;">${url}</a>
+      </p>
+    `);
+
+    return this.send(to, `${this.appName}: ${title || 'an update on your order'}`, html, `LINK: ${url}`);
   }
 }

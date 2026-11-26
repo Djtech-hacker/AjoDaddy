@@ -5,8 +5,10 @@
 //   - identity not verified ....... sends them to /verify-identity first
 //   - application under review .... a waiting card
 //   - recently rejected ........... the reason and the date they can apply again
-//   - otherwise ................... the form: business details, then documents, then submit
+//   - otherwise ................... the vendor rules, then the form: business details, documents, then submit
 // (also used when we ask for more information: the note is shown and they fix and resubmit)
+//
+// The VENDOR RULES card is shown before anything else in the form, and the vendor must agree to it at the end.
 //
 // Styled like KycVerificationPage (same cards, tick tiles and green accents), inside DashboardLayout.
 
@@ -64,6 +66,35 @@ const DOC_RULES: Record<DocType, { label: string; hint: string; min: number; max
   SALES_PROOF:  { label: 'Successful sales',    hint: 'Screenshots of at least 2 real sales or happy customers (chats, receipts, reviews).',   min: 2, max: 6 },
 }
 const DOC_ORDER: DocType[] = ['CAC', 'SOCIAL_PROOF', 'SALES_PROOF']
+
+// THE VENDOR RULES. Keep these in step with the app: the timings match the Pay Small Small daily checks
+// (14 days to send, 7 days after courier booking or 3 days after "ready for pickup" to auto-release).
+const VENDOR_RULES: { title: string; text: string }[] = [
+  {
+    title: 'You are paid when the customer confirms delivery',
+    text: 'When a customer finishes paying, the money is held safely by TAREVA. It is not sent to your wallet yet. It is added to your wallet when the customer confirms they received the goods, or automatically 7 days after you send them (3 days after you mark them ready for pickup), as long as nobody has reported a problem.',
+  },
+  {
+    title: 'Send the goods within 14 days',
+    text: 'After a customer finishes paying, you have 14 days to send the goods or mark them ready for pickup. If you do not, the customer is refunded in full and the order is cancelled. We remind you before the deadline.',
+  },
+  {
+    title: 'Keep your pickup details up to date',
+    text: 'Couriers collect from the street address, city, state and phone number on your Profile page. You cannot post or turn on a product until these are filled in, and customers cannot get delivery prices without them.',
+  },
+  {
+    title: 'Delivery is paid by the customer',
+    text: 'Customers choose a courier and pay the delivery price from their own wallet. You book the courier in one tap. Delivery is never taken from your money.',
+  },
+  {
+    title: 'Customers can cancel while they have paid little',
+    text: 'If a customer has paid less than your refund limit, they can cancel and get a refund. A 10% fee applies: 3% comes to you and 7% goes to TAREVA. Once they pass your limit, the plan cannot be cancelled.',
+  },
+  {
+    title: 'Reports and fair play',
+    text: 'Customers can report a vendor. An open report pauses your payout until our team decides. Fake products, scams, asking customers to pay or chat outside TAREVA, or abuse can lead to your account being suspended.',
+  },
+]
 
 const MAX_BYTES = 5 * 1024 * 1024
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
@@ -308,12 +339,15 @@ export default function BecomeVendorPage() {
             )}
 
             {mode === 'KYC' && (
-              <motion.div key="kyc" className="bv-card" {...fade(0)}>
-                <p className="bv-h">Verify your identity first</p>
-                <p className="bv-p">To protect customers, vendors must finish identity verification (NIN, BVN and a face scan) before applying.</p>
-                <div className="bv-row">
-                  <span className="bv-lock">It takes about two minutes.</span>
-                  <button type="button" className="bv-btn" onClick={() => navigate('/verify-identity')}>Verify my identity →</button>
+              <motion.div key="kyc" className="bv-stack" {...fade(0)}>
+                <RulesCard />
+                <div className="bv-card">
+                  <p className="bv-h">Verify your identity first</p>
+                  <p className="bv-p">To protect customers, vendors must finish identity verification (NIN, BVN and a face scan) before applying.</p>
+                  <div className="bv-row">
+                    <span className="bv-lock">It takes about two minutes.</span>
+                    <button type="button" className="bv-btn" onClick={() => navigate('/verify-identity')}>Verify my identity →</button>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -341,6 +375,8 @@ export default function BecomeVendorPage() {
 
             {mode === 'FORM' && (
               <motion.div key="form" className="bv-stack" {...fade(0)}>
+                <RulesCard />
+
                 <div className="bv-grid">
                   {tiles.map(t => (
                     <div key={t.num} className={`bv-tile ${t.cur ? 'cur' : ''} ${t.ok ? 'ok' : ''}`}>
@@ -393,6 +429,7 @@ export default function BecomeVendorPage() {
                   <div className="bv-field">
                     <label htmlFor="bv-addr">Business address (optional)</label>
                     <input id="bv-addr" value={address} onChange={e => setAddress(e.target.value)} maxLength={300} placeholder="Shop or office address" />
+                    <p className="bv-hint">Couriers collect from the address on your Profile page, so fill in your street address, city, state and phone number there too.</p>
                   </div>
 
                   <div className="bv-field">
@@ -503,8 +540,10 @@ export default function BecomeVendorPage() {
                     <label className="bv-accept">
                       <input type="checkbox" checked={accept} onChange={e => setAccept(e.target.checked)} />
                       <span>
-                        I agree to the vendor terms. Customers can cancel and get a refund while they have paid less than my refund
-                        limit (a 10% fee applies: 3% to me, 7% to TAREVA), and I must deliver the goods once I am paid.
+                        I have read and agree to the vendor rules above. I understand that I am paid when the customer confirms delivery
+                        (or automatically after the waiting period), that I must send the goods within 14 days or the customer is refunded,
+                        and that customers can cancel and get a refund while they have paid less than my refund limit (a 10% fee applies:
+                        3% to me, 7% to TAREVA).
                       </span>
                     </label>
 
@@ -522,6 +561,27 @@ export default function BecomeVendorPage() {
         )}
       </div>
     </DashboardLayout>
+  )
+}
+
+// The rules every vendor must read before applying. Shown above the form.
+function RulesCard() {
+  return (
+    <div className="bv-card">
+      <p className="bv-h">Vendor rules: please read before you apply</p>
+      <p className="bv-p">Selling on Pay Small Small protects customers and vendors. By applying you agree to these rules.</p>
+      <ol className="bv-rules">
+        {VENDOR_RULES.map((r, i) => (
+          <li key={r.title}>
+            <span className="bv-rule-n">{i + 1}</span>
+            <div>
+              <p className="bv-rule-t">{r.title}</p>
+              <p className="bv-rule-p">{r.text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
@@ -552,6 +612,12 @@ const CSS = `
   .bv-h { font-size: 13px; font-weight: 700; color: #111827; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid #F3F4F6; }
   .bv-h.plain { border: none; margin: 0; padding: 0; font-size: 15px; }
   .bv-p { font-size: 12.5px; color: #6B7280; line-height: 1.55; margin-bottom: 16px; }
+
+  .bv-rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  .bv-rules li { display: flex; gap: 12px; align-items: flex-start; }
+  .bv-rule-n { width: 24px; height: 24px; border-radius: 50%; background: #F0FDF4; border: 1px solid #BBF7D0; color: #16A34A; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .bv-rule-t { font-size: 13px; font-weight: 600; color: #111827; margin: 0 0 3px; }
+  .bv-rule-p { font-size: 12.5px; color: #6B7280; line-height: 1.55; margin: 0; }
 
   .bv-field { display: flex; flex-direction: column; margin-bottom: 16px; }
   .bv-field > label { font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9CA3AF; margin-bottom: 6px; }

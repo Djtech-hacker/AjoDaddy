@@ -21,16 +21,23 @@
 //                       -> plan cancelled, refunded WITH the normal 10% fee (7% company, 3% vendor)
 //                   - otherwise (paid past the limit, or vendor already paid)
 //                       -> plan goes to customer care as a dispute; money stays where it is
+//  7. FINISHED PLANS (customer has paid in full; the vendor's money is held in escrow)
+//                   a) the goods were sent and the customer never confirmed: after 7 days (3 for pickup)
+//                      the money is released to the vendor, unless a report on the order is open
+//                   b) the goods were never sent: day 10 the vendor gets a reminder, and after 14 days the
+//                      customer is refunded IN FULL (no fee), unless a report on the order is open
 //
-// Safety: every money action reuses applyPaymentInTx() / refundInTx() from the orders
-// service (row locks, idempotency keys, one transaction). If the job runs twice, or two
-// copies of the server run it, nobody is charged twice and nothing is counted twice.
-// The admin kill switch (ssFrozen) stops all of it.
+// Safety: every money action reuses applyPaymentInTx() / refundInTx() / releaseHeldPayoutInTx() /
+// refundUnshippedInTx() from the orders service (row locks, idempotency keys, one transaction).
+// If the job runs twice, or two copies of the server run it, nobody is charged or paid twice and
+// nothing is counted twice. The admin kill switch (ssFrozen) stops all of it.
 
 import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SsOrdersService, NotifyEvent, SsSettings } from '../orders/ss-orders.service';
+import {
+  SsOrdersService, NotifyEvent, SsSettings, SHIP_DEADLINE_DAYS, RELEASE_DAYS_DELIVERY, RELEASE_DAYS_PICKUP,
+} from '../orders/ss-orders.service';
 import { refundAllowed, percentPaid } from '../utils/ss-money.util';
 import { addDays } from '../utils/ss-schedule.util';
 
@@ -38,12 +45,18 @@ const TX_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
 const MIN_PAYMENT_KOBO = 10_000n; // ₦100, same minimum as manual payments
 const STAFF_ROLES = ['CUSTOMER_SERVICE', 'ADMIN', 'SUPER_ADMIN'];
 
+const PICKUP_LABEL = 'Pickup in person';            // what the order shows as the courier for pickups
+const SHIP_REMINDER_DAY = 10;                       // the vendor is reminded this many days after the customer finished paying
+const SHIP_REMINDER_TITLE = 'Send the goods or the customer is refunded';
+const OPEN_REPORT_STATES = ['OPEN', 'UNDER_REVIEW', 'ESCALATED'];
+
 const toNaira = (kobo: bigint | number) => Number(kobo) / 100;
 const naira   = (kobo: bigint) => '₦' + toNaira(kobo).toLocaleString('en-NG', { maximumFractionDigits: 2 });
 
 export type CheckSummary = {
   reminders: number; autoDebited: number; autoDebitFailed: number; graceStarted: number;
   missed: number; defaultedRefunded: number; escalated: number; errors: number; skipped?: string;
+  released: number; refundedUnshipped: number; shipReminders: number;
 };
 
 @Injectable()
@@ -84,6 +97,7 @@ export class SsCronService {
     const summary: CheckSummary = {
       reminders: 0, autoDebited: 0, autoDebitFailed: 0, graceStarted: 0,
       missed: 0, defaultedRefunded: 0, escalated: 0, errors: 0,
+      released: 0, refundedUnshipped: 0, shipReminders: 0,
     };
     try {
       const cfg = await this.orders.settings();
@@ -109,6 +123,15 @@ export class SsCronService {
           this.logger.error(`Order ${c.id} failed in the daily checks: ${err?.message}`);
         }
       }
+
+      // 7) plans the customer finished paying: pay the vendor, or refund the customer
+      try {
+        await this.settleFinishedPlans(now, cfg, summary);
+      } catch (err: any) {
+        summary.errors++;
+        this.logger.error(`Finished-plan checks failed: ${err?.message}`);
+      }
+
       this.logger.log(`Daily checks done: ${JSON.stringify(summary)}`);
       return summary;
     } finally {
@@ -377,6 +400,106 @@ export class SsCronService {
         userId: s.id, type: 'SS_DISPUTE_OPENED', title: 'Pay Small Small plan needs a decision',
         body: result.staffNote, data: { orderId }, important: true,
       })));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 7) FINISHED PLANS: pay the vendor, or refund the customer
+  // ══════════════════════════════════════════════════════════
+
+  // A report on this order that customer care has not decided yet. While one is open, the money does not move.
+  private async hasOpenReport(orderId: string): Promise<boolean> {
+    const d = await this.prisma.dispute.findFirst({
+      where: { ssOrderId: orderId, status: { in: OPEN_REPORT_STATES as any } },
+      select: { id: true },
+    });
+    return !!d;
+  }
+
+  private async settleFinishedPlans(now: Date, cfg: SsSettings, summary: CheckSummary) {
+    const DAY = 24 * 60 * 60 * 1000;
+    const ago = (days: number) => new Date(now.getTime() - days * DAY);
+
+    // A) The goods were sent, the customer never confirmed and nothing was reported: pay the vendor
+    const sent = await this.prisma.ssOrder.findMany({
+      where: {
+        status: 'COMPLETED', payoutReleased: false, fulfillmentStatus: 'DISPATCHED',
+        escrowBalance: { gt: 0n }, dispatchedAt: { lte: ago(RELEASE_DAYS_PICKUP) },
+      },
+      select: { id: true, courier: true, dispatchedAt: true },
+      orderBy: { dispatchedAt: 'asc' }, take: 200,
+    });
+    for (const o of sent) {
+      try {
+        const waitDays = o.courier === PICKUP_LABEL ? RELEASE_DAYS_PICKUP : RELEASE_DAYS_DELIVERY;
+        if (!o.dispatchedAt || o.dispatchedAt.getTime() + waitDays * DAY > now.getTime()) continue;
+        if (await this.hasOpenReport(o.id)) continue;
+
+        const events: NotifyEvent[] = [];
+        let released = false;
+        await this.prisma.$transaction(async (tx: any) => {
+          released = await this.orders.releaseHeldPayoutInTx(tx, o.id, 'TIMER', cfg, events);
+        }, TX_OPTIONS);
+        await this.orders.sendNotifications(events);
+        if (released) summary.released++;
+      } catch (err: any) {
+        summary.errors++;
+        this.logger.error(`Releasing the payout for order ${o.id} failed: ${err?.message}`);
+      }
+    }
+
+    // B) The goods were never sent: refund the customer in full
+    const neverSent = await this.prisma.ssOrder.findMany({
+      where: {
+        status: 'COMPLETED', payoutReleased: false, fulfillmentStatus: 'PENDING',
+        escrowBalance: { gt: 0n }, completedAt: { lte: ago(SHIP_DEADLINE_DAYS) },
+      },
+      select: { id: true },
+      orderBy: { completedAt: 'asc' }, take: 200,
+    });
+    for (const o of neverSent) {
+      try {
+        if (await this.hasOpenReport(o.id)) continue;
+        const events: NotifyEvent[] = [];
+        let refunded = false;
+        await this.prisma.$transaction(async (tx: any) => {
+          refunded = await this.orders.refundUnshippedInTx(tx, o.id, now, events);
+        }, TX_OPTIONS);
+        await this.orders.sendNotifications(events);
+        if (refunded) summary.refundedUnshipped++;
+      } catch (err: any) {
+        summary.errors++;
+        this.logger.error(`Refunding the unsent order ${o.id} failed: ${err?.message}`);
+      }
+    }
+
+    // C) A reminder for vendors who still have not sent the goods (once per order)
+    const nearing = await this.prisma.ssOrder.findMany({
+      where: {
+        status: 'COMPLETED', payoutReleased: false, fulfillmentStatus: 'PENDING',
+        completedAt: { lte: ago(SHIP_REMINDER_DAY), gt: ago(SHIP_DEADLINE_DAYS) },
+      },
+      select: { id: true, vendorId: true, completedAt: true, product: { select: { name: true } } },
+      take: 200,
+    });
+    for (const o of nearing as any[]) {
+      try {
+        const already = await this.prisma.notification.findFirst({
+          where: { userId: o.vendorId, title: SHIP_REMINDER_TITLE, data: { path: ['orderId'], equals: o.id } },
+          select: { id: true },
+        });
+        if (already) continue;
+        const daysLeft = Math.max(1, Math.ceil((o.completedAt.getTime() + SHIP_DEADLINE_DAYS * DAY - now.getTime()) / DAY));
+        await this.orders.sendNotifications([{
+          userId: o.vendorId, type: 'SYSTEM', title: SHIP_REMINDER_TITLE,
+          body: `"${o.product.name}" was fully paid ${SHIP_REMINDER_DAY} days ago and is still waiting to be sent. Send it, or mark it ready for pickup, within ${daysLeft} day${daysLeft === 1 ? '' : 's'}. After that the customer is refunded in full and the order is cancelled.`,
+          data: { orderId: o.id }, important: true, email: true,
+        }]);
+        summary.shipReminders++;
+      } catch (err: any) {
+        summary.errors++;
+        this.logger.error(`Sending the shipping reminder for order ${o.id} failed: ${err?.message}`);
+      }
     }
   }
 }

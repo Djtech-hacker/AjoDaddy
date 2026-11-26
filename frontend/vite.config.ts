@@ -9,6 +9,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // listen on the network too, so a phone on the same Wi-Fi can open the app
+    host: true,
+    // let a tunnel address (like https://something.trycloudflare.com) open the app. Development only.
+    allowedHosts: true,
     proxy: {
       '/api': {
         target:      'http://localhost:4000',

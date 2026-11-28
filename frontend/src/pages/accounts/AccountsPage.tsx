@@ -6,6 +6,7 @@ import { accountsApi, paymentsApi } from '@/api/services'
 import { useAuthStore } from '@/stores/authStore'
 import { useUIStore } from '@/stores/uiStore'
 import dayjs from 'dayjs'
+import { downloadMovements } from './exportMovements'
 
 type Tab = 'owed' | 'movements' | 'check' | 'payments'
 
@@ -36,13 +37,6 @@ const problem = (err: any, fallback: string) => {
   const m = err?.response?.data?.message
   return Array.isArray(m) ? m.join(', ') : m || fallback
 }
-// stops a spreadsheet from running text that starts like a formula
-const cell = (v: any) => {
-  let s = String(v ?? '')
-  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = "'" + s
-  return '"' + s.replace(/"/g, '""') + '"'
-}
-
 // plain words and one colour for each state of a payment
 const TONE: Record<string, string> = {
   Waiting: 'bg-amber-50 text-amber-800',
@@ -193,24 +187,17 @@ export default function AccountsPage() {
 
   useEffect(() => { load() }, [tab, page, type, status])
 
-  const exportCsv = async () => {
+  const [exporting, setExporting] = useState(false)
+  const exportExcel = async () => {
+    setExporting(true)
     try {
       const data = unwrap(await accountsApi.getMovements({ page: 1, limit: 5000, type: type || undefined, status: status || undefined, search: search || undefined }))
-      const lines = [['Date', 'Who', 'Type', 'Status', 'Amount (NGN)', 'Reference', 'Description'].map(cell).join(',')]
-      for (const r of data.rows) lines.push([r.createdAt, r.who, r.type, r.status, r.amount, r.reference, r.description].map(cell).join(','))
-      const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `money-movements-${dayjs().format('YYYY-MM-DD')}.csv`
-      // some browsers ignore a link that is not on the page, or cancel if the file is released at once
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 30000)
-      showToast(data.total > data.rows.length
-        ? `Exporting the newest ${data.rows.length} of ${data.total} rows`
-        : `Exporting ${data.rows.length} rows. Check your Downloads.`, 'success')
+      const filters = [type && `Type: ${nice(type)}`, status && `Status: ${nice(status)}`, search && `Search: ${search}`].filter(Boolean).join(', ')
+      const partial = data.total > data.rows.length ? ` Newest ${data.rows.length} of ${data.total}.` : ''
+      await downloadMovements(data.rows, (filters || 'All transactions.') + partial, `tareva-money-${dayjs().format('YYYY-MM-DD')}.xlsx`)
+      showToast(`Excel file ready: ${data.rows.length} rows`, 'success')
     } catch (err) { showToast(problem(err, 'Export failed'), 'error') }
+    finally { setExporting(false) }
   }
 
   // ── New request ──
@@ -374,7 +361,7 @@ export default function AccountsPage() {
               <select value={status} onChange={e => changeFilter(setStatus, e.target.value)} aria-label="Status" className={`${field} sm:!w-40`}>
                 <option value="">All statuses</option>{STATUSES.map(t => <option key={t} value={t}>{nice(t)}</option>)}
               </select>
-              <button onClick={exportCsv} className="col-span-2 sm:ml-auto h-9 px-2 text-[12px] font-semibold text-emerald-800 hover:underline">Export CSV</button>
+              <button onClick={exportExcel} disabled={exporting} className={`${primary} col-span-2 sm:ml-auto`}>{exporting ? 'Preparing file…' : 'Export to Excel'}</button>
             </div>
             {loading ? <Loader /> : !moves ? <Empty title="Could not load" hint="Press the refresh button." /> : moves.rows.length === 0 ? <Empty title="Nothing found" hint="Try another search or filter." /> : (
               <>

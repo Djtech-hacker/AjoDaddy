@@ -10,7 +10,7 @@ import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 dayjs.extend(relativeTime)
 
-const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793386985/Tareva_Green_Leaf_Logo_mrzfsd.png'
+const LOGO_URL = 'https://res.cloudinary.com/dmjakrnby/image/upload/v1793388022/Tareva_Green_Ribbon_Logo%E6%9C%9F%E7%89%B9%E7%A0%81_bwxdjs.png'
 
 // Below this width everyone gets the drawer + hamburger (phones and tablets).
 const MOBILE_BREAKPOINT = 1024

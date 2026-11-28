@@ -978,7 +978,7 @@ export default function SuperAdminPage() {
               <Toolbar>
                 <SearchBox value={search} onChange={v => { setSearch(v); setUsersPage(1) }} placeholder="Search by name, username, or email…" />
                 <Sel value={roleFilter} onChange={v => { setRoleFilter(v); setUsersPage(1) }} className="w-48"
-                  options={[['', 'All roles'], ['SUPER_ADMIN', 'Super Admin'], ['ADMIN', 'Admin'], ['CUSTOMER_SERVICE', 'Customer Service'], ['USER', 'User']]} />
+                  options={[['', 'All roles'], ['SUPER_ADMIN', 'Super Admin'], ['ADMIN', 'Admin'], ['CUSTOMER_SERVICE', 'Customer Service'], ['ACCOUNTANT', 'Accounts'], ['USER', 'User']]} />
               </Toolbar>
               {usersLoading ? <Loading n={5} />
               : users.length === 0 ? <Empty icon={ICON.user} title="No users found" sub="Try different filters or search words." />
@@ -1002,7 +1002,7 @@ export default function SuperAdminPage() {
                           {u.id !== currentUser?.id && (
                             <select value={u.role} disabled={roleLoading === u.id} onChange={e => handleRoleChange(u, e.target.value)}
                               className="h-7 border border-gray-200 rounded-md px-2 text-[11px] text-gray-700 bg-white outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50">
-                              <option value="USER">User</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="ADMIN">Admin</option><option value="SUPER_ADMIN">Super Admin</option>
+                              <option value="USER">User</option><option value="CUSTOMER_SERVICE">Customer Service</option><option value="ACCOUNTANT">Accounts</option><option value="ADMIN">Admin</option><option value="SUPER_ADMIN">Super Admin</option>
                             </select>
                           )}
                           {u.id !== currentUser?.id && u.status !== 'BANNED' && <button onClick={() => setBanModal(u)} className={actRed}>Perm ban</button>}
@@ -1053,7 +1053,7 @@ export default function SuperAdminPage() {
 
             <Notice tone="emerald" icon={ICON.cash} title="Company revenue account"
               right={<button disabled={!revenue || revenue.walletBalance <= 0} onClick={openWithdrawModal} className={`${btnPrimary} flex-shrink-0`}>Withdraw revenue →</button>}>
-              Late penalty fees collected from members, and the 1% platform fee taken on withdrawals, both flow into this account automatically.
+              Company fees and delivery money both land in this wallet. Delivery money is not income: it must be paid out for the courier.
             </Notice>
 
             {revenueLoading ? (
@@ -1063,14 +1063,20 @@ export default function SuperAdminPage() {
             ) : (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <Stat tone="emerald" label="Available balance" value={`₦${revenue.walletBalance.toLocaleString()}`} sub="Ready to withdraw" />
-                  <Stat label="From late penalty fees" value={`₦${revenue.totalFromPenalties.toLocaleString()}`} sub={`${revenue.penaltyCount} penalt${revenue.penaltyCount === 1 ? 'y' : 'ies'} collected`} />
-                  <Stat label="From platform fees (1%)" value={`₦${revenue.totalFromPlatformFees.toLocaleString()}`} sub={`${revenue.platformFeeCount} withdrawal${revenue.platformFeeCount === 1 ? '' : 's'} charged`} />
-                  <Stat label="Withdrawn to date" value={`₦${revenue.totalWithdrawn.toLocaleString()}`} sub={`${revenue.withdrawalCount} withdrawal${revenue.withdrawalCount === 1 ? '' : 's'} made`} />
+                  <Stat tone="emerald" label="Company's own money" value={'₦' + revenue.ownMoney.toLocaleString()} sub="after setting delivery money aside" />
+                  <Stat tone="blue" label="Owed for delivery" value={'₦' + revenue.owedToTerminal.toLocaleString()} sub={'Terminal ₦' + revenue.courierCost.total.toLocaleString() + ' + Paystack ₦' + revenue.transferFees.total.toLocaleString()} />
+                  <Stat label="Wallet balance" value={'₦' + revenue.walletBalance.toLocaleString()} sub={'own + owed. Escrow ₦' + revenue.escrowHeld.toLocaleString() + ' not included'} />
+                  <Stat label="Withdrawn to date" value={'₦' + revenue.totalWithdrawn.toLocaleString()} sub={revenue.withdrawalCount + ' made'} />
+                  <Stat label="Late penalty fees" value={'₦' + revenue.totalFromPenalties.toLocaleString()} sub={revenue.penaltyCount + ' collected'} />
+                  <Stat label="Withdrawal fees (1%)" value={'₦' + revenue.withdrawalFees.total.toLocaleString()} sub={revenue.withdrawalFees.count + ' charged'} />
+                  <Stat label="Refund fees" value={'₦' + revenue.refundFees.total.toLocaleString()} sub={revenue.refundFees.count + ' charged'} />
+                  <Stat label="Delivery fees (2%)" value={'₦' + revenue.deliveryFees.total.toLocaleString()} sub={revenue.deliveryFees.count + ' charged'} />
+                  <Stat label="Sale fees" value={'₦' + revenue.saleFees.total.toLocaleString()} sub={revenue.saleFees.count + ' charged'} />
+                  {revenue.otherFees.count > 0 && <Stat label="Other" value={'₦' + revenue.otherFees.total.toLocaleString()} sub={revenue.otherFees.count + ' rows'} />}
                 </div>
 
                 <PillTabs
-                  items={[{ id: 'penalties', label: 'Recent penalty fees' }, { id: 'platform-fees', label: 'Recent platform fees' }, { id: 'withdrawals', label: 'Withdrawal history' }] as { id: 'penalties' | 'platform-fees' | 'withdrawals'; label: string }[]}
+                  items={[{ id: 'penalties', label: 'Recent penalty fees' }, { id: 'platform-fees', label: 'Recent fees' }, { id: 'withdrawals', label: 'Withdrawal history' }] as { id: 'penalties' | 'platform-fees' | 'withdrawals'; label: string }[]}
                   value={revenueSubTab} onChange={setRevenueSubTab} />
 
                 <div className={cardCls}>
@@ -1090,12 +1096,12 @@ export default function SuperAdminPage() {
                     )
                   ) : revenueSubTab === 'platform-fees' ? (
                     revenue.recentPlatformFees.length === 0 ? <Empty icon={ICON.clock} title="No platform fees collected yet" /> : (
-                      <Table heads={['When', 'Amount', 'From user', 'Reference', 'Status']}>
+                      <Table heads={['When', 'Amount', 'Type', 'Reference', 'Status']}>
                         {revenue.recentPlatformFees.map((t: any) => (
                           <tr key={t.id} className="hover:bg-gray-50/80 transition-colors">
                             <td className={`${TD} text-[11px] text-gray-500 whitespace-nowrap`}>{dayjs(t.createdAt).format('MMM D, h:mm A')}</td>
                             <td className={`${TD} text-[12px] font-bold font-mono text-gray-900`}>₦{t.amount.toLocaleString()}</td>
-                            <td className={`${TD} text-[11px] text-gray-500 font-mono`}>{t.metadata?.fromUserId || '—'}</td>
+                            <td className={`${TD} text-[11px] text-gray-500 font-mono`}>{t.category}</td>
                             <td className={`${TD} text-[11px] text-gray-400 font-mono truncate max-w-[160px]`}>{t.reference}</td>
                             <td className={TD}><Tag variant="success">{t.status?.toLowerCase()}</Tag></td>
                           </tr>
@@ -1471,7 +1477,7 @@ export default function SuperAdminPage() {
         }>
         <div className="space-y-4">
           <Notice tone="emerald" icon={ICON.cash}>
-            Available balance: <span className="font-bold">₦{(revenue?.walletBalance || 0).toLocaleString()}</span>. This sends real funds out to a bank account. Password and a live face photo are required.
+            Wallet balance: <span className="font-bold">₦{(revenue?.walletBalance || 0).toLocaleString()}</span>. Of this, <span className="font-bold">₦{(revenue?.owedToTerminal || 0).toLocaleString()}</span> is delivery money, so only <span className="font-bold">₦{(revenue?.ownMoney || 0).toLocaleString()}</span> is the company's own. This sends real funds to a bank account. Password and a live face photo are required.
           </Notice>
 
           <Field label="Amount (₦)" type="number" min={500} value={wdAmount} onChange={e => setWdAmount(e.target.value)} placeholder="e.g. 50000" />

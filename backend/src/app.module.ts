@@ -15,6 +15,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ChatModule } from './chat/chat.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AdminModule } from './admin/admin.module';
+import { AccountsModule } from './accounts/accounts.module';
 import { SettingsModule, MaintenanceModeGuard } from './settings/settings.module';
 import { SupportModule } from './support/support.module';
 import { DisputesModule } from './disputes/disputes.module';
@@ -57,6 +58,7 @@ import { ReceiptsModule } from './receipts/receipts.module';
     ChatModule,
     AnalyticsModule,
     AdminModule,
+    AccountsModule,
     SettingsModule,
     SupportModule,
     DisputesModule,

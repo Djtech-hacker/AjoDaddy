@@ -13,6 +13,7 @@ enum UserRole {
   CUSTOMER_SERVICE
   ADMIN
   SUPER_ADMIN
+  ACCOUNTANT
 }
 
 enum UserStatus {
@@ -1629,4 +1630,30 @@ model SsChatMessage {
   @@index([threadId, createdAt])
   @@index([senderId])
   @@map("ss_chat_messages")
+}
+
+// ── Company payments: requested by Accounts, approved by a Super Admin ──
+model CompanyExpense {
+  id              String    @id @default(uuid())
+  category        String // SALARY | DELIVERY | OTHER
+  amount          BigInt // kobo
+  note            String
+  accountNumber   String
+  bankCode        String
+  bankName        String?
+  accountName     String
+  status          String    @default("PENDING") // PENDING | SENDING | SENT | FAILED | REJECTED
+  requestedById   String
+  requestedByName String
+  decidedById     String?
+  decidedByName   String?
+  decidedAt       DateTime?
+  rejectReason    String?
+  reference       String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("company_expenses")
 }

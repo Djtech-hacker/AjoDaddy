@@ -219,3 +219,14 @@ export const platformApi = {
       maintenanceAnnouncement: string | null
     }>('/platform/status'),
 }
+
+// ── Accounts ──────────────────────────────────────────────────
+export const accountsApi = {
+  getOverview:     ()             => api.get('/accounts/overview'),
+  getMovements:    (params?: any) => api.get('/accounts/movements', { params }),
+  getBalanceCheck: ()             => api.get('/accounts/balance-check'),
+  getExpenses:     ()             => api.get('/accounts/expenses'),
+  createExpense:   (data: { category: string; amount: number; note: string; accountNumber: string; bankCode: string; bankName?: string; accountName: string }) => api.post('/accounts/expenses', data),
+  approveExpense:  (id: string, data: { password: string; facePhotoUrl: string }) => api.post(`/accounts/expenses/${id}/approve`, data),
+  rejectExpense:   (id: string, reason: string) => api.post(`/accounts/expenses/${id}/reject`, { reason }),
+}

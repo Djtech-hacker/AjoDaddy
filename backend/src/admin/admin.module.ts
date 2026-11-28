@@ -27,10 +27,12 @@ import { AuthService } from '../auth/auth.module';
 import { AuthModule } from '../auth/auth.module';
 import { PaymentsService } from '../payments/payments.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { readCompanyMoney, lockCompanyMoney } from '../accounts/company-money';
 
 const SUPER_ADMIN_ONLY_ACTIONS = [
   'BAN_USER', 'UNBAN_USER', 'ROLE_CHANGED', 'BROADCAST_NOTIFICATION',
   'PLATFORM_SETTINGS_UPDATED', 'FORCE_LOGOUT', 'USER_DELETED', 'BALANCE_ADJUSTED',
+  'COMPANY_REVENUE_WITHDRAWAL', 'EXPENSE_REQUESTED', 'EXPENSE_APPROVED', 'EXPENSE_REJECTED',
 ];
 
 export class AdminGuard implements CanActivate {
@@ -53,10 +55,9 @@ export class SuperAdminGuard implements CanActivate {
 
 export class SuspendUserDto { @IsString() reason: string; }
 export class FlagFraudDto { @IsString() type: string; @IsString() description: string; @IsEnum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']) severity: string; }
-export class UpdateUserRoleDto { @IsEnum(['USER', 'CUSTOMER_SERVICE', 'ADMIN', 'SUPER_ADMIN']) role: string; }
+export class UpdateUserRoleDto { @IsEnum(['USER', 'CUSTOMER_SERVICE', 'ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT']) role: string; }
 export class FreezeGroupDto { @IsString() reason: string; }
 export class CloseGroupDto { @IsString() reason: string; }
-export class RefundTransactionDto { @IsString() reason: string; }
 
 export class GroupBroadcastDto { @IsString() title: string; @IsString() body: string; }
 
@@ -226,24 +227,6 @@ export class AdminService {
     return header + rows;
   }
 
-  async refundTransaction(adminId: string, transactionId: string, reason: string) {
-    const original = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
-    if (!original) throw new NotFoundException('Transaction not found');
-    if (original.status !== 'COMPLETED') throw new BadRequestException('Only completed transactions can be refunded');
-    if (original.type !== 'WALLET_FUNDING') throw new BadRequestException('Only WALLET_FUNDING transactions can be refunded here.');
-    const reference = `ADMINREFUND-${original.reference}-${Date.now()}`;
-    await this.prisma.executeTransaction(async (tx) => {
-      const wallet = await tx.wallet.findUnique({ where: { id: original.walletId } });
-      if (!wallet) throw new NotFoundException('Wallet not found');
-      await tx.wallet.update({ where: { id: original.walletId }, data: { balance: { increment: original.amount } } });
-      await tx.transaction.create({ data: { userId: original.userId, walletId: original.walletId, type: 'REFUND', status: 'COMPLETED', amount: original.amount, balanceBefore: wallet.balance, balanceAfter: wallet.balance + original.amount, reference, description: `Admin refund of ${original.reference}: ${reason}`, metadata: { originalTransactionId: original.id, reason, refundedBy: adminId } } });
-      await tx.transaction.update({ where: { id: original.id }, data: { status: 'REVERSED' } });
-      await tx.auditLog.create({ data: { actorId: adminId, action: 'ADMIN_REFUND', entityType: 'Transaction', entityId: original.id, metadata: { reason, amount: Number(original.amount) / 100 } } });
-    });
-    await this.notificationsService.create({ userId: original.userId, type: 'SYSTEM', title: 'Refund issued', body: `₦${(Number(original.amount) / 100).toLocaleString()} has been refunded to your wallet.`, data: { reference } }).catch(() => {});
-    return { message: 'Refund issued', reference };
-  }
-
   async getGroupsOverview(page = 1, limit = 20, status?: string) {
     const skip = (page - 1) * limit;
     const where: any = {};
@@ -372,27 +355,56 @@ export class AdminService {
   
    async getRevenueOverview() {
     const systemWallet = await this.prisma.wallet.findUnique({ where: { userId: 'SYSTEM' } });
-    const walletBalance = Number(systemWallet?.balance || 0) / 100;
+    // the SYSTEM wallet also holds customers' escrow (lockedBalance), which is not revenue
+    const escrowKobo = Number(systemWallet?.lockedBalance || 0);
+    const freeKobo = Number(systemWallet?.balance || 0) - escrowKobo;
 
-    const [penaltyAgg, platformFeeAgg, withdrawnAgg, recentPenalties, recentPlatformFees, recentWithdrawals] = await Promise.all([
+    const feeWhere: any = { userId: 'SYSTEM', type: 'WALLET_FUNDING', status: 'COMPLETED' };
+
+    const [penaltyAgg, feeRows, withdrawnAgg, recentPenalties, recentFees, recentWithdrawals] = await Promise.all([
       this.prisma.walletTransaction.aggregate({ where: { userId: 'SYSTEM', type: 'PENALTY' }, _sum: { amount: true }, _count: true }),
-      this.prisma.transaction.aggregate({ where: { userId: 'SYSTEM', type: 'WALLET_FUNDING' }, _sum: { amount: true }, _count: true }),
+      this.prisma.transaction.findMany({ where: feeWhere, select: { amount: true, metadata: true } }),
       this.prisma.transaction.aggregate({ where: { userId: 'SYSTEM', type: 'WITHDRAWAL', status: { in: ['COMPLETED', 'PROCESSING'] } }, _sum: { amount: true }, _count: true }),
       this.prisma.walletTransaction.findMany({ where: { userId: 'SYSTEM', type: 'PENALTY' }, orderBy: { createdAt: 'desc' }, take: 20 }),
-      this.prisma.transaction.findMany({ where: { userId: 'SYSTEM', type: 'WALLET_FUNDING' }, orderBy: { createdAt: 'desc' }, take: 20 }),
+      this.prisma.transaction.findMany({ where: feeWhere, orderBy: { createdAt: 'desc' }, take: 20 }),
       this.prisma.transaction.findMany({ where: { userId: 'SYSTEM', type: 'WITHDRAWAL' }, orderBy: { createdAt: 'desc' }, take: 20 }),
     ]);
 
-    const fromUserIds = Array.from(new Set([
-      ...recentPenalties.map((t: any) => t.metadata?.fromUserId).filter(Boolean),
-      ...recentPlatformFees.map((t: any) => t.metadata?.fromUserId).filter(Boolean),
-    ])) as string[];
+    // rows with no metadata.kind are the 1% withdrawal fees
+    const labels: Record<string, string> = {
+      WITHDRAWAL_FEE: 'Withdrawal fee (1%)',
+      REFUND_FEE_PLATFORM: 'Refund fee',
+      SALE_FEE: 'Sale fee',
+      DELIVERY_FEE: 'Delivery service fee (2%)',
+      DELIVERY_TRANSFER_FEE: 'Paystack transfer fee (owed)',
+      DELIVERY_COURIER: 'Courier cost (owed to Terminal)',
+      OTHER: 'Other',
+    };
+    const kindOf = (t: any): string => {
+      const kind = t.metadata?.kind;
+      if (!kind) return 'WITHDRAWAL_FEE';
+      return labels[kind] ? kind : 'OTHER';
+    };
 
+    const kobo: Record<string, number> = {};
+    const counts: Record<string, number> = {};
+    for (const row of feeRows) {
+      const kind = kindOf(row);
+      kobo[kind] = (kobo[kind] || 0) + Number(row.amount);
+      counts[kind] = (counts[kind] || 0) + 1;
+    }
+    const part = (kind: string) => ({ total: (kobo[kind] || 0) / 100, count: counts[kind] || 0 });
+
+    // delivery money still to be paid out (payments made from the Accounts page are subtracted)
+    const owedKobo = Number((await readCompanyMoney(this.prisma)).owed);
+
+    const fromUserIds = Array.from(new Set(
+      [...recentPenalties, ...recentFees].map((t: any) => t.metadata?.fromUserId).filter(Boolean),
+    )) as string[];
     const fromUsers = fromUserIds.length
       ? await this.prisma.user.findMany({ where: { id: { in: fromUserIds } }, select: { id: true, username: true, firstName: true, lastName: true } })
       : [];
     const fromUserMap = new Map(fromUsers.map(u => [u.id, u]));
-
     const attachFromUser = (t: any) => ({
       ...t,
       amount: Number(t.amount) / 100,
@@ -400,23 +412,29 @@ export class AdminService {
     });
 
     return {
-      walletBalance,
+      walletBalance:         freeKobo / 100,
+      escrowHeld:            escrowKobo / 100,
+      owedToTerminal:        owedKobo / 100,
+      ownMoney:              (freeKobo - owedKobo) / 100,
       totalFromPenalties:    Number(penaltyAgg._sum.amount || 0) / 100,
       penaltyCount:          penaltyAgg._count,
-      totalFromPlatformFees: Number(platformFeeAgg._sum.amount || 0) / 100,
-      platformFeeCount:      platformFeeAgg._count,
+      withdrawalFees:        part('WITHDRAWAL_FEE'),
+      refundFees:            part('REFUND_FEE_PLATFORM'),
+      saleFees:              part('SALE_FEE'),
+      deliveryFees:          part('DELIVERY_FEE'),
+      transferFees:          part('DELIVERY_TRANSFER_FEE'),
+      courierCost:           part('DELIVERY_COURIER'),
+      otherFees:             part('OTHER'),
       totalWithdrawn:        Number(withdrawnAgg._sum.amount || 0) / 100,
       withdrawalCount:       withdrawnAgg._count,
       recentPenalties:       recentPenalties.map(attachFromUser),
-      recentPlatformFees:    recentPlatformFees.map(attachFromUser),
+      recentPlatformFees:    recentFees.map((t: any) => ({ ...attachFromUser(t), category: labels[kindOf(t)] })),
       recentWithdrawals:     recentWithdrawals.map(t => ({ ...t, amount: Number(t.amount) / 100 })),
     };
   }
 
-    // ── Total money users have deposited into the platform ────
-  // Distinct from company revenue: this sums real user WALLET_FUNDING
-  // transactions (excludes SYSTEM), i.e. money users have actually put
-  // into their wallets via Paystack/Flutterwave.
+  // ── Total money users have deposited into the platform ────
+  // Real user WALLET_FUNDING only (excludes SYSTEM).
   async getPlatformDeposits() {
     const [depositAgg, uniqueDepositors, recentDeposits, walletAgg] = await Promise.all([
       this.prisma.transaction.aggregate({
@@ -523,9 +541,11 @@ export class AdminService {
     const reference = `COMPANYWD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 
     await this.prisma.executeTransaction(async (tx) => {
+      const company = await lockCompanyMoney(tx)
+      if (company.own < amountKobo) {
+        throw new BadRequestException(`Only ₦${(Number(company.own > 0n ? company.own : 0n) / 100).toLocaleString()} is the company's own money. Pay delivery from the Accounts page.`)
+      }
       const fresh = await tx.wallet.findUnique({ where: { userId: 'SYSTEM' } })
-      const freshAvail = fresh.balance - fresh.lockedBalance
-      if (freshAvail < amountKobo) throw new BadRequestException('Insufficient company balance')
 
       await tx.wallet.update({ where: { userId: 'SYSTEM' }, data: { balance: { decrement: amountKobo } } })
 
@@ -695,9 +715,6 @@ export class AdminController {
     res.setHeader('Content-Disposition', `attachment; filename="transactions-${Date.now()}.csv"`);
     res.send(csv);
   }
-
-  @Post('transactions/:id/refund')
-  refundTransaction(@Req() req: any, @Param('id') id: string, @Body() dto: RefundTransactionDto) { return this.adminService.refundTransaction(req.user.id, id, dto.reason); }
 
   @Get('groups')
   getGroups(@Query('page') page = 1, @Query('limit') limit = 20, @Query('status') status?: string) { return this.adminService.getGroupsOverview(+page, +limit, status); }

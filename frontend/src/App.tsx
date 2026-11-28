@@ -43,6 +43,7 @@ import PlanPage from '@/pages/shop/PlanPage'
 import VendorHubPage from '@/pages/vendor/VendorHubPage'
 import VendorProductFormPage from '@/pages/vendor/VendorProductFormPage'
 import SmallSmallStaffPage from '@/pages/staff/SmallSmallStaffPage'
+import AccountsPage from '@/pages/accounts/AccountsPage'
 
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -75,6 +76,13 @@ function RequireCustomerService({ children }: { children: React.ReactNode }) {
 function RequireStaff({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
   if (!user || !['CUSTOMER_SERVICE','ADMIN','SUPER_ADMIN'].includes(user.role)) return <Navigate to="/dashboard" replace />
+  return <>{children}</>
+}
+
+// Accounts staff, and the Super Admin who approves their payments
+function RequireAccounts({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore()
+  if (!user || !['ACCOUNTANT','SUPER_ADMIN'].includes(user.role)) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -178,6 +186,7 @@ export default function App() {
                   <Route path="/customer-service" element={<RequireAuth><RequireCustomerService><CustomerServiceDashboardPage /></RequireCustomerService></RequireAuth>} />
                   <Route path="/admin"           element={<RequireAuth><RequireAdmin><AdminPage /></RequireAdmin></RequireAuth>} />
                   <Route path="/super-admin"     element={<RequireAuth><RequireSuperAdmin><SuperAdminPage /></RequireSuperAdmin></RequireAuth>} />
+                  <Route path="/accounts"        element={<RequireAuth><RequireAccounts><AccountsPage /></RequireAccounts></RequireAuth>} />
                   <Route path="/verify-receipt/:code" element={<VerifyReceiptPage />} />
                   <Route path="/privacy"         element={<PrivacyPage />} />
                   <Route path="/terms"           element={<TermsPage />} />

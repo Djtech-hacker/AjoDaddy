@@ -81,6 +81,8 @@ export class UpdatePlatformSettingsDto {
   @IsOptional() @IsInt() @Min(1)
   reportAutoEscalateThreshold?: number;
 
+  
+
   // ── Scheduled maintenance ──
   // ISO timestamp for when maintenance should auto-activate. Send this
   // together with maintenanceAnnouncement to schedule; send

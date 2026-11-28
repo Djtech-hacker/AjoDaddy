@@ -41,6 +41,8 @@ const NAV = [
 const ROLE_NAV = [
   { to: '/customer-service', label: 'Customer Service', roles: ['CUSTOMER_SERVICE'],
     icon: I(<><path d="M2 8a6 6 0 0112 0v3.5" {...S} strokeLinecap="round"/><rect x="1.3" y="8" width="2.8" height="4" rx="1.2" {...S}/><rect x="11.9" y="8" width="2.8" height="4" rx="1.2" {...S}/><path d="M12.5 12v1a2 2 0 01-2 2H9" {...S} strokeLinecap="round"/></>) },
+  { to: '/accounts', label: 'Accounts', roles: ['ACCOUNTANT', 'SUPER_ADMIN'],
+    icon: I(<><rect x="2.5" y="1.5" width="11" height="13" rx="2" {...S}/><path d="M5 5h6M5 8h6M5 11h3" {...S} strokeLinecap="round"/></>) },
   { to: '/admin', label: 'Admin', roles: ['ADMIN', 'SUPER_ADMIN'],
     icon: I(<><circle cx="8" cy="8" r="2" {...S}/><path d="M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.95 3.05l-1.06 1.06M4.11 11.89l-1.06 1.06M12.95 12.95l-1.06-1.06M4.11 4.11L3.05 3.05" {...S} strokeLinecap="round"/></>) },
   { to: '/super-admin', label: 'Super Admin', roles: ['SUPER_ADMIN'],
